@@ -1089,6 +1089,7 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
         }
       }}
       style={{
+        position: 'relative',
         height: '100%',
         display: 'flex',
         'flex-direction': 'column',
@@ -1103,7 +1104,10 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
         ref={formRef}
         class="new-task-panel-form"
         onSubmit={handleSubmit}
+        inert={loading()}
+        aria-busy={loading()}
         style={{
+          opacity: loading() ? '0.4' : '1',
           display: 'flex',
           'flex-direction': 'column',
           'min-height': '0',
@@ -1550,13 +1554,39 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
               gap: '8px',
             }}
           >
-            <Show when={loading()}>
-              <span class="inline-spinner" aria-hidden="true" />
-            </Show>
-            {loading() ? 'Creating...' : 'Create Task'}
+            Create Task
           </button>
         </div>
       </form>
+      <Show when={loading()}>
+        <div
+          role="status"
+          style={{
+            position: 'absolute',
+            inset: '0',
+            display: 'flex',
+            'align-items': 'center',
+            'justify-content': 'center',
+            color: theme.fg,
+            'font-size': '14px',
+            cursor: 'wait',
+          }}
+        >
+          <span
+            style={{
+              display: 'flex',
+              'align-items': 'center',
+              gap: '8px',
+              padding: '12px 16px',
+              background: theme.islandBg,
+              'border-radius': 'var(--radius-md)',
+            }}
+          >
+            <span class="inline-spinner" aria-hidden="true" />
+            Creating task...
+          </span>
+        </div>
+      </Show>
       <ConfirmDialog
         open={confirmDiscard()}
         title="Discard draft?"

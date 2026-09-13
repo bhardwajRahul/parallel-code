@@ -444,7 +444,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
   let remoteServerPendingStop = false;
 
   // --- PTY commands ---
-  ipcMain.handle(IPC.SpawnAgent, (_e, args) => {
+  ipcMain.handle(IPC.SpawnAgent, async (_e, args) => {
     assertString(args.command, 'command');
     assertStringArray(args.args, 'args');
     assertString(args.taskId, 'taskId');
@@ -465,7 +465,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
         console.warn('Failed to set up plans directory:', err);
       }
     }
-    const result = spawnAgent(win, args);
+    await spawnAgent(win, args);
     if (!args.isShell && args.cwd) {
       try {
         startPlanWatcher(win, args.taskId, args.cwd);
@@ -480,7 +480,6 @@ export function registerAllHandlers(win: BrowserWindow): void {
         }
       }
     }
-    return result;
   });
   ipcMain.handle(IPC.WriteToAgent, (_e, args) => {
     assertString(args.agentId, 'agentId');

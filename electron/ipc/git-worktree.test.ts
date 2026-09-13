@@ -7,9 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createWorktree,
+  ensureClaudeSandboxFiles,
   ensureSymlinkExcludes,
   getSymlinkCandidates,
   refreshWorktreeNodeModules,
+  removeWorktree,
 } from './git.js';
 
 const tempDirs: string[] = [];
@@ -343,6 +345,47 @@ describe('getSymlinkCandidates', () => {
 });
 
 describe('createWorktree', () => {
+  it('keeps the event loop responsive while awaiting sandbox files', async () => {
+    const root = initRepository();
+    const source = path.join(root, '.claude');
+    fs.mkdirSync(path.join(source, 'skills'), { recursive: true });
+    fs.writeFileSync(path.join(source, 'skills', 'example.md'), 'skill content');
+    fs.writeFileSync(path.join(source, 'settings.json'), '{"permissions":{}}');
+    fs.mkdirSync(path.join(source, 'plans'));
+    fs.writeFileSync(path.join(source, 'plans', 'old.md'), 'old plan');
+    fs.writeFileSync(path.join(source, 'steps.json'), '{}');
+
+    const copy = fs.promises.cp.bind(fs.promises);
+    let resumeCopy!: () => void;
+    const gate = new Promise<void>((resolve) => (resumeCopy = resolve));
+    const copySpy = vi.spyOn(fs.promises, 'cp').mockImplementation(async (...args) => {
+      await gate;
+      return copy(...args);
+    });
+    let finished = false;
+    const creation = createWorktree(root, 'task-async-copy', []).then((result) => {
+      finished = true;
+      return result;
+    });
+    try {
+      await vi.waitFor(() => expect(copySpy).toHaveBeenCalled());
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(finished).toBe(false);
+    } finally {
+      resumeCopy();
+      await creation.finally(() => copySpy.mockRestore());
+    }
+
+    const target = path.join((await creation).path, '.claude');
+    expect(fs.readFileSync(path.join(target, 'skills', 'example.md'), 'utf8')).toBe(
+      'skill content',
+    );
+    expect(fs.readFileSync(path.join(target, 'settings.json'), 'utf8')).toBe('{"permissions":{}}');
+    expect(fs.readFileSync(path.join(target, 'settings.local.json'), 'utf8')).toBe('{}\n');
+    expect(fs.existsSync(path.join(target, 'plans'))).toBe(false);
+    expect(fs.existsSync(path.join(target, 'steps.json'))).toBe(false);
+  });
+
   it('git-excludes the worktree container so the project root stays clean', async () => {
     const root = initRepository();
 
@@ -434,6 +477,97 @@ describe('createWorktree', () => {
       expect(fs.existsSync(path.join(result.path, '.WORKTREES'))).toBe(false);
     });
   }
+});
+
+describe('sandbox setup lifecycle', () => {
+  function pauseDirectoryCopy() {
+    const copy = fs.promises.cp.bind(fs.promises);
+    let resume!: () => void;
+    const gate = new Promise<void>((resolve) => (resume = resolve));
+    const spy = vi
+      .spyOn(fs.promises, 'cp')
+      .mockImplementationOnce(async (source, target, options) => {
+        // Recursive copying creates the directory before filling its contents.
+        await fs.promises.mkdir(target, { recursive: true });
+        await gate;
+        return copy(source, target, options);
+      });
+    return { resume, spy };
+  }
+
+  function addSourceSkill(root: string) {
+    fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.claude', 'skills', 'rule.md'), 'required instructions');
+  }
+
+  it.each([false, true])(
+    'shares unfinished setup across agents (path alias: %s)',
+    async (alias) => {
+      const root = initRepository();
+      const worktree = (await createWorktree(root, 'task-shared-setup', [])).path;
+      addSourceSkill(root);
+      const secondPath = alias ? path.join(root, 'worktree-alias') : worktree;
+      if (alias) fs.symlinkSync(worktree, secondPath);
+
+      const { resume, spy } = pauseDirectoryCopy();
+      const first = ensureClaudeSandboxFiles(worktree, root);
+      let second: Promise<void> | undefined;
+      let secondFinished = false;
+      try {
+        await vi.waitFor(() =>
+          expect(fs.existsSync(path.join(worktree, '.claude', 'skills'))).toBe(true),
+        );
+        second = ensureClaudeSandboxFiles(secondPath, root).then(() => {
+          secondFinished = true;
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(secondFinished).toBe(false);
+        expect(spy).toHaveBeenCalledOnce();
+      } finally {
+        resume();
+        await Promise.all([first, second]).finally(() => spy.mockRestore());
+      }
+      expect(fs.readFileSync(path.join(secondPath, '.claude', 'skills', 'rule.md'), 'utf8')).toBe(
+        'required instructions',
+      );
+
+      // Settled setup must not be cached forever: subsequent spawns backfill new files.
+      fs.writeFileSync(path.join(root, '.claude', 'new-setting.json'), '{}');
+      await ensureClaudeSandboxFiles(worktree, root);
+      expect(fs.existsSync(path.join(worktree, '.claude', 'new-setting.json'))).toBe(true);
+    },
+  );
+
+  it('waits for copying before removing a worktree and rejects setup during removal', async () => {
+    const root = initRepository();
+    const branch = 'task-remove-during-setup';
+    const worktree = (await createWorktree(root, branch, [])).path;
+    addSourceSkill(root);
+
+    const { resume, spy } = pauseDirectoryCopy();
+    const setup = ensureClaudeSandboxFiles(worktree, root);
+    let removal: Promise<void> | undefined;
+    let removed = false;
+    try {
+      await vi.waitFor(() =>
+        expect(fs.existsSync(path.join(worktree, '.claude', 'skills'))).toBe(true),
+      );
+      removal = removeWorktree(root, branch, true).then(() => {
+        removed = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(removed).toBe(false);
+      expect(fs.existsSync(worktree)).toBe(true);
+      await expect(ensureClaudeSandboxFiles(worktree, root)).rejects.toThrow(
+        'Worktree is being removed',
+      );
+    } finally {
+      resume();
+      await Promise.all([setup, removal]).finally(() => spy.mockRestore());
+    }
+    expect(fs.existsSync(worktree)).toBe(false);
+    expect(git(root, ['branch', '--list', branch])).toBe('');
+  });
 });
 
 describe('refreshWorktreeNodeModules', () => {

@@ -3298,33 +3298,6 @@ html[data-look='islands-light'] .window-title-icon {
   color: var(--fg);
 }
 
-/* Keep reduced-motion overrides last so class-based rules win by source order. */
-@media (prefers-reduced-motion: reduce) {
-  .projects-collapser {
-    transition: none;
-  }
-
-  .task-appearing,
-  .new-task-appearing,
-  .task-item-appearing,
-  .task-removing,
-  .task-item-removing,
-  .status-dot-pulse {
-    animation: none;
-  }
-
-  /* The hollow ring alone still says "working"; only the rotation goes. */
-  .status-glyph-spinner {
-    animation: none;
-  }
-
-  /* These animations are declared inline and require an important override. */
-  .askcode-loading-pulse,
-  .keybinding-key {
-    animation: none !important;
-  }
-}
-
 .workspace-controls {
   display: flex;
   align-items: center;
@@ -3461,4 +3434,31 @@ html[data-look='islands-light'] .window-title-icon {
   font: inherit;
   font-size: 10px;
   white-space: nowrap;
+}
+
+/* Keep reduced-motion overrides last so class-based rules win by source order. */
+@media (prefers-reduced-motion: reduce) {
+  .projects-collapser {
+    transition: none;
+  }
+
+  .task-appearing,
+  .new-task-appearing,
+  .task-item-appearing,
+  .task-removing,
+  .task-item-removing,
+  .status-dot-pulse {
+    animation: none;
+  }
+
+  /* The hollow ring alone still says "working"; only the rotation goes. */
+  .status-glyph-spinner {
+    animation: none;
+  }
+
+  /* These animations are declared inline and require an important override. */
+  .askcode-loading-pulse,
+  .keybinding-key {
+    animation: none !important;
+  }
 }

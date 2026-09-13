@@ -36,6 +36,7 @@ interface PtySession {
 }
 
 const sessions = new Map<string, PtySession>();
+const pendingSpawns = new Map<string, symbol>();
 
 function sendToChannel(win: BrowserWindow, channelId: string, msg: unknown): void {
   if (!win.isDestroyed()) {
@@ -515,7 +516,7 @@ export function applyAgentHookLaunch(
   return withClaudeHookSettings(command, args.args, agentHookRuntime.claudeSettingsPath);
 }
 
-export function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): void {
+export async function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): Promise<void> {
   const channelId = args.onOutput.__CHANNEL_ID__;
   const command = args.command || resolveUserShell();
   const cwd = args.cwd || process.env.HOME || '/';
@@ -558,6 +559,7 @@ export function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): void {
   // spawn error instead of killing the running session it was meant to replace.
   const fileEnv = args.envFile?.trim() ? loadEnvFile(args.envFile) : {};
 
+  pendingSpawns.delete(args.agentId);
   cleanupExistingSession(args.agentId, existing);
 
   const spawnEnv = buildPtySpawnEnv(args.env, fileEnv);
@@ -569,7 +571,16 @@ export function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): void {
     // Resolve the repo root once — each helper would otherwise spawn its own
     // `git rev-parse` subprocess.
     const repoRoot = detectRepoRoot(cwd);
-    ensureClaudeSandboxFiles(cwd, repoRoot);
+    const pending = Symbol();
+    pendingSpawns.set(args.agentId, pending);
+    try {
+      await ensureClaudeSandboxFiles(cwd, repoRoot);
+      if (pendingSpawns.get(args.agentId) !== pending) {
+        throw new Error('Agent startup cancelled');
+      }
+    } finally {
+      if (pendingSpawns.get(args.agentId) === pending) pendingSpawns.delete(args.agentId);
+    }
     ensureSandboxExcludes(cwd);
     ensureWorktreeContainerExclude(cwd);
     // Migrate legacy whole-dir node_modules symlinks and pick up packages
@@ -644,6 +655,7 @@ export function resumeAgent(agentId: string): void {
 }
 
 export function killAgent(agentId: string): void {
+  pendingSpawns.delete(agentId);
   const session = sessions.get(agentId);
   if (session) {
     if (session.flushTimer) {
@@ -669,6 +681,7 @@ export function countRunningAgents(): number {
 }
 
 export function killAllAgents(): void {
+  pendingSpawns.clear();
   for (const [, session] of sessions) {
     if (session.flushTimer) clearTimeout(session.flushTimer);
     session.subscribers.clear();

@@ -202,7 +202,7 @@ it('focuses both views on each step, can reveal all changes, and finishes withou
     JSON.parse(
       host.querySelector('[data-testid="diff-target"]')?.getAttribute('data-files') ?? '[]',
     ) as string[];
-  click('Tour these changes');
+  click('Generate tour');
   await vi.waitFor(() => expect(channels).toHaveLength(1));
   complete([
     {
@@ -259,7 +259,7 @@ it('does not show a duplicate tour control in the ordinary changes overlay', asy
     expect(host.querySelector('[data-testid="diff-target"]')?.textContent).toContain('new'),
   );
   expect(host.querySelector('aside')?.style.width).toBe('300px');
-  expect(host.textContent).not.toContain('Tour these changes');
+  expect(host.textContent).not.toContain('Generate tour');
   expect(host.textContent).not.toContain('Start tour');
   expect(vi.mocked(invoke).mock.calls.some(([channel]) => channel === IPC.AskAboutCode)).toBe(
     false,
@@ -286,7 +286,7 @@ it.each(['cancel', 'reset'] as const)('ignores a pending diff load after %s', as
   await Promise.resolve();
   expect(channels).toHaveLength(0);
   expect(host.querySelector('[data-testid="diff-target"]')).toBeNull();
-  expect(host.textContent).toContain('Tour these changes');
+  expect(host.textContent).toContain('Generate tour');
 });
 
 it('shows a diff-loading failure inline without opening the viewer and allows retry', async () => {

@@ -1117,7 +1117,7 @@ export class Coordinator {
       // sub-task container, rather than killing processes inside the coordinator).
       const channelId = randomUUID();
 
-      spawnAgent(this.win, {
+      await spawnAgent(this.win, {
         taskId: task.id,
         agentId,
         command: agentCommand,

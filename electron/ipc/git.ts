@@ -114,6 +114,8 @@ function cacheKey(p: string): string {
 // --- Worktree lock serialization ---
 
 const worktreeLocks = new Map<string, Promise<void>>();
+const sandboxSetups = new Map<string, Promise<void>>();
+const worktreeRemovals = new Map<string, Promise<void>>();
 
 function withWorktreeLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = worktreeLocks.get(key) ?? Promise.resolve();
@@ -837,6 +839,25 @@ async function computeBranchDiffStats(
  * Throws with an actionable message when the leftovers need `sudo` to clear.
  */
 async function forceRemoveWorktreeDir(repoRoot: string, worktreePath: string): Promise<void> {
+  const key = safeRealpath(path.resolve(worktreePath));
+  const existing = worktreeRemovals.get(key);
+  if (existing) return existing;
+
+  // Copies must settle before deletion; cancelling a PTY launch does not stop
+  // its filesystem writes. Reject new setup requests while removal is pending.
+  const removal = (async () => {
+    await sandboxSetups.get(key);
+    await removeWorktreeDir(repoRoot, worktreePath);
+  })();
+  worktreeRemovals.set(key, removal);
+  try {
+    await removal;
+  } finally {
+    worktreeRemovals.delete(key);
+  }
+}
+
+async function removeWorktreeDir(repoRoot: string, worktreePath: string): Promise<void> {
   try {
     await exec('git', ['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot });
     return;
@@ -979,7 +1000,7 @@ export async function createWorktree(
     }
   }
 
-  ensureClaudeSandboxFiles(worktreePath, repoRoot);
+  await ensureClaudeSandboxFiles(worktreePath, repoRoot);
   ensureSandboxExcludes(worktreePath);
   ensureSymlinkExcludes(worktreePath, createdSymlinks);
 
@@ -999,7 +1020,30 @@ export async function createWorktree(
  * from the previous shallow-symlink behavior and seeds any newly-missing
  * entries from the source.
  */
-export function ensureClaudeSandboxFiles(worktreePath: string, repoRoot?: string | null): void {
+export async function ensureClaudeSandboxFiles(
+  worktreePath: string,
+  repoRoot?: string | null,
+): Promise<void> {
+  const key = safeRealpath(path.resolve(worktreePath));
+  if (worktreeRemovals.has(key)) throw new Error('Worktree is being removed');
+  const existing = sandboxSetups.get(key);
+  if (existing) return existing;
+
+  // AI and shell agents can start together. A destination directory existing
+  // during a recursive copy does not mean its contents are ready yet.
+  const setup = seedClaudeSandboxFiles(worktreePath, repoRoot);
+  sandboxSetups.set(key, setup);
+  try {
+    await setup;
+  } finally {
+    sandboxSetups.delete(key);
+  }
+}
+
+async function seedClaudeSandboxFiles(
+  worktreePath: string,
+  repoRoot?: string | null,
+): Promise<void> {
   const claudeDir = path.join(worktreePath, '.claude');
   try {
     fs.mkdirSync(claudeDir, { recursive: true });
@@ -1043,7 +1087,8 @@ export function ensureClaudeSandboxFiles(worktreePath: string, repoRoot?: string
         const dst = path.join(claudeDir, entry.name);
         if (fs.existsSync(dst)) continue;
         try {
-          fs.cpSync(path.join(source, entry.name), dst, {
+          // Recursive copies can be large; never block Electron's main thread.
+          await fs.promises.cp(path.join(source, entry.name), dst, {
             recursive: true,
             dereference: true,
           });
