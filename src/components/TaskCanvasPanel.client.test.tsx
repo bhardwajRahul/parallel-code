@@ -337,6 +337,50 @@ describe('TaskCanvasPanel', () => {
     expect(unregisterFocusFn).toHaveBeenCalledWith('task-1:canvas');
   });
 
+  it.each(['reasoning', 'mindmap'] as const)(
+    'enters the %s canvas at the keyboard-selected node without stealing editor focus',
+    (kind) => {
+      mockIpc();
+      const container = document.createElement('div');
+      document.body.append(container);
+      const content = (
+        <div>
+          <svg class="investigation-svg" tabIndex={0} />
+          <button data-record-id="first" tabIndex={-1}>
+            First
+          </button>
+          <button data-record-id="selected" tabIndex={0}>
+            Selected
+          </button>
+          <textarea aria-label="Draft" />
+        </div>
+      );
+      disposers.push(
+        render(
+          () => (
+            <TaskCanvasPanel
+              task={{ ...baseTask(), canvasTabs: [{ kind }], canvasActiveTab: kind }}
+              agentId="agent-1"
+              reasoning={kind === 'reasoning' ? content : undefined}
+              mindmap={kind === 'mindmap' ? content : undefined}
+            />
+          ),
+          container,
+        ),
+      );
+      const focus = vi
+        .mocked(registerFocusFn)
+        .mock.calls.find(([key]) => key === 'task-1:canvas')?.[1];
+      expect(focus).toBeDefined();
+      focus?.();
+      expect(document.activeElement?.getAttribute('data-record-id')).toBe('selected');
+      const editor = container.querySelector('textarea');
+      editor?.focus();
+      focus?.();
+      expect(document.activeElement).toBe(editor);
+    },
+  );
+
   it('opens the picker by itself when the column has no file, changed files first', async () => {
     mockIpc();
     const { container } = mount();
@@ -351,6 +395,45 @@ describe('TaskCanvasPanel', () => {
     await waitFor(() => options(container).length === 1);
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     expect(openCanvasDocument).toHaveBeenCalledWith('task-1', 'docs/design.md');
+  });
+
+  it.each(['reasoning', 'mindmap'] as const)(
+    'dismisses the initial Markdown picker when an external request opens %s',
+    async (kind) => {
+      mockIpc();
+      const { container, setTask } = mount();
+      await waitFor(() => options(container).length === 3);
+      setTask({ canvasTabs: [{ kind }], canvasActiveTab: kind });
+      expect(container.querySelector('[aria-label="Choose a Markdown file"]')).toBeNull();
+      expect(container.querySelector('[placeholder="Filter files…"]')).toBeNull();
+      expect(container.querySelector('.task-canvas-reasoning')).not.toBeNull();
+
+      // Explicitly choosing Markdown must still reopen the picker.
+      container.querySelector<HTMLButtonElement>('[title="Open another canvas"]')?.click();
+      const item = await waitFor(() =>
+        container.querySelector<HTMLButtonElement>('[role="menuitem"]'),
+      );
+      item.click();
+      await waitFor(() => options(container).length === 3);
+      expect(container.querySelector('[aria-label="Choose a Markdown file"]')).not.toBeNull();
+    },
+  );
+
+  it('dismisses a Markdown picker when an existing canvas tab becomes active', async () => {
+    mockIpc();
+    const { container, setTask } = mount();
+    setTask({
+      canvasTabs: [{ kind: 'reasoning' }, { kind: 'mindmap' }],
+      canvasActiveTab: 'mindmap',
+    });
+    container.querySelector<HTMLButtonElement>('[title="Open another canvas"]')?.click();
+    const item = await waitFor(() =>
+      container.querySelector<HTMLButtonElement>('[role="menuitem"]'),
+    );
+    item.click();
+    await waitFor(() => options(container).length === 3);
+    setTask('canvasActiveTab', 'reasoning');
+    expect(container.querySelector('[aria-label="Choose a Markdown file"]')).toBeNull();
   });
 
   it('keeps keyboard focus inside the discard confirmation dialog', async () => {

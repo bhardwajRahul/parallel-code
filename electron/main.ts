@@ -11,6 +11,7 @@ import { registerLogHandler } from './log.js';
 import { installIpcTracing } from './ipc/trace.js';
 import { startAgentHookRuntime, stopAgentHookRuntime } from './agent-hooks/runtime.js';
 import { killAllAgents } from './ipc/pty.js';
+import { removeAllCanvasConfigs } from './mcp/canvas-config.js';
 import { stopAllPlanWatchers } from './ipc/plans.js';
 import { stopAllDocumentWork } from './documents/register.js';
 import { stopAllStepsWatchers } from './ipc/steps.js';
@@ -339,6 +340,8 @@ app.on('will-quit', () => {
   // cancelled quit correctly keeps the lock. A no-op when none is held.
   app.releaseSingleInstanceLock();
   killAllAgents();
+  // Killed agents may not report exit before the process ends; drop their credential files now.
+  removeAllCanvasConfigs();
   // Detached process groups would outlive Electron otherwise.
   verificationRunner.cancelAll();
   stopAgentHookRuntime();

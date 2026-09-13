@@ -28,6 +28,7 @@ interface PtySession {
   taskId: string;
   agentId: string;
   isShell: boolean;
+  canvasTools?: boolean;
   flushTimer: ReturnType<typeof setTimeout> | null;
   subscribers: Set<(encoded: string) => void>;
   scrollback: RingBuffer;
@@ -140,6 +141,8 @@ export const ENV_BLOCK_LIST = new Set([
 ]);
 
 export interface SpawnAgentArgs {
+  /** Set by the main process after configuring the session's canvas tools. */
+  canvasTools?: boolean;
   taskId: string;
   agentId: string;
   command: string;
@@ -167,7 +170,9 @@ function redactedSpawnArgs(command: string, args: string[]): string[] {
   if (command === 'docker') {
     return redactDockerArgs(args);
   }
-  return args;
+  return args.map((arg) =>
+    arg.includes('PARALLEL_CODE_MCP_TOKEN') ? '<redacted MCP config>' : arg,
+  );
 }
 
 function redactDockerArgs(args: string[]): string[] {
@@ -192,7 +197,7 @@ function redactDockerArgs(args: string[]): string[] {
       continue;
     }
 
-    redacted.push(arg);
+    redacted.push(arg.includes('PARALLEL_CODE_MCP_TOKEN') ? '<redacted MCP config>' : arg);
   }
 
   return redacted;
@@ -401,7 +406,7 @@ function attachPtyOutputHandlers(
 
   if (args.dockerMode) {
     const image = args.dockerImage || DOCKER_DEFAULT_IMAGE;
-    const innerCmd = [command, ...args.args].join(' ');
+    const innerCmd = [command, ...redactedSpawnArgs(command, args.args)].join(' ');
     const banner =
       `\x1b[2m[docker] container: ${containerName}\r\n` +
       `[docker] image: ${image}\r\n` +
@@ -612,6 +617,7 @@ export async function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): Prom
     taskId: args.taskId,
     agentId: args.agentId,
     isShell: args.isShell ?? false,
+    canvasTools: args.canvasTools,
     flushTimer: null,
     subscribers: new Set(),
     scrollback: new RingBuffer(),
@@ -728,9 +734,11 @@ export function getActiveAgentIds(): string[] {
 /** Return metadata for a specific agent, or null if not found. */
 export function getAgentMeta(
   agentId: string,
-): { taskId: string; agentId: string; isShell: boolean } | null {
+): { taskId: string; agentId: string; isShell: boolean; canvasTools?: boolean } | null {
   const s = sessions.get(agentId);
-  return s ? { taskId: s.taskId, agentId: s.agentId, isShell: s.isShell } : null;
+  return s
+    ? { taskId: s.taskId, agentId: s.agentId, isShell: s.isShell, canvasTools: s.canvasTools }
+    : null;
 }
 
 /** Return the current column width of an agent's PTY. */

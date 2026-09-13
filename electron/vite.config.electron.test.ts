@@ -1,14 +1,20 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import config, { RENDERER_CSP } from './vite.config.electron';
 
 describe('electron vite config', () => {
-  it('ignores nested worktree directories in dev watch mode', () => {
+  it('watches this checkout even when it is itself inside a worktree', () => {
     const ignored = config.server?.watch?.ignored;
-
-    expect(ignored).toBeDefined();
-
-    const patterns = Array.isArray(ignored) ? ignored : [ignored];
-    expect(patterns).toContain('**/.worktrees/**');
+    if (typeof ignored !== 'function') throw new Error('Expected a root-relative watch predicate');
+    expect(ignored(process.cwd())).toBe(false);
+    expect(ignored(path.join(process.cwd(), 'src/investigation/InvestigationGraph.tsx'))).toBe(
+      false,
+    );
+  });
+  it('ignores worktrees nested under this checkout', () => {
+    const ignored = config.server?.watch?.ignored;
+    if (typeof ignored !== 'function') throw new Error('Expected a root-relative watch predicate');
+    expect(ignored(path.join(process.cwd(), '.worktrees/task/other/src/index.tsx'))).toBe(true);
   });
 });
 

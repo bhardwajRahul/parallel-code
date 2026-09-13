@@ -24,10 +24,20 @@ interface CanvasTabStripProps {
 const CANVAS_KINDS: Array<{ kind: CanvasTabKind; label: string }> = [
   { kind: 'markdown', label: 'Markdown file…' },
   { kind: 'browser', label: 'Browser' },
+  { kind: 'mindmap', label: 'Mind map' },
+  { kind: 'reasoning', label: 'Reasoning' },
 ];
 
-const tabLabel = (tab: CanvasTab): string =>
-  tab.kind === 'browser' ? 'Browser' : (tab.path.split('/').pop() ?? tab.path);
+/** An open canvas is shown again rather than opened twice; say so in the menu. */
+const menuLabel = (tabs: CanvasTab[], item: { kind: CanvasTabKind; label: string }): string =>
+  item.kind !== 'markdown' && tabs.some((tab) => tab.kind === item.kind)
+    ? `Show ${item.label.toLowerCase()}`
+    : item.label;
+
+const tabLabel = (tab: CanvasTab): string => {
+  if (tab.kind === 'markdown') return tab.path.split('/').pop() ?? tab.path;
+  return CANVAS_KINDS.find((kind) => kind.kind === tab.kind)?.label ?? tab.kind;
+};
 
 /** The header of the canvas column: one tab per open document, a "+" for
  *  more, and a cross that closes the whole column. */
@@ -61,7 +71,13 @@ export function CanvasTabStrip(props: CanvasTabStripProps) {
                 data-canvas-document-path={tab.kind === 'markdown' ? tab.path : undefined}
                 tabIndex={0}
                 aria-selected={isActive()}
-                title={tab.kind === 'browser' ? 'Browser preview' : tab.path}
+                title={
+                  tab.kind === 'markdown'
+                    ? tab.path
+                    : tab.kind === 'browser'
+                      ? 'Browser preview'
+                      : tabLabel(tab)
+                }
                 onClick={() => props.onActivate(key)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') props.onActivate(key);
@@ -189,7 +205,7 @@ export function CanvasTabStrip(props: CanvasTabStripProps) {
                     cursor: 'pointer',
                   }}
                 >
-                  {item.label}
+                  {menuLabel(props.tabs, item)}
                 </button>
               )}
             </For>

@@ -39,6 +39,7 @@ import {
   setCoordinatorNotificationDelayMs,
   setDefaultStepsEnabled,
   setDefaultSkipPermissions,
+  setCanvasOwnershipBadges,
   setDefaultPropagateSkipPermissions,
   updateStatus,
   checkForUpdates,
@@ -435,6 +436,12 @@ export function SettingsDialog(props: SettingsDialogProps) {
               checked={store.showPlans}
               onChange={setShowPlans}
               description="Show a Review Plan button in Notes when a plan file is available"
+            />
+            <SettingsCheckboxRow
+              label="Show ownership badges on canvases"
+              checked={store.canvasOwnershipBadges}
+              onChange={setCanvasOwnershipBadges}
+              description="Mark nodes you edited on mind maps and reasoning graphs; agents leave those alone until you release them"
             />
             <SettingsCheckboxRow
               label="Desktop notifications"

@@ -41,7 +41,8 @@ const core = vi.hoisted(() => ({
   harness: undefined as MockStoreHarness<MockStore> | undefined,
 }));
 
-vi.mock('solid-js', () => ({
+vi.mock('solid-js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('solid-js')>()),
   batch: (fn: () => void) => fn(),
 }));
 

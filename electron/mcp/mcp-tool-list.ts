@@ -1,10 +1,136 @@
+import { graphOperationsSchema } from '../shared/graph-schema.js';
+import { canvasViews } from '../shared/canvas-view.js';
+import { semanticNodeKinds, reasoningStatuses } from '../shared/graph.js';
+import type { ReasoningUpdate } from '../shared/reasoning-state.js';
 /** Pure tool-list logic — extracted so it can be unit-tested without starting the MCP server. */
 
 export interface ToolDef {
   name: string;
   description: string;
-  inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[] };
+  inputSchema: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required?: string[];
+    examples?: unknown[];
+  };
 }
+
+const initialReasoningUpdate = {
+  runId: null,
+  newRunId: 'run-1',
+  expectedRevision: 0,
+  operations: [
+    {
+      type: 'insert',
+      node: {
+        id: 'goal',
+        title: 'Actual task goal',
+        detail: 'Scope and acceptance criteria.',
+        kind: 'goal',
+        status: 'unresolved',
+      },
+    },
+    {
+      type: 'insert',
+      node: {
+        id: 'cause',
+        parent: 'goal',
+        title: 'Candidate cause',
+        detail: 'A testable claim; say what would refute it.',
+        kind: 'hypothesis',
+        status: 'untested',
+      },
+    },
+    {
+      type: 'insert',
+      node: {
+        id: 'finding',
+        parent: 'cause',
+        title: 'Inspected fact',
+        detail: 'What was actually observed and where.',
+        kind: 'observation',
+        status: 'observed',
+      },
+    },
+    {
+      type: 'insert_relation',
+      relation: {
+        id: 'finding-supports-cause',
+        source: 'finding',
+        target: 'cause',
+        kind: 'supports',
+        rationale: 'Explain what the fact supports.',
+      },
+    },
+  ],
+} satisfies ReasoningUpdate;
+
+export const MINDMAP_TOOLS: ToolDef[] = [
+  {
+    name: 'mindmap_read',
+    description:
+      'Read this task’s canonical mind map, including saved user edits, protected fields and revision. Creates a central topic if empty. Unsent drafts are excluded. Read before updating.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'mindmap_update',
+    description:
+      'Apply atomic graph operations with expectedRevision from mindmap_read. Insert or patch nodes, move or remove branches, and edit relations or explanations. Omitted fields stay unchanged; null clears optional fields. Preserve user edits; overrideUser is an explicit per-operation override. The root cannot be moved or removed. On conflict read again. Ordinary nodes may omit kind. observation displays as Evidence; work as Work item. Report public summaries, not private chain-of-thought.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        expectedRevision: { type: 'integer', minimum: 0 },
+        operations: graphOperationsSchema,
+      },
+      required: ['expectedRevision', 'operations'],
+    },
+  },
+];
+export const REASONING_TOOLS: ToolDef[] = [
+  {
+    name: 'reasoning_read',
+    description:
+      'Read this task’s single current reasoning graph with saved user edits, protected fields and deleted IDs, plus runId, revision, workflow and workflows (reporting guidance keyed by workflow name). Follow the guidance for the current workflow; if the user’s question clearly calls for another shape, such as explaining existing structure rather than investigating a cause, follow that workflow’s guidance and say which you used. Unsent drafts are excluded. Read before publishing.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'reasoning_update',
+    description:
+      'Apply atomic graph operations. Pass runId and expectedRevision from reasoning_read, including when creating a new run. For an empty graph also supply newRunId; on an explicit request to start over, supply newRunId to archive the old graph. Never reset to resolve an ordinary revision conflict: read again. ' +
+      'Use type "insert" (not "insert_node") with node {id,title,detail,kind?,status?,parent?}; omit kind and status for a plain note, or supply both for a semantic note. Use type "update" with {id,changes} to patch a node. Keep exactly one root (omit parent); every other node needs node.parent referencing an existing node. Relations use {id,source,target,kind,rationale}, not fromId/toId. IDs are stable strings of letters, digits, underscores or hyphens; UUIDs are not required. ' +
+      `Node kinds: ${semanticNodeKinds.join(', ')}. Statuses: ${reasoningStatuses.join(', ')}. Evidence uses kind "observation", not "evidence". Relations need kind supports/challenges/fits and rationale. ` +
+      'Nodes may be moved or retyped. Changing kind must explicitly clear incompatible confidence/evaluations with null. Omitted fields preserve content; activeId:null clears activity. User-edited fields and deletions are protected unless the operation explicitly sets overrideUser. Attach answers with insert_explanation; explanation id, nodeId and question stay stable. Report public summaries, actual evidence and uncertainty. ' +
+      `Example for an empty graph (replace sample text with actual findings; otherwise use the current runId and revision): ${JSON.stringify(initialReasoningUpdate)}`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        runId: { type: ['string', 'null'] },
+        expectedRevision: { type: 'integer', minimum: 0 },
+        newRunId: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
+        caption: { type: 'string', maxLength: 2000 },
+        activeId: { type: ['string', 'null'] },
+        operations: graphOperationsSchema,
+      },
+      required: ['runId', 'expectedRevision', 'operations'],
+      examples: [initialReasoningUpdate],
+    },
+  },
+];
+
+export { CANVAS_INSTRUCTIONS } from '../shared/canvas-view.js';
+
+export const CANVAS_VIEW_TOOLS: ToolDef[] = [
+  {
+    name: 'canvas_open',
+    description:
+      'Open or focus this task’s Mind map or Reasoning graph canvas for the user. Use it when the user asks to see, open, or create a map or graph, before or after publishing with mindmap_update or reasoning_update. Idempotent; it changes no content.',
+    inputSchema: {
+      type: 'object',
+      required: ['view'],
+      properties: { view: { enum: [...canvasViews] } },
+    },
+  },
+];
 
 export const SUBTASK_TOOLS: ToolDef[] = [
   {
@@ -187,7 +313,14 @@ export const COORDINATOR_TOOLS: ToolDef[] = [
  * Sub-tasks (taskId set, no coordinatorId) get only sub-task scoped tools.
  * Coordinators (and plain agents) get the full coordinator set — which does NOT include signal_done.
  */
-export function selectTools(taskId: string, coordinatorId: string): ToolDef[] {
-  if (taskId && !coordinatorId) return SUBTASK_TOOLS;
-  return COORDINATOR_TOOLS;
+/** Every session that advertises canvas tools also gets the instructions that explain them. */
+export function hasCanvasTools(taskId: string, coordinatorId: string, canvasOnly = false): boolean {
+  return canvasOnly || !!taskId || !!coordinatorId;
+}
+
+export function selectTools(taskId: string, coordinatorId: string, canvasOnly = false): ToolDef[] {
+  const canvasTools = [...MINDMAP_TOOLS, ...REASONING_TOOLS, ...CANVAS_VIEW_TOOLS];
+  if (canvasOnly) return canvasTools;
+  if (taskId && !coordinatorId) return [...SUBTASK_TOOLS, ...canvasTools];
+  return coordinatorId ? [...COORDINATOR_TOOLS, ...canvasTools] : COORDINATOR_TOOLS;
 }

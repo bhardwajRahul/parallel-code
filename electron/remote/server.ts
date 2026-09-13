@@ -27,6 +27,11 @@ import {
   type RemoteAgent,
   type RemoteAttentionState,
 } from './protocol.js';
+import { parseMindMapUpdate, type MindMapDocument, type MindMapUpdate } from '../shared/mindmap.js';
+import { parseReasoningUpdate } from '../shared/reasoning-feed.js';
+import { parseCanvasView, type CanvasView } from '../shared/canvas-view.js';
+import type { ReasoningDocument } from '../shared/reasoning.js';
+import type { ReasoningUpdate } from '../shared/reasoning-state.js';
 import type { Coordinator } from '../mcp/coordinator.js';
 import { validateBranchName } from '../mcp/validation.js';
 import type { ApiTaskDetail, LandSelfInput, SubtaskVerification } from '../mcp/types.js';
@@ -234,8 +239,18 @@ const MIME: Record<string, string> = {
 interface RemoteServer {
   /** Stop transport; explicit desktop disconnect also revokes remembered phones. */
   stop: (forgetDevices?: boolean) => Promise<void>;
+  registerCanvasAgent: (taskId: string, agentId: string) => string;
+  unregisterCanvasAgent: (agentId: string) => void;
+  hasCanvasAgents: () => boolean;
+  /** Move the listener to another interface; rejects and keeps the old one when the new
+   *  bind fails, or rejects with a dead handle (`listening` false) when neither binds. */
+  rebind: (host: string) => Promise<void>;
+  /** False once the handle has nothing listening and must be dropped by its owner. */
+  readonly listening: boolean;
   /** Enable remembered phones only when the desktop explicitly enables remote access. */
   enableRememberedDevices: (filePath: string) => void;
+  /** Revoke remembered phones while the server keeps running for canvas agents. */
+  forgetRememberedDevices: () => void;
   token: string;
   subtaskToken: string;
   mobileToken: string;
@@ -316,6 +331,70 @@ function buildAgentList(
 }
 
 /** Read and JSON-parse a request body with a hard size cap. */
+type CanvasOps = Pick<
+  Parameters<typeof startRemoteServer>[0],
+  'readMindMap' | 'updateMindMap' | 'readReasoning' | 'updateReasoning' | 'openCanvas'
+>;
+type CanvasRoute = 'mindmaps' | 'reasoning' | 'canvas';
+const CANVAS_MAX_IN_FLIGHT = 4;
+// The renderer reports failures as plain messages; 409 tells the agent to read again, 400 to fix its input.
+const CANVAS_CONFLICT =
+  /read (it )?again|has changed|changed during|no longer available|still being written|revision changed|publish sequence 0/i;
+const CANVAS_UNAVAILABLE = /not available|did not respond|unavailable/i;
+
+function httpError(status: number, message: string): Error & { status: number } {
+  return Object.assign(new Error(message), { status });
+}
+
+function canvasErrorStatus(err: unknown): number {
+  const status = (err as { status?: unknown }).status;
+  if (typeof status === 'number') return status;
+  const message = String(err);
+  if (message.includes('Body too large')) return 413;
+  if (CANVAS_CONFLICT.test(message)) return 409;
+  return CANVAS_UNAVAILABLE.test(message) ? 503 : 400;
+}
+
+async function canvasRequest(
+  ops: CanvasOps,
+  req: IncomingMessage,
+  taskId: string,
+  route: CanvasRoute,
+): Promise<unknown> {
+  if (route === 'canvas') {
+    if (req.method !== 'POST') throw httpError(405, 'Method not allowed');
+    if (!ops.openCanvas) throw httpError(503, 'Canvas unavailable');
+    const view = parseCanvasView(await readJsonBody(req));
+    await ops.openCanvas(taskId, view);
+    return { ok: true, view };
+  }
+  const reasoning = route === 'reasoning';
+  if (req.method === 'GET') {
+    const read = reasoning ? ops.readReasoning : ops.readMindMap;
+    if (!read) throw httpError(503, 'Canvas unavailable');
+    return read(taskId);
+  }
+  if (reasoning) {
+    if (!ops.updateReasoning) throw httpError(503, 'Reasoning unavailable');
+    const body = await readJsonBody(req, 1024 * 1024);
+    return ops.updateReasoning(taskId, parseReasoningUpdate(body));
+  }
+  if (!ops.updateMindMap) throw httpError(503, 'Mind maps unavailable');
+  const body = await readJsonBody(req, 8 * 1024 * 1024);
+  return ops.updateMindMap(taskId, parseMindMapUpdate(body));
+}
+
+/** Sub-task ownership proof: the per-task done token must match exactly. */
+function doneTokenMatches(req: IncomingMessage, expected: string | null | undefined): boolean {
+  const incoming = req.headers['x-done-token'];
+  return Boolean(
+    expected &&
+    typeof incoming === 'string' &&
+    Buffer.byteLength(incoming) === Buffer.byteLength(expected) &&
+    timingSafeEqual(Buffer.from(incoming), Buffer.from(expected)),
+  );
+}
+
 function readJsonBody(
   req: IncomingMessage,
   maxBytes = 64 * 1024,
@@ -354,7 +433,7 @@ function readJsonBody(
 
 export type JsonReply = (status: number, body: unknown) => void;
 
-type TokenClass = 'coordinator' | 'subtask' | 'mobile' | 'paired';
+type TokenClass = 'coordinator' | 'subtask' | 'mobile' | 'paired' | 'canvas';
 
 export function createJsonReply(
   res: ServerResponse,
@@ -744,6 +823,12 @@ export function startRemoteServer(opts: {
     name: string;
     prompt: string;
   }) => Promise<{ taskId: string }>;
+  readMindMap?: (taskId: string) => Promise<MindMapDocument>;
+  readReasoning?: (taskId: string) => Promise<ReasoningDocument>;
+  updateReasoning?: (taskId: string, update: ReasoningUpdate) => Promise<ReasoningDocument>;
+  updateMindMap?: (taskId: string, update: MindMapUpdate) => Promise<MindMapDocument>;
+  /** Open or focus a canvas view for the agent's own task (renderer-backed). */
+  openCanvas?: (taskId: string, view: CanvasView) => Promise<void>;
   /** Read a task's notes (renderer-backed). */
   getTaskNotes?: (taskId: string) => Promise<string>;
   /** Persist a task's notes (renderer-backed). */
@@ -764,6 +849,24 @@ export function startRemoteServer(opts: {
   const mobileToken = randomBytes(24).toString('base64url');
   const ips = getNetworkIps();
 
+  const canvasAgents = new Map<string, { taskId: string; token: Buffer }>();
+  // Renderer round-trips wait up to 120 s each; a small per-task cap keeps one agent from pinning memory.
+  const canvasInFlight = new Map<string, number>();
+  function acquireCanvasSlot(key: string): (() => void) | undefined {
+    const count = canvasInFlight.get(key) ?? 0;
+    if (count >= CANVAS_MAX_IN_FLIGHT) return;
+    canvasInFlight.set(key, count + 1);
+    return () => {
+      const remaining = (canvasInFlight.get(key) ?? 1) - 1;
+      if (remaining > 0) canvasInFlight.set(key, remaining);
+      else canvasInFlight.delete(key);
+    };
+  }
+  const canvasOwner = (candidate: string | null) =>
+    [...canvasAgents].find(([, owner]) => {
+      const incoming = Buffer.from(candidate ?? '');
+      return incoming.length === owner.token.length && timingSafeEqual(incoming, owner.token);
+    });
   const tokenBuf = Buffer.from(token);
   const subtaskTokenBuf = Buffer.from(subtaskToken);
   const mobileTokenBuf = Buffer.from(mobileToken);
@@ -828,6 +931,7 @@ export function startRemoteServer(opts: {
     if (buf.length === mobileTokenBuf.length && timingSafeEqual(buf, mobileTokenBuf))
       return 'mobile';
     if (isPairedToken(createHash('sha256').update(buf).digest())) return 'paired';
+    if (canvasOwner(candidate)) return 'canvas';
     return null;
   }
 
@@ -913,6 +1017,47 @@ export function startRemoteServer(opts: {
         res.writeHead(status, { ...SECURITY_HEADERS, 'Content-Type': 'application/json' });
         res.end(JSON.stringify(body));
       };
+
+      const mapMatch = url.pathname.match(/^\/api\/(mindmaps|reasoning|canvas)\/([^/]+)$/);
+      if (mapMatch) {
+        const route = mapMatch[1] as CanvasRoute;
+        let taskId: string;
+        try {
+          taskId = decodeURIComponent(mapMatch[2]);
+        } catch {
+          return jsonEnd(400, { error: 'Invalid task ID' });
+        }
+        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(taskId))
+          return jsonEnd(400, { error: 'Invalid task ID' });
+        const orch = opts.getCoordinator();
+        const rawToken = extractRawToken(req);
+        const canvas = canvasOwner(rawToken);
+        const authorized =
+          (tokenClass === 'canvas' &&
+            canvas?.[1].taskId === taskId &&
+            getAgentMeta(canvas[0])?.taskId === taskId) ||
+          (tokenClass === 'coordinator' &&
+            req.headers['x-coordinator-id'] === taskId &&
+            orch?.isRegisteredCoordinator(taskId)) ||
+          (tokenClass === 'subtask' && doneTokenMatches(req, orch?.getTaskDoneToken(taskId)));
+        if (!authorized)
+          return jsonEnd(403, { error: 'This session can only access its own task’s canvas.' });
+        if (req.method !== 'GET' && req.method !== 'POST')
+          return jsonEnd(405, { error: 'Method not allowed' });
+        // Coordinator sub-tasks share one token; cap per task so they do not starve each other.
+        const release = acquireCanvasSlot(`${tokenClass}:${taskId}`);
+        if (!release)
+          return jsonEnd(429, {
+            error: 'Too many concurrent canvas requests. Wait for earlier ones to finish.',
+          });
+        void canvasRequest(opts, req, taskId, route)
+          .then((result) => jsonEnd(200, result))
+          .catch((err) => jsonEnd(canvasErrorStatus(err), { error: String(err) }))
+          .finally(release);
+        return;
+      }
+      // Canvas credentials have no access to task control, terminals or device pairing.
+      if (tokenClass === 'canvas') return jsonEnd(403, { error: 'forbidden' });
 
       // --- Device pairing (mobile → paired elevation) ---
       // A phone holding the read-only mobile token submits the PIN shown on the
@@ -1145,16 +1290,8 @@ export function startRemoteServer(opts: {
         const requireTask = (taskId: string) =>
           requireOwnedTask(orch, taskId, callerCoordinatorId, jsonReply);
 
-        const hasMatchingDoneToken = (taskId: string): boolean => {
-          const expected = orch.getTaskDoneToken(taskId);
-          const incoming = req.headers['x-done-token'];
-          return Boolean(
-            expected &&
-            typeof incoming === 'string' &&
-            incoming.length === expected.length &&
-            timingSafeEqual(Buffer.from(incoming), Buffer.from(expected)),
-          );
-        };
+        const hasMatchingDoneToken = (taskId: string): boolean =>
+          doneTokenMatches(req, orch.getTaskDoneToken(taskId));
 
         const taskIdMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(.+))?$/);
 
@@ -1307,6 +1444,7 @@ export function startRemoteServer(opts: {
   });
 
   const unsubExit = onPtyEvent('exit', (agentId, data) => {
+    canvasAgents.delete(agentId);
     const { exitCode } = (data ?? {}) as { exitCode?: number };
     broadcast({ type: 'status', agentId, status: 'exited', exitCode: exitCode ?? null });
     // Clean stale subscription entries from all connected clients
@@ -1524,9 +1662,13 @@ export function startRemoteServer(opts: {
     });
   });
 
-  const bindHost = opts.host ?? '0.0.0.0';
+  let bindHost = opts.host ?? '0.0.0.0';
+  let rebinding: Promise<void> | undefined;
 
-  server.on('error', (err) => {
+  // ws forwards HTTP server errors to itself before the HTTP startup listener
+  // runs. Handle that event so a port collision can reject startup and let the
+  // caller try the next port, instead of throwing and leaving startup pending.
+  wss.on('error', (err) => {
     console.error('[remote] Server error:', err.message);
   });
 
@@ -1537,11 +1679,71 @@ export function startRemoteServer(opts: {
   const url = `http://${primaryIp}:${opts.port}?token=${mobileToken}`;
 
   const result: RemoteServer = {
+    unregisterCanvasAgent: (agentId) => {
+      canvasAgents.delete(agentId);
+    },
+    registerCanvasAgent: (taskId, agentId) => {
+      const existing = canvasAgents.get(agentId);
+      if (existing?.taskId === taskId) return existing.token.toString();
+      const secret = randomBytes(24).toString('base64url');
+      canvasAgents.set(agentId, { taskId, token: Buffer.from(secret) });
+      return secret;
+    },
+    hasCanvasAgents: () =>
+      [...canvasAgents].some(([agentId, owner]) => getAgentMeta(agentId)?.taskId === owner.taskId),
     token,
     subtaskToken,
     mobileToken,
     port: opts.port,
-    bindHost,
+    get bindHost() {
+      return bindHost;
+    },
+    get listening() {
+      return server.listening;
+    },
+    rebind: async (host) => {
+      if (rebinding) await rebinding;
+      if (bindHost === host) return;
+      const previous = bindHost;
+      // Keep the HTTP handler, credentials and WebSocket server when changing interfaces.
+      rebinding = new Promise<void>((resolve, reject) => {
+        // close() releases the listener at once but its callback waits for every socket,
+        // including upgraded WebSockets, so drop them all and listen again immediately.
+        for (const client of wss.clients) client.terminate();
+        server.close();
+        server.closeAllConnections();
+        const listenOn = (target: string, done: (error?: Error) => void) => {
+          const onListening = () => {
+            server.off('error', onError);
+            bindHost = target;
+            done();
+          };
+          const onError = (error: Error) => {
+            // listen() keeps its callback as a once('listening') handler after a failed
+            // bind; drop ours so a fallback's success cannot resolve for the failed target.
+            server.off('listening', onListening);
+            done(error);
+          };
+          server.once('listening', onListening);
+          server.once('error', onError);
+          server.listen(result.port, target);
+        };
+        listenOn(host, (error) => {
+          if (!error) return resolve();
+          // The previous listener is already closed; get it back so the handle stays usable.
+          listenOn(previous, (restoreError) => {
+            if (!restoreError) return reject(error);
+            // Nothing listens any more: release what stop() would, then hand back the failure.
+            void result.stop().finally(() => reject(restoreError));
+          });
+        });
+      });
+      try {
+        await rebinding;
+      } finally {
+        rebinding = undefined;
+      }
+    },
     url,
     /** Re-detect network IPs so newly connected interfaces (e.g. Tailscale) are picked up. */
     get wifiUrl() {
@@ -1555,6 +1757,9 @@ export function startRemoteServer(opts: {
     connectedClients: () => authenticatedClients.size,
     generatePairingPin,
     enableRememberedDevices,
+    forgetRememberedDevices: () => {
+      if (pairedDevicesPath) saveRememberedDevices([]);
+    },
     stop: (forgetDevices = false) => {
       if (forgetDevices && pairedDevicesPath) saveRememberedDevices([]);
       // server.close() drains pending HTTP bodies. They must not mint new
@@ -1579,7 +1784,13 @@ export function startRemoteServer(opts: {
   };
 
   return new Promise<RemoteServer>((resolve, reject) => {
-    const onError = (err: NodeJS.ErrnoException) => reject(toFriendlyListenError(err, opts.port));
+    const onError = (err: NodeJS.ErrnoException) => {
+      unsubSpawn();
+      unsubExit();
+      unsubListChanged();
+      wss.close();
+      reject(toFriendlyListenError(err, opts.port));
+    };
     server.once('error', onError);
     server.listen(opts.port, bindHost, () => {
       server.removeListener('error', onError);

@@ -5,6 +5,7 @@
  * that never completes (denied permission) is dropped when the map fills.
  */
 import { isPlanApprovalTool } from '../../electron/agent-hooks/status';
+import { isMarkdownPath } from './canvas-tabs';
 
 interface HookEventLike {
   event: string;
@@ -21,8 +22,6 @@ export function isPlanApprovalEvent(event: HookEventLike): boolean {
 const WRITE_TOOLS = new Set(['write', 'edit', 'multiedit', 'notebookedit']);
 const PENDING_CAP = 50;
 
-const isMarkdown = (p: string): boolean => /\.(md|markdown)$/i.test(p);
-
 /** Worktree-relative form of a path the hook reported, or null when it is not
  *  a Markdown file inside the worktree (or was clipped by the hook summary). */
 export function worktreeMarkdownPath(reported: string, worktreePath: string): string | null {
@@ -37,7 +36,7 @@ export function worktreeMarkdownPath(reported: string, worktreePath: string): st
   const segments = rel.split('/');
   if (segments.some((s) => s === '' || s === '..')) return null;
   if (/^\.(parallel|worktrees|git|claude)(\/|$)/.test(rel)) return null;
-  return isMarkdown(rel) ? rel : null;
+  return isMarkdownPath(rel) ? rel : null;
 }
 
 /**

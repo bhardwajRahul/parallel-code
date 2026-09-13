@@ -1056,6 +1056,115 @@ describe('sendPrompt', () => {
     expect(writePayloads()).toEqual(['\x1b[I', 'hello Codex', '\r']);
   });
 
+  it.each([
+    'please explain our architecture in reasoning graph',
+    'show the Reasoning Graph',
+    'update the mindmap',
+    'create a mind map',
+    'show a live map',
+  ])('includes canvas tool guidance with the chat request: %s', async (prompt) => {
+    mockAgents['agent-1'] = { status: 'running', canvasTools: true };
+    mockTasks['task-1'].promptedAgentIds = ['agent-1'];
+    mockIsAgentBracketedPasteEnabled.mockReturnValue(true);
+
+    await sendPrompt('task-1', 'agent-1', prompt);
+
+    const writes = writePayloads();
+    expect(writes).toHaveLength(3);
+    expect(writes[1].startsWith('\x1b[200~')).toBe(true);
+    expect(writes[1]).toContain(prompt);
+    expect(writes[1]).toContain('canvas_open with view "reasoning"');
+    expect(writes[1]).toContain('reasoning_read and reasoning_update');
+    expect(writes[1]).toContain('mindmap_read and mindmap_update');
+    expect(writes[1]).toContain('A Mermaid diagram or text graph in chat does not populate');
+    expect(writes[1].endsWith('\x1b[201~')).toBe(true);
+    expect(writes[2]).toBe('\r');
+    expect(mockTasks['task-1'].lastPrompt).toBe(prompt);
+  });
+
+  it('sends the canvas guidance once per agent session and never with app prompts', async () => {
+    mockAgents['agent-1'] = { status: 'running', canvasTools: true, generation: 3 };
+    mockTasks['task-1'].promptedAgentIds = ['agent-1'];
+    const prompt = 'update the mind map';
+
+    await sendPrompt('task-1', 'agent-1', prompt, { appPrompt: true });
+    expect(writePayloads()[1]).toBe(prompt);
+
+    await sendPrompt('task-1', 'agent-1', prompt);
+    expect(writePayloads()[4]).toContain('mindmap_read and mindmap_update');
+
+    await sendPrompt('task-1', 'agent-1', 'and the reasoning graph too');
+    expect(writePayloads()[7]).toBe('and the reasoning graph too');
+
+    mockAgents['agent-1'] = { status: 'running', canvasTools: true, generation: 4 };
+    await sendPrompt('task-1', 'agent-1', prompt);
+    expect(writePayloads()[10]).toContain('mindmap_read and mindmap_update');
+  });
+
+  it('sends the canvas guidance again when the delivery failed', async () => {
+    mockAgents['agent-1'] = { status: 'running', canvasTools: true, generation: 5 };
+    mockTasks['task-1'].promptedAgentIds = ['agent-1'];
+    const prompt = 'update the mind map';
+    mockInvoke.mockImplementationOnce(async () => {}).mockRejectedValueOnce(new Error('gone'));
+
+    await expect(sendPrompt('task-1', 'agent-1', prompt)).rejects.toThrow('gone');
+    await sendPrompt('task-1', 'agent-1', prompt);
+    expect(writePayloads().at(-2)).toContain('mindmap_read and mindmap_update');
+  });
+
+  it('does not mark a session restarted mid-send as guided', async () => {
+    mockAgents['agent-1'] = { status: 'running', canvasTools: true, generation: 6 };
+    mockTasks['task-1'].promptedAgentIds = ['agent-1'];
+    const prompt = 'update the mind map';
+    mockInvoke.mockImplementation(async (channel: string, payload: unknown) => {
+      // The agent restarts while the prompt text is on its way to the old session.
+      if (channel === IPC.WriteToAgent && (payload as { data: string }).data.includes(prompt))
+        mockAgents['agent-1'] = { status: 'running', canvasTools: true, generation: 7 };
+    });
+
+    await sendPrompt('task-1', 'agent-1', prompt);
+    expect(mockAgents['agent-1']).not.toHaveProperty('canvasGuidanceGeneration');
+
+    await sendPrompt('task-1', 'agent-1', prompt);
+    expect(writePayloads().at(-2)).toContain('mindmap_read and mindmap_update');
+    expect(mockAgents['agent-1']).toMatchObject({ canvasGuidanceGeneration: 7 });
+  });
+
+  it.each([false, undefined])(
+    'does not advertise unavailable canvas tools (%s)',
+    async (available) => {
+      mockAgents['agent-1'] = { status: 'running', canvasTools: available };
+      const prompt = 'please explain our architecture in reasoning graph';
+
+      await sendPrompt('task-1', 'agent-1', prompt);
+
+      expect(writePayloads()).toEqual(['\x1b[I', prompt, '\r']);
+    },
+  );
+
+  it('leaves unrelated prompts unchanged when canvas tools are available', async () => {
+    mockAgents['agent-1'] = { status: 'running', canvasTools: true };
+
+    await sendPrompt('task-1', 'agent-1', 'explain our architecture');
+
+    expect(writePayloads()).toEqual(['\x1b[I', 'explain our architecture', '\r']);
+  });
+
+  it('checks canvas availability after startup when sending the initial prompt', async () => {
+    const prompt = 'please explain our architecture in reasoning graph';
+    mockTasks['task-1'].agentIds = ['agent-1'];
+    mockTasks['task-1'].initialPrompt = prompt;
+    mockInvoke.mockImplementationOnce(async () => {
+      mockAgents['agent-1'] = { status: 'running', canvasTools: true };
+    });
+
+    await sendPrompt('task-1', 'agent-1', prompt);
+
+    expect(writePayloads()[1]).toContain('canvas_open with view "reasoning"');
+    expect(mockTasks['task-1'].initialPrompt).toBeUndefined();
+    expect(mockTasks['task-1'].lastPrompt).toBe(prompt);
+  });
+
   it('asks tracked active steps to describe what is happening now', async () => {
     mockTasks['task-1'].stepsEnabled = true;
 
@@ -1178,6 +1287,34 @@ describe('closeTask — IPC cleanup ordering', () => {
     harness.reset(harness.state());
     mockInvoke.mockResolvedValue(undefined);
   });
+
+  it.each([
+    { gitIsolation: 'direct', externalWorktree: undefined, removes: true },
+    { gitIsolation: 'none', externalWorktree: undefined, removes: true },
+    { gitIsolation: 'worktree', externalWorktree: true, removes: true },
+    { gitIsolation: 'worktree', externalWorktree: undefined, removes: false },
+  ])(
+    'removes reasoning reports only when the checkout outlives the task: %j',
+    async ({ gitIsolation, externalWorktree, removes }) => {
+      mockTasks['task-1'] = {
+        agentIds: [],
+        shellAgentIds: [],
+        gitIsolation,
+        externalWorktree,
+        worktreePath: '/repo',
+        projectId: 'proj-1',
+      };
+      mockInvoke.mockResolvedValue(undefined);
+
+      await closeTask('task-1');
+
+      const removal = mockInvoke.mock.calls.find(([c]) => c === IPC.RemoveReasoningFeeds);
+      expect(removal?.[1]).toEqual(
+        removes ? { worktreePath: '/repo', taskId: 'task-1' } : undefined,
+      );
+      expect(mockTasks['task-1']?.closingStatus).toBe('removing');
+    },
+  );
 
   it('MCP_CoordinatedTaskClosed rejection is swallowed and task is still removed', async () => {
     mockTasks['task-1'] = {

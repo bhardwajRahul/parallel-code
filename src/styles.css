@@ -217,6 +217,127 @@ body.font-smoothing {
   background: transparent;
 }
 
+.task-reasoning-empty {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--fg-muted);
+}
+.task-reasoning-graph-host {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+/* A flat pill; its details open inline so keyboard users can read them too. */
+.reasoning-graph-toolbar .task-reasoning-status {
+  color: var(--fg-muted);
+}
+.reasoning-graph-toolbar .task-reasoning-status:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.reasoning-graph-toolbar .task-reasoning-status:disabled:hover {
+  background: transparent;
+}
+/* Opened on purpose, so the details wrap instead of vanishing behind an ellipsis. */
+.task-reasoning-status-details {
+  margin-left: 6px;
+  color: var(--fg-muted);
+  white-space: normal;
+}
+.task-reasoning-status::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--fg-muted);
+}
+.task-reasoning-status[data-live='true']::before {
+  background: var(--success);
+}
+.task-reasoning-connection {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+.task-reasoning-connection [role='alert'] {
+  flex-basis: 100%;
+  color: var(--warning);
+  overflow-wrap: anywhere;
+}
+.task-reasoning-connection button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.reasoning-setup-overlay {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow: auto;
+  background: var(--task-panel-bg);
+}
+.reasoning-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 440px;
+  font-size: 12px;
+  color: var(--fg);
+}
+.reasoning-setup h3,
+.reasoning-setup p {
+  margin: 0;
+}
+.reasoning-setup > p,
+.reasoning-setup-hint,
+.reasoning-setup fieldset span {
+  color: var(--fg-muted);
+}
+.reasoning-setup fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.reasoning-setup label {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.reasoning-setup-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.reasoning-setup button {
+  color: var(--fg);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+}
+.reasoning-setup button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.reasoning-setup-blocker {
+  color: var(--warning);
+}
+
 .task-branch-info-bar {
   container-name: task-branch-info;
   container-type: inline-size;
@@ -3296,6 +3417,17 @@ html[data-look='islands-light'] .window-title-icon {
 
 .task-canvas-editor {
   color: var(--fg);
+}
+
+.task-canvas-reasoning {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.task-canvas-reasoning-content {
+  flex: 1;
+  min-height: 0;
 }
 
 .workspace-controls {

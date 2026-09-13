@@ -35,6 +35,11 @@ export {
   setTaskBrowserUrl,
   appendBrowserReference,
   markBrowserFocused,
+  openCanvasReasoning,
+  openCanvasMindMap,
+  setTaskMindMap,
+  setTaskReasoningProfile,
+  setTaskReasoningWorkspace,
   activateCanvasTab,
   closeCanvasTab,
   openTaskCanvas,
@@ -168,6 +173,7 @@ export {
   setCoordinatorModeEnabled,
   setDefaultStepsEnabled,
   setDefaultSkipPermissions,
+  setCanvasOwnershipBadges,
   setDefaultPropagateSkipPermissions,
 } from './ui';
 export {

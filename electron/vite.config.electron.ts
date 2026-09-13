@@ -62,13 +62,14 @@ export default defineConfig({
       // source-tree change to Vite in dev mode, causing the renderer to reload
       // right when Parallel Code creates a task for itself. The function ignores
       // anything resolving outside the project root (e.g. host parent dirs).
-      ignored: [
-        '**/.worktrees/**',
-        (watchedPath: string) => {
-          const resolvedPath = path.resolve(watchedPath);
-          return resolvedPath.startsWith(parentDir) && !resolvedPath.startsWith(rootDir);
-        },
-      ],
+      ignored: (watchedPath: string) => {
+        const resolvedPath = path.resolve(watchedPath);
+        // Match nested worktrees relative to this checkout, not its ancestors.
+        return (
+          path.relative(rootDir, resolvedPath).split(path.sep).includes('.worktrees') ||
+          (resolvedPath.startsWith(parentDir) && !resolvedPath.startsWith(rootDir))
+        );
+      },
     },
   },
 });

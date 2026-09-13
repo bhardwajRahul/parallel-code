@@ -206,7 +206,9 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
         setError(
           result.reason === 'coordinator_active'
             ? 'Cannot disconnect while a coordinator is active. Stop the coordinator first.'
-            : 'Failed to disconnect. Please try again.',
+            : result.reason === 'docker_active'
+              ? 'Cannot disconnect while Docker agents use the canvas. Stop those agents first.'
+              : 'Failed to disconnect. Please try again.',
         );
         return;
       }

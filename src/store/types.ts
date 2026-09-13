@@ -10,6 +10,9 @@ import type { DockerSource } from '../lib/docker';
 import type { LookPreset, AppearanceMode } from '../lib/look';
 import type { KeyBinding } from '../lib/keybindings';
 import type { CustomTheme } from '../lib/custom-theme';
+import type { ReasoningProfile } from '../investigation/profiles';
+import type { MindMapDocument } from '../mindmap/model';
+import type { ReasoningWorkspace } from '../investigation/editing';
 
 /** A user override for a binding: partial key/modifiers to apply, or null to unbind. */
 export type KeybindingOverride = Partial<Pick<KeyBinding, 'key' | 'modifiers'>> | null;
@@ -120,6 +123,8 @@ export interface DocumentSessionRef {
 }
 
 export interface Agent {
+  /** Runtime launch capability; never inferred from the selected CLI. */
+  canvasTools?: boolean;
   id: string;
   taskId: string;
   def: AgentDef;
@@ -129,17 +134,19 @@ export interface Agent {
   signal: string | null;
   lastOutput: string[];
   generation: number;
+  /** The session generation that already received the canvas tool guidance with a prompt. */
+  canvasGuidanceGeneration?: number;
   spawnDelayMs?: number;
   attachExisting?: boolean;
 }
 
-export type CanvasTabKind = 'markdown' | 'browser';
-
-export interface CanvasTab {
-  kind: CanvasTabKind;
-  /** Worktree-relative file path, or "preview" for the task browser. */
-  path: string;
-}
+/** A task side panel can show a worktree document, the browser preview, a mind map, or its reasoning graph. */
+export type CanvasTab =
+  | { kind: 'markdown'; path: string }
+  | { kind: 'browser'; path: 'preview' }
+  | { kind: 'reasoning' }
+  | { kind: 'mindmap' };
+export type CanvasTabKind = CanvasTab['kind'];
 
 export interface PromptHistoryEntry {
   text: string;
@@ -206,6 +213,13 @@ export interface Task {
   /** Key (see canvasTabKey) of the tab in front. */
   canvasActiveTab?: string;
   browserUrl?: string;
+  mindMap?: MindMapDocument;
+  /** Runtime-only: a saved map that failed validation, written back as is so nothing is lost. */
+  mindMapUnreadable?: unknown;
+  reasoningProfile?: ReasoningProfile;
+  /** Runtime-only: bypass setup when this agent session opens the graph from chat. */
+  reasoningCanvasRequest?: { agentId: string; generation: number };
+  reasoningWorkspaces?: Record<string, ReasoningWorkspace>;
   /** Column shown without a tab (the user asked for it). Not persisted. */
   canvasOpen?: boolean;
   stepsEnabled?: boolean;
@@ -291,6 +305,10 @@ export interface PersistedTask {
   canvasTabs?: CanvasTab[];
   canvasActiveTab?: string;
   browserUrl?: string;
+  /** Validated on load; an unreadable value is kept and written back unchanged. */
+  mindMap?: unknown;
+  reasoningProfile?: ReasoningProfile;
+  reasoningWorkspaces?: Record<string, ReasoningWorkspace>;
   stepsEnabled?: boolean;
   branchAdoptedFrom?: string;
   branchOfferDismissed?: string;
@@ -383,6 +401,8 @@ export interface PersistedState {
   defaultStepsEnabled?: boolean;
   defaultSkipPermissions?: boolean;
   defaultPropagateSkipPermissions?: boolean;
+  /** Show which canvas nodes the user owns (agents cannot edit them without override). */
+  canvasOwnershipBadges?: boolean;
   autoStartRemoteAccess?: boolean;
 }
 
@@ -516,6 +536,7 @@ export interface AppStore {
   defaultStepsEnabled: boolean;
   defaultSkipPermissions: boolean;
   defaultPropagateSkipPermissions: boolean;
+  canvasOwnershipBadges: boolean;
   mcpStatus: MCPStatus;
   usage: Record<UsageProvider, UsageState>;
 }

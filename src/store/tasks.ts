@@ -3,6 +3,7 @@ import { invoke, Channel } from '../lib/ipc';
 import { asStoreVerificationRun } from '../lib/verification-run';
 import { IPC } from '../../electron/ipc/channels';
 import { getSkipPermissionsArgs } from '../../electron/shared/skip-permissions';
+import { CANVAS_INSTRUCTIONS } from '../../electron/shared/canvas-view';
 import { store, setStore, cleanupPanelEntries } from './core';
 import { effectiveAgentId } from './agent-select';
 import { saveState } from './persistence';
@@ -38,6 +39,7 @@ import {
 } from '../lib/coordinator-limits';
 import { computeSidebarDraggableTaskOrder, getCoordinatorChildren } from './sidebar-order';
 import { isLandedTaskState } from './landing';
+import { forgetAgentPublication } from './reasoning-activity';
 
 export function createAgentRecord(args: {
   id: string;
@@ -512,7 +514,14 @@ export async function closeTask(taskId: string): Promise<void> {
     }
 
     // Skip git cleanup for direct mode (no worktree/branch) and imported worktrees (user-owned).
-    if (task.gitIsolation === 'worktree' && !task.externalWorktree) {
+    // Their checkout stays, so the task's reasoning reports must be removed on their own.
+    if (task.gitIsolation !== 'worktree' || task.externalWorktree) {
+      if (task.worktreePath)
+        await invoke(IPC.RemoveReasoningFeeds, { worktreePath: task.worktreePath, taskId }).catch(
+          (err: unknown) =>
+            logWarn('tasks', 'Failed to remove reasoning reports', { taskId, err: String(err) }),
+        );
+    } else {
       // Remove worktree + branch
       await invoke(IPC.DeleteTask, {
         taskId,
@@ -601,6 +610,7 @@ function removeTaskFromStore(taskId: string, agentIds: string[]): void {
     clearTimeout(activityTimer);
     activityReleaseTimers.delete(taskId);
   }
+  forgetAgentPublication(taskId);
 
   // Phase 1: mark as removing so UI can animate
   setStore('tasks', taskId, 'closingStatus', 'removing');
@@ -713,7 +723,22 @@ export function updateTaskNotes(taskId: string, notes: string): void {
   setStore('tasks', taskId, 'notes', notes);
 }
 
-export async function sendPrompt(taskId: string, agentId: string, text: string): Promise<void> {
+/** Canvas guidance goes out once per agent session; later mentions would only repeat it. */
+function canvasGuidanceDue(agentId: string, text: string): boolean {
+  const agent = store.agents[agentId];
+  if (!agent?.canvasTools || !/\b(?:reasoning\s+graph|mind\s*map|live\s+map)\b/i.test(text))
+    return false;
+  const sent = agent.canvasGuidanceGeneration;
+  return sent === undefined || sent !== agent.generation;
+}
+
+export async function sendPrompt(
+  taskId: string,
+  agentId: string,
+  text: string,
+  /** App-composed prompts carry their own canvas contract, so none is appended. */
+  options: { appPrompt?: boolean } = {},
+): Promise<void> {
   const task = store.tasks[taskId];
   assertTaskCanReceiveInput(taskId, agentId);
   const promptedAgentIds = task?.promptedAgentIds ?? [];
@@ -725,13 +750,20 @@ export async function sendPrompt(taskId: string, agentId: string, text: string):
   // the steps instruction was never injected in createTask. Append it to each
   // agent's first manual prompt so newly added agents also maintain steps.json.
   const injectSteps = !!(task?.stepsEnabled && !hasPromptedAgent && !isQueuedInitialPrompt);
-  const effectiveText = injectSteps ? `${text}\n\n---\n${STEPS_INSTRUCTION}` : text;
+  let effectiveText = injectSteps ? `${text}\n\n---\n${STEPS_INSTRUCTION}` : text;
 
   // Send a Focus In escape sequence before the prompt text.  When the user focuses
   // the PromptInput textarea, the xterm.js terminal loses DOM focus.  For agents
   // that enable focus tracking (\x1b[?1004h), xterm.js sends \x1b[O (Focus Out)
   // to the PTY, which may suspend readline input processing; \x1b[I re-activates it.
   await writeToAgentWhenReady(taskId, agentId, '\x1b[I');
+  // MCP server instructions are not always surfaced by the CLI. Include the
+  // canvas contract with the first explicit mention of a session, including resumes.
+  // Check availability after waiting for startup to finish.
+  const withGuidance = !options.appPrompt && canvasGuidanceDue(agentId, text);
+  // The session the guidance is written to; a restart mid-send spawns one that never saw it.
+  const guidedGeneration = store.agents[agentId]?.generation;
+  if (withGuidance) effectiveText += `\n\n---\n${CANVAS_INSTRUCTIONS}`;
   // Send text and Enter separately so TUI apps (Claude Code, Codex)
   // don't treat the \r as part of a pasted block.  When the agent has enabled
   // bracketed paste, wrap only the prompt text; this avoids Codex's paste-burst
@@ -745,6 +777,9 @@ export async function sendPrompt(taskId: string, agentId: string, text: string):
   );
   await new Promise((r) => setTimeout(r, pasteDelayMs(effectiveText)));
   await writeToAgentWhenReady(taskId, agentId, '\r');
+  // Recorded only after delivery, so a failed write does not silence the guidance.
+  if (withGuidance && store.agents[agentId]?.generation === guidedGeneration)
+    setStore('agents', agentId, 'canvasGuidanceGeneration', guidedGeneration);
   setLastPrompt(taskId, text, agentId);
   if (task && !hasPromptedAgent) {
     setStore('tasks', taskId, 'promptedAgentIds', [...promptedAgentIds, agentId]);

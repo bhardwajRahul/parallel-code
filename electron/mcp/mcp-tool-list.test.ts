@@ -1,16 +1,46 @@
 import { describe, expect, it } from 'vitest';
-import { selectTools, SUBTASK_TOOLS, COORDINATOR_TOOLS, type ToolDef } from './mcp-tool-list.js';
+import { parseReasoningUpdate } from '../shared/reasoning-feed.js';
+import { acceptUpdate, emptyHistory } from '../shared/reasoning-state.js';
+import {
+  selectTools,
+  SUBTASK_TOOLS,
+  COORDINATOR_TOOLS,
+  MINDMAP_TOOLS,
+  REASONING_TOOLS,
+  CANVAS_VIEW_TOOLS,
+  CANVAS_INSTRUCTIONS,
+  hasCanvasTools,
+  type ToolDef,
+} from './mcp-tool-list.js';
 
 describe('selectTools — role-based tool list', () => {
   it('sub-task (taskId set, no coordinatorId) gets only sub-task tools', () => {
     const tools = selectTools('task-abc', '');
-    expect(tools).toEqual(SUBTASK_TOOLS);
-    expect(tools.map((t: ToolDef) => t.name)).toStrictEqual(['land_self', 'signal_done']);
+    expect(tools).toEqual([
+      ...SUBTASK_TOOLS,
+      ...MINDMAP_TOOLS,
+      ...REASONING_TOOLS,
+      ...CANVAS_VIEW_TOOLS,
+    ]);
+    expect(tools.map((t: ToolDef) => t.name)).toStrictEqual([
+      'land_self',
+      'signal_done',
+      'mindmap_read',
+      'mindmap_update',
+      'reasoning_read',
+      'reasoning_update',
+      'canvas_open',
+    ]);
   });
 
   it('coordinator (coordinatorId set, no taskId) gets coordinator tools', () => {
     const tools = selectTools('', 'coordinator-xyz');
-    expect(tools).toEqual(COORDINATOR_TOOLS);
+    expect(tools).toEqual([
+      ...COORDINATOR_TOOLS,
+      ...MINDMAP_TOOLS,
+      ...REASONING_TOOLS,
+      ...CANVAS_VIEW_TOOLS,
+    ]);
   });
 
   it('coordinator tools do NOT include signal_done', () => {
@@ -101,4 +131,50 @@ describe('selectTools — role-based tool list', () => {
       expect(names).not.toContain(forbidden);
     }
   });
+});
+
+it('ordinary canvas sessions advertise only map tools', () => {
+  expect(selectTools('normal-task', '', true)).toEqual([
+    ...MINDMAP_TOOLS,
+    ...REASONING_TOOLS,
+    ...CANVAS_VIEW_TOOLS,
+  ]);
+});
+
+it('explains the canvases to every session that advertises canvas tools', () => {
+  expect(hasCanvasTools('normal-task', '', true)).toBe(true);
+  expect(hasCanvasTools('task-abc', '')).toBe(true);
+  expect(hasCanvasTools('', 'coordinator-xyz')).toBe(true);
+  expect(hasCanvasTools('', '')).toBe(false);
+  for (const name of ['canvas_open', 'mindmap_update', 'reasoning_update', 'reasoning graph'])
+    expect(CANVAS_INSTRUCTIONS).toContain(name);
+  expect(CANVAS_INSTRUCTIONS).toContain('Shape the graph to the question');
+});
+
+it('canvas_open takes exactly one of the two canvas views', () => {
+  const tool = CANVAS_VIEW_TOOLS.find((t) => t.name === 'canvas_open');
+  expect(tool?.inputSchema.required).toEqual(['view']);
+  expect(tool?.inputSchema.properties.view).toEqual({ enum: ['mindmap', 'reasoning'] });
+});
+
+it('advertises a self-contained reasoning example that the transaction engine accepts', () => {
+  const tool = REASONING_TOOLS.find((tool) => tool.name === 'reasoning_update');
+  const example = tool?.inputSchema.examples?.[0];
+  expect(example).toBeDefined();
+  expect(tool?.description).toContain(JSON.stringify(example));
+  expect(tool?.description).toContain('Node kinds: goal, question');
+  expect(REASONING_TOOLS.find((t) => t.name === 'reasoning_read')?.description).toContain(
+    'workflows',
+  );
+  expect(tool?.description).toContain('Statuses: untested, unresolved');
+  const update = parseReasoningUpdate(example);
+  const { newRunId, ...command } = update;
+  const history = acceptUpdate(emptyHistory(), {
+    ...command,
+    runId: newRunId ?? '',
+    sequence: 0,
+    actor: 'agent',
+  });
+  expect(history.snapshots[0].records).toHaveLength(3);
+  expect(history.snapshots[0].relations[0]).toMatchObject({ source: 'finding', target: 'cause' });
 });

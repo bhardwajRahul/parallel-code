@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import WebSocket from 'ws';
+import http from 'node:http';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,6 +33,8 @@ let coordinatorToken = '';
 let mobileToken = '';
 let generatePin: () => { pin: string; expiresAt: number };
 let stop: () => Promise<void>;
+let rebind: (host: string) => Promise<void>;
+let srv: Awaited<ReturnType<typeof startRemoteServer>>;
 
 /** Elevate the mobile token to a paired one via the desktop PIN. */
 async function pair(): Promise<string> {
@@ -46,7 +49,7 @@ async function pair(): Promise<string> {
 }
 
 beforeEach(async () => {
-  const srv = await startRemoteServer({
+  srv = await startRemoteServer({
     port: 0,
     host: '0.0.0.0',
     staticDir: '/nonexistent',
@@ -55,6 +58,7 @@ beforeEach(async () => {
     getCoordinator: () => null,
   });
   port = srv.port;
+  rebind = srv.rebind;
   coordinatorToken = srv.token;
   mobileToken = srv.mobileToken;
   generatePin = srv.generatePairingPin;
@@ -468,5 +472,73 @@ describe('acknowledged phone messages', () => {
     );
     expect(await closed).toBe(4003);
     expect(pty.writeToAgent).not.toHaveBeenCalled();
+  });
+});
+
+describe('rebind', () => {
+  it('completes while a WebSocket client is connected and keeps serving HTTP', async () => {
+    const ws = await connectAndAuth(mobileToken);
+    const closed = waitForClose(ws);
+    await rebind('127.0.0.1');
+    expect(typeof (await closed)).toBe('number');
+    const res = await fetch(`http://127.0.0.1:${port}/api/pair/verify`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${mobileToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '000000' }),
+    });
+    expect(res.status).not.toBe(404);
+  });
+});
+
+describe('rebind', () => {
+  /** Fail the next listen the way a missing interface does, without touching the network. */
+  const failListen = function (this: http.Server) {
+    process.nextTick(() => this.emit('error', new Error('EADDRNOTAVAIL')));
+    return this;
+  };
+
+  it('restores the previous interface when the new one cannot be bound', async () => {
+    // A wildcard bind blocks every other listener on the port, so narrow first; the
+    // second loopback address can then be occupied (Linux) or is missing (macOS): a
+    // real bind failure either way.
+    await rebind('127.0.0.1');
+    const occupied = http.createServer();
+    await new Promise<void>((resolve, reject) => {
+      occupied.once('error', (error: NodeJS.ErrnoException) =>
+        error.code === 'EADDRNOTAVAIL' ? resolve() : reject(error),
+      );
+      occupied.listen(port, '127.0.0.2', resolve);
+    });
+    try {
+      await expect(rebind('127.0.0.2')).rejects.toThrow(/EADDRINUSE|EADDRNOTAVAIL/);
+    } finally {
+      if (occupied.listening) await new Promise((resolve) => occupied.close(resolve));
+    }
+    expect(srv.bindHost).toBe('127.0.0.1');
+    expect(srv.listening).toBe(true);
+    const res = await fetch(`http://127.0.0.1:${port}/api/pair/verify`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${mobileToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '000000' }),
+    });
+    expect(res.status).not.toBe(404);
+    const ws = await connectAndAuth(mobileToken);
+    ws.close();
+  });
+
+  // The fallback re-listens on the address just released, so nothing real can take it
+  // in between; only a stub makes both binds fail.
+  it('releases a handle that can listen nowhere so the caller can drop it', async () => {
+    const listen = vi.spyOn(http.Server.prototype, 'listen').mockImplementation(failListen);
+    try {
+      await expect(rebind('127.0.0.1')).rejects.toThrow('EADDRNOTAVAIL');
+    } finally {
+      listen.mockRestore();
+    }
+    expect(srv.listening).toBe(false);
+    await expect(connectAndAuth(mobileToken)).rejects.toThrow();
+    // The stop path releases PTY subscriptions; a second stop from afterEach is harmless.
+    for (const subscription of vi.mocked(pty.onPtyEvent).mock.results)
+      expect(subscription.value).toHaveBeenCalled();
   });
 });

@@ -5,6 +5,7 @@ import type { ChangedFile } from '../../electron/ipc/shared-types';
 import { filterBranches, clampHighlight } from '../lib/branch-filter';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
+import { isMarkdownPath } from '../lib/canvas-tabs';
 
 interface CanvasFilePickerProps {
   worktreePath: string;
@@ -18,8 +19,6 @@ export interface PickerSection {
   title: string;
   files: string[];
 }
-
-const isMarkdown = (p: string): boolean => /\.(md|markdown)$/i.test(p);
 
 /** Changed files first, then the rest of the worktree; a filter narrows both. */
 export function pickerSections(all: string[], changed: string[], query: string): PickerSection[] {
@@ -56,8 +55,8 @@ export function CanvasFilePicker(props: CanvasFilePickerProps) {
         worktreePath: props.worktreePath,
       }).catch(() => [] as ChangedFile[]),
     ]).then(([files, changedFiles]) => {
-      setAll(files.filter(isMarkdown));
-      setChanged(changedFiles.map((f) => f.path).filter(isMarkdown));
+      setAll(files.filter(isMarkdownPath));
+      setChanged(changedFiles.map((f) => f.path).filter(isMarkdownPath));
       setLoaded(true);
     });
     const onPointerDown = (e: MouseEvent) => {

@@ -1,6 +1,8 @@
+import { createMindMap } from '../mindmap/model';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentDef } from '../ipc/types';
 import type { PersistedTask } from './types';
+import { emptyWorkspace, updateDraft } from '../investigation/editing';
 
 const { mockInvoke } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
@@ -331,6 +333,157 @@ describe('coordinator concurrency limit persistence', () => {
   });
 });
 
+describe('reasoning profile persistence', () => {
+  it.each(['architecture', 'research', 'explanation', undefined, 'unknown'])(
+    'restores and saves %s for active and collapsed tasks',
+    async (profile) => {
+      mockInvoke.mockResolvedValueOnce(
+        JSON.stringify({
+          projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'blue' }],
+          taskOrder: ['task-1'],
+          collapsedTaskOrder: ['task-2'],
+          activeTaskId: 'task-1',
+          tasks: {
+            'task-1': { ...persistedTask(agentDef()), reasoningProfile: profile },
+            'task-2': {
+              ...persistedTask(agentDef()),
+              id: 'task-2',
+              collapsed: true,
+              reasoningProfile: profile,
+            },
+          },
+        }),
+      );
+      await loadState();
+      const expected =
+        profile === 'architecture' || profile === 'research' || profile === 'explanation'
+          ? profile
+          : 'investigation';
+      expect(store.tasks['task-1'].reasoningProfile).toBe(expected);
+      expect(store.tasks['task-2'].reasoningProfile).toBe(expected);
+      mockInvoke.mockClear();
+      mockInvoke.mockResolvedValueOnce(undefined);
+      await saveState();
+      const call = mockInvoke.mock.calls.find(([channel]) => channel === IPC.SaveAppState);
+      expect(call).toBeDefined();
+      const saved = JSON.parse(call?.[1].json);
+      expect(saved.tasks['task-1'].reasoningProfile).toBe(expected);
+      expect(saved.tasks['task-2'].reasoningProfile).toBe(expected);
+    },
+  );
+});
+
+describe('mind map persistence', () => {
+  it('keeps an unreadable map on disk, tells the user once, and keeps the task', async () => {
+    const broken = { version: 1, revision: 'x', records: 'nope' };
+    mockInvoke.mockResolvedValueOnce(
+      JSON.stringify({
+        projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'blue' }],
+        taskOrder: ['task-1'],
+        tasks: { 'task-1': { ...persistedTask(agentDef()), name: 'Broken map', mindMap: broken } },
+      }),
+    );
+    await loadState();
+    expect(store.tasks['task-1'].mindMap).toBeUndefined();
+    expect(store.notification).toContain('Broken map');
+    expect(store.notification).toContain('kept on disk');
+    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValueOnce(undefined);
+    await saveState();
+    const call = mockInvoke.mock.calls.find(([channel]) => channel === IPC.SaveAppState);
+    expect(JSON.parse(call?.[1].json).tasks['task-1'].mindMap).toEqual(broken);
+  });
+
+  it('treats a null map as absent', async () => {
+    setStore('notification', null);
+    mockInvoke.mockResolvedValueOnce(
+      JSON.stringify({
+        projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'blue' }],
+        taskOrder: ['task-1'],
+        tasks: { 'task-1': { ...persistedTask(agentDef()), mindMap: null } },
+      }),
+    );
+    await loadState();
+    expect(store.tasks['task-1'].mindMap).toBeUndefined();
+    expect(store.tasks['task-1'].mindMapUnreadable).toBeUndefined();
+    expect(store.notification ?? '').not.toContain('mind map');
+  });
+
+  it.each([false, true])(
+    'round-trips map documents and tabs (collapsed: %s)',
+    async (collapsed) => {
+      const document = createMindMap('Saved topic');
+      mockInvoke.mockResolvedValueOnce(
+        JSON.stringify({
+          projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'blue' }],
+          taskOrder: collapsed ? [] : ['task-1'],
+          collapsedTaskOrder: collapsed ? ['task-1'] : [],
+          tasks: {
+            'task-1': {
+              ...persistedTask(agentDef()),
+              collapsed,
+              mindMap: document,
+              canvasTabs: [{ kind: 'mindmap' }],
+              canvasActiveTab: 'mindmap',
+            },
+          },
+        }),
+      );
+      await loadState();
+      expect(store.tasks['task-1'].mindMap).toEqual(document);
+      expect(store.tasks['task-1'].canvasActiveTab).toBe('mindmap');
+      mockInvoke.mockClear();
+      mockInvoke.mockResolvedValueOnce(undefined);
+      await saveState();
+      const call = mockInvoke.mock.calls.find(([channel]) => channel === IPC.SaveAppState);
+      expect(JSON.parse(call?.[1].json).tasks['task-1'].mindMap).toEqual(document);
+    },
+  );
+});
+
+describe('reasoning workspace persistence', () => {
+  it('restores and saves user drafts for active and collapsed tasks, dropping malformed runs', async () => {
+    const workspace = updateDraft(emptyWorkspace(), 'goal', {
+      title: 'Unfinished edit',
+      detail: '',
+      base: { title: 'Goal', detail: '' },
+      question: 'Investigate this',
+    });
+    const workspaces = { 'task/agent/run': workspace };
+    mockInvoke.mockResolvedValueOnce(
+      JSON.stringify({
+        projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'blue' }],
+        taskOrder: ['task-1'],
+        collapsedTaskOrder: ['task-2'],
+        activeTaskId: 'task-1',
+        tasks: {
+          'task-1': {
+            ...persistedTask(agentDef()),
+            reasoningWorkspaces: { ...workspaces, broken: { edits: false } },
+          },
+          'task-2': {
+            ...persistedTask(agentDef()),
+            id: 'task-2',
+            collapsed: true,
+            reasoningWorkspaces: workspaces,
+          },
+        },
+      }),
+    );
+    await loadState();
+    for (const id of ['task-1', 'task-2'])
+      expect(store.tasks[id].reasoningWorkspaces).toEqual(workspaces);
+    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValueOnce(undefined);
+    await saveState();
+    const call = mockInvoke.mock.calls.find(([channel]) => channel === IPC.SaveAppState);
+    expect(call).toBeDefined();
+    const saved = JSON.parse(call?.[1].json);
+    for (const id of ['task-1', 'task-2'])
+      expect(saved.tasks[id].reasoningWorkspaces).toEqual(workspaces);
+  });
+});
+
 describe('PR URL persistence', () => {
   it('persists task PR URLs', async () => {
     setStore('taskOrder', ['task-1']);
@@ -372,6 +525,7 @@ describe('PR URL persistence', () => {
             ...persistedTask(def),
             id: 'task-2',
             canvasTabs: [
+              { kind: 'reasoning' },
               { kind: 'markdown', path: 'a.md' },
               { kind: 'browser', url: 'x' },
             ],
@@ -391,8 +545,8 @@ describe('PR URL persistence', () => {
     });
     // Unknown kinds are dropped and a stale active key falls back to the first tab.
     expect(store.tasks['task-2']).toMatchObject({
-      canvasTabs: [{ kind: 'markdown', path: 'a.md' }],
-      canvasActiveTab: 'markdown:a.md',
+      canvasTabs: [{ kind: 'reasoning' }, { kind: 'markdown', path: 'a.md' }],
+      canvasActiveTab: 'reasoning',
     });
   });
 

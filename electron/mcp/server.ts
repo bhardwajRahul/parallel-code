@@ -5,8 +5,12 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import fs from 'node:fs';
 import { MCPClient } from './client.js';
-import { selectTools } from './mcp-tool-list.js';
+import { parseMindMapUpdate } from '../shared/mindmap.js';
+import { parseReasoningUpdate } from '../shared/reasoning-feed.js';
+import { parseCanvasView } from '../shared/canvas-view.js';
+import { CANVAS_INSTRUCTIONS, hasCanvasTools, selectTools } from './mcp-tool-list.js';
 import { validateBranchName } from './validation.js';
 import { formatDiffForTool } from './diff-format.js';
 import type { LandSelfInput } from './types.js';
@@ -15,28 +19,66 @@ export interface MCPToolHandlerContext {
   client: MCPClient;
   taskId: string;
   coordinatorId: string;
+  canvasOnly?: boolean;
 }
 
 export async function handleMCPToolCall(
-  { client, taskId, coordinatorId }: MCPToolHandlerContext,
+  { client, taskId, coordinatorId, canvasOnly }: MCPToolHandlerContext,
   name: string,
   params: unknown,
 ) {
-  // Sub-tasks may only call sub-task scoped terminal tools.
-  if (taskId && !coordinatorId && name !== 'signal_done' && name !== 'land_self') {
+  const canvasTool = [
+    'mindmap_read',
+    'mindmap_update',
+    'reasoning_read',
+    'reasoning_update',
+    'canvas_open',
+  ].includes(name);
+  if (canvasOnly && !canvasTool)
+    return {
+      content: [{ type: 'text', text: `Error: '${name}' is not available to canvas sessions.` }],
+      isError: true,
+    };
+  if (taskId && !coordinatorId && !canvasTool && !['signal_done', 'land_self'].includes(name))
     return {
       content: [
         {
           type: 'text',
-          text: `Error: '${name}' is not available to sub-tasks. Only land_self and signal_done are permitted.`,
+          text: `Error: '${name}' is not available to sub-tasks. Only land_self, signal_done and canvas tools are permitted.`,
         },
       ],
       isError: true,
     };
-  }
 
   try {
     switch (name) {
+      case 'reasoning_read':
+      case 'reasoning_update': {
+        const id = taskId || coordinatorId;
+        if (!id) throw new Error('A task-scoped MCP session is required.');
+        const result =
+          name === 'reasoning_read'
+            ? await client.readReasoning(id)
+            : await client.updateReasoning(id, parseReasoningUpdate(params));
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+      case 'canvas_open': {
+        const id = taskId || coordinatorId;
+        if (!id) throw new Error('A task-scoped MCP session is required.');
+        const result = await client.openCanvas(id, parseCanvasView(params));
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+      case 'mindmap_read':
+      case 'mindmap_update': {
+        const id = taskId || coordinatorId;
+        if (!id) throw new Error('A task-scoped MCP session is required.');
+        const result =
+          name === 'mindmap_read'
+            ? await client.readMindMap(id)
+            : await client.updateMindMap(id, parseMindMapUpdate(params));
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
       case 'create_task': {
         const p = params as Record<string, unknown>;
         if (typeof p.prompt !== 'string' || !p.prompt.trim()) {
@@ -222,31 +264,60 @@ export async function handleMCPToolCall(
   }
 }
 
-function parseArgs(argv: string[]): { url: string; taskId: string; coordinatorId: string } {
+export function parseArgs(argv: string[]): {
+  url: string;
+  taskId: string;
+  coordinatorId: string;
+  canvasOnly: boolean;
+  tokenFile: string;
+} {
+  let canvasOnly = false;
   let url = '';
+  let tokenFile = ''; // set for Codex: its inline config cannot carry the token privately
   let taskId = ''; // set for sub-tasks: enables signal_done
   let coordinatorId = ''; // set for coordinator: sent as coordinatorTaskId in create_task
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--url' && argv[i + 1]) {
+    if (argv[i] === '--canvas-only') {
+      canvasOnly = true;
+    } else if (argv[i] === '--url' && argv[i + 1]) {
       url = argv[++i];
     } else if (argv[i] === '--task-id' && argv[i + 1]) {
       taskId = argv[++i];
     } else if (argv[i] === '--coordinator-id' && argv[i + 1]) {
       coordinatorId = argv[++i];
+    } else if (argv[i] === '--token-file' && argv[i + 1]) {
+      tokenFile = argv[++i];
     }
   }
-  return { url, taskId, coordinatorId };
+  return { url, taskId, coordinatorId, canvasOnly, tokenFile };
+}
+
+/** The token file is the app-written 0600 MCP config; an unreadable file yields no token. */
+export function readTokenFile(file: string): string {
+  try {
+    const config = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+      mcpServers?: { 'parallel-code'?: { env?: { PARALLEL_CODE_MCP_TOKEN?: unknown } } };
+    };
+    const token = config?.mcpServers?.['parallel-code']?.env?.PARALLEL_CODE_MCP_TOKEN;
+    if (typeof token === 'string') return token;
+    console.error(`MCP token file ${file} has no PARALLEL_CODE_MCP_TOKEN entry.`);
+    return '';
+  } catch (error) {
+    // The caller only sees the generic usage error; name the real cause here.
+    console.error(`Could not read MCP token file ${file}:`, error);
+    return '';
+  }
 }
 
 async function main(): Promise<void> {
-  const { url, taskId, coordinatorId } = parseArgs(process.argv.slice(2));
-  const token = process.env.PARALLEL_CODE_MCP_TOKEN ?? '';
+  const { url, taskId, coordinatorId, canvasOnly, tokenFile } = parseArgs(process.argv.slice(2));
+  const token = tokenFile ? readTokenFile(tokenFile) : (process.env.PARALLEL_CODE_MCP_TOKEN ?? '');
   const doneToken = process.env.PARALLEL_CODE_MCP_DONE_TOKEN || undefined;
 
   if (!url || !token) {
     console.error(
       'Usage: node server.js --url <remote-server-url> [--task-id <taskId>] [--coordinator-id <coordinatorId>]\n' +
-        'Token must be set via PARALLEL_CODE_MCP_TOKEN environment variable.',
+        'Token must be set via PARALLEL_CODE_MCP_TOKEN or --token-file <mcp-config.json>.',
     );
     process.exit(1);
   }
@@ -266,16 +337,21 @@ async function main(): Promise<void> {
   const client = new MCPClient(url, token, coordinatorId || undefined, doneToken);
   const server = new Server(
     { name: 'parallel-code', version: '1.0.0' },
-    { capabilities: { tools: {} } },
+    {
+      capabilities: { tools: {} },
+      instructions: hasCanvasTools(taskId, coordinatorId, canvasOnly)
+        ? CANVAS_INSTRUCTIONS
+        : undefined,
+    },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: selectTools(taskId, coordinatorId) };
+    return { tools: selectTools(taskId, coordinatorId, canvasOnly) };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: params } = request.params;
-    return handleMCPToolCall({ client, taskId, coordinatorId }, name, params);
+    return handleMCPToolCall({ client, taskId, coordinatorId, canvasOnly }, name, params);
   });
 
   const transport = new StdioServerTransport();

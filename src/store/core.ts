@@ -100,6 +100,7 @@ export const [store, setStore] = createStore<AppStore>({
   defaultStepsEnabled: false,
   defaultSkipPermissions: false,
   defaultPropagateSkipPermissions: false,
+  canvasOwnershipBadges: true,
   customThemes: {},
   activeCustomThemeId: null,
   mcpStatus: { running: false, port: null, coordinatorTaskId: null, mcpConfigPath: null },

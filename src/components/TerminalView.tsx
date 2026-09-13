@@ -35,6 +35,7 @@ import {
   setTaskTerminalInputPending,
   noteAgentTerminalInput,
 } from '../store/store';
+import { setAgentCanvasTools } from '../store/agents';
 import { clearTerminalInputPendingFromQuestion } from '../store/tasks';
 import { isLandedTaskState } from '../store/landing';
 import { warn as logWarn } from '../lib/log';
@@ -158,12 +159,13 @@ interface TerminalViewProps {
   onFileLink?: (filePath: string) => void;
   onReady?: (focusFn: () => void) => void;
   onBufferReady?: (getBuffer: () => string) => void;
-  /** Exposes step-bookmark API: `mark(i)` registers a marker at the current line for
-   *  step index `i`; `jump(i)` scrolls the viewport so that marker is visible.
+  /** Exposes the scrollback-marker API: `mark(key)` registers a marker at the current line
+   *  under `key` (steps use `step:<index>`, reasoning updates `reasoning:<sequence>`);
+   *  `jump(key)` scrolls the viewport so that marker is visible.
    *  Called with `undefined` on unmount so the consumer can reset its state — important
    *  on agent restart, where this component remounts but the parent does not. */
   onStepNavReady?: (
-    api: { mark: (i: number) => void; jump: (i: number) => boolean } | undefined,
+    api: { mark: (key: string) => void; jump: (key: string) => boolean } | undefined,
   ) => void;
   fontSize?: number;
   autoFocus?: boolean;
@@ -504,16 +506,16 @@ export function TerminalView(props: TerminalViewProps) {
     // Markers auto-track buffer truncation; once the marker scrolls past the scrollback
     // limit xterm disposes it, in which case `jump` returns false so the caller can no-op.
     // The map is owned by xterm and freed implicitly when term.dispose() runs in onCleanup.
-    const stepMarkers = new Map<number, IMarker>();
+    const stepMarkers = new Map<string, IMarker>();
     const stepNavApi = {
-      mark(i: number) {
-        if (!term || stepMarkers.has(i)) return;
+      mark(key: string) {
+        if (!term || stepMarkers.has(key)) return;
         const m = term.registerMarker(0);
-        if (m) stepMarkers.set(i, m);
+        if (m) stepMarkers.set(key, m);
       },
-      jump(i: number): boolean {
+      jump(key: string): boolean {
         if (!term) return false;
-        const m = stepMarkers.get(i);
+        const m = stepMarkers.get(key);
         if (!m || m.isDisposed) return false;
         term.scrollToLine(m.line);
         return true;
@@ -1099,16 +1101,21 @@ export function TerminalView(props: TerminalViewProps) {
 
     let spawnTimer: number | undefined;
     let spawnStarted = false;
+    let spawnDisposed = false;
 
     function startSpawn() {
       if (!term || spawnStarted) return;
       const landingState = store.tasks[taskId]?.landingState;
       if (isLandedTaskState(landingState)) return;
       spawnStarted = true;
-      invoke(IPC.SpawnAgent, {
+      invoke<{ canvasTools: boolean }>(IPC.SpawnAgent, {
         taskId,
         agentId,
         command: props.command,
+        canvasMcp:
+          !!store.tasks[taskId] &&
+          !store.tasks[taskId].coordinatorMode &&
+          !store.tasks[taskId].coordinatedBy,
         args: props.args,
         cwd: props.cwd,
         env: props.env ?? {},
@@ -1125,12 +1132,15 @@ export function TerminalView(props: TerminalViewProps) {
         onOutput,
       })
         // eslint-disable-next-line solid/reactivity -- promise callbacks are not reactive contexts
-        .then(() => {
+        .then((result) => {
+          if (spawnDisposed) return;
+          setAgentCanvasTools(agentId, result?.canvasTools === true);
           flushPendingResize();
           flushPendingInput();
         })
         // eslint-disable-next-line solid/reactivity -- promise catch handler reads current prop values intentionally
         .catch((err) => {
+          if (spawnDisposed) return;
           // eslint-disable-next-line no-control-regex -- intentionally stripping control/escape chars to prevent terminal injection
           const safeErr = String(err).replace(/[\x00-\x1f\x7f]/g, '');
           term?.write(`\x1b[31mFailed to spawn: ${safeErr}\x1b[0m\r\n`);
@@ -1170,6 +1180,7 @@ export function TerminalView(props: TerminalViewProps) {
     }
 
     onCleanup(() => {
+      spawnDisposed = true;
       const preserveSession = preserveSessionOnCleanup;
       if (!windowUnloading || preserveSession) {
         flushPendingInput();

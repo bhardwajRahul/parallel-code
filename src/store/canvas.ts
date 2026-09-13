@@ -1,3 +1,13 @@
+import {
+  createMindMap,
+  applyMapOperations,
+  type MindMapDocument,
+  type MapNode,
+} from '../mindmap/model';
+import { parseMindMapUpdate } from '../../electron/shared/mindmap';
+import { parseCanvasView } from '../../electron/shared/canvas-view';
+import { branchPrompt, type BranchRequest } from '../mindmap/agentActions';
+import { produce, unwrap } from 'solid-js/store';
 import { batch } from 'solid-js';
 import { IPC } from '../../electron/ipc/channels';
 import { isAgentHookEventPayload } from '../../electron/agent-hooks/status';
@@ -9,16 +19,69 @@ import {
   TASK_TILE_MIN_WIDTH,
 } from '../lib/layout-sizes';
 import { store, setStore } from './core';
-import { setPlanContent } from './tasks';
+import { setPlanContent, setPrefillPrompt, setTaskPromptDraftActive } from './tasks';
 import { setActiveTask } from './navigation';
 import { saveState } from './persistence';
 import { getPanelUserSize, setPanelUserSize } from './ui';
 import { aiTerminalPanels, setTaskFocusedPanel } from './focused-panel';
 import type { CanvasTab, Task } from './types';
+import type { ReasoningProfile } from '../investigation/profiles';
+import type { ReasoningWorkspace } from '../investigation/editing';
 
 type CanvasState = Pick<Task, 'canvasOpen' | 'canvasTabs' | 'canvasActiveTab'>;
 
 export { isTaskCanvasVisible } from '../lib/canvas-tabs';
+
+/** Stage a stable node reference alongside the user's existing draft; never send it. */
+export function referenceCanvasNode(
+  taskId: string,
+  canvas: 'mindmap' | 'reasoning',
+  node: MapNode,
+  revision: number,
+  runId?: string,
+): void {
+  const task = store.tasks[taskId];
+  if (!task || task.closingStatus) return;
+  const reference = [
+    `Node reference (${canvas === 'mindmap' ? 'mind map' : 'reasoning'}):`,
+    JSON.stringify({
+      taskId,
+      runId,
+      revision,
+      id: node.id,
+      title: node.title,
+      detail: node.detail,
+    }),
+    `Use ${canvas === 'mindmap' ? 'mindmap_read' : 'reasoning_read'} to look up this ID in the current map.`,
+    // The working marker only moves when the agent writes activeId; say so where the node is named.
+    ...(canvas === 'reasoning'
+      ? ['Set activeId to this id while you work on it and clear it when you are done.']
+      : []),
+  ].join('\n');
+  stageCanvasRequest(taskId, reference);
+}
+
+export function askCanvasBranch(
+  taskId: string,
+  canvas: 'mindmap' | 'reasoning',
+  request: BranchRequest,
+  runId?: string,
+): void {
+  const prompt = branchPrompt(taskId, canvas, request, runId);
+  if (prompt) stageCanvasRequest(taskId, prompt);
+}
+
+function stageCanvasRequest(taskId: string, request: string): void {
+  const task = store.tasks[taskId];
+  if (!task || task.closingStatus) return;
+  const text = [task.prefillPrompt ?? task.promptDraft ?? '', request].filter(Boolean).join('\n\n');
+  setTaskPromptDraftActive(taskId, true);
+  setStore('showPromptInput', true);
+  setPrefillPrompt(taskId, text);
+  queueMicrotask(() => {
+    if (store.tasks[taskId]) setTaskFocusedPanel(taskId, 'prompt');
+  });
+}
 
 /** The width the canvas column takes: the size the user dragged it to, else its minimum. */
 function canvasWidth(taskId: string): number {
@@ -45,16 +108,14 @@ function updateCanvas(taskId: string, next: CanvasState): void {
   setStore('tasks', taskId, next);
 }
 
-/** Puts a Markdown file of the worktree in front on the task's canvas, in its
- *  own tab unless one shows it already. */
-export function openCanvasDocument(taskId: string, path: string): void {
+/** Opens or activates a canvas tab without replacing its neighbours. */
+function openCanvasTab(taskId: string, tab: CanvasTab, activate = true): void {
   const task = store.tasks[taskId];
   if (!task) return;
-  const tab: CanvasTab = { kind: 'markdown', path };
   updateCanvas(taskId, {
     canvasTabs: withTab(task.canvasTabs ?? [], tab),
-    canvasActiveTab: canvasTabKey(tab),
-    canvasOpen: true,
+    canvasActiveTab: activate ? canvasTabKey(tab) : task.canvasActiveTab,
+    canvasOpen: activate ? true : task.canvasOpen,
   });
   void saveState();
 }
@@ -64,6 +125,103 @@ export function activateCanvasTab(taskId: string, key: string): void {
   if (!task?.canvasTabs?.some((t) => canvasTabKey(t) === key)) return;
   setStore('tasks', taskId, 'canvasActiveTab', key);
   void saveState();
+}
+
+export function openCanvasDocument(taskId: string, path: string): void {
+  openCanvasTab(taskId, { kind: 'markdown', path });
+}
+
+export function openCanvasMindMap(taskId: string): void {
+  openCanvasTab(taskId, { kind: 'mindmap' });
+}
+
+/** Reading initializes one persistent root shared by every pane and agent. */
+export function getTaskMindMap(taskId: string): MindMapDocument {
+  if (!Object.hasOwn(store.tasks, taskId) || store.tasks[taskId].closingStatus)
+    throw new Error('Task not available.');
+  const task = store.tasks[taskId];
+  if (!task.mindMap && task.mindMapUnreadable !== undefined)
+    throw new Error(
+      'The saved mind map could not be read. Ask the user to replace it from the Mind map tab.',
+    );
+  const document = task.mindMap ?? createMindMap();
+  if (!task.mindMap) setTaskMindMap(taskId, document);
+  return structuredClone(unwrap(document));
+}
+
+/** The user chose to give up a saved map that failed validation; start an empty one instead. */
+export function replaceUnreadableMindMap(taskId: string): void {
+  if (!Object.hasOwn(store.tasks, taskId)) return;
+  setStore('tasks', taskId, 'mindMapUnreadable', undefined);
+  setTaskMindMap(taskId, createMindMap());
+  void saveState();
+}
+
+export async function updateTaskMindMapFromAgent(
+  taskId: string,
+  input: unknown,
+): Promise<MindMapDocument> {
+  const { expectedRevision, operations } = parseMindMapUpdate(input);
+  const current = getTaskMindMap(taskId);
+  const next = applyMapOperations(current, operations, expectedRevision, 'agent');
+  // Commit synchronously before awaiting persistence: competing writers must see the new revision.
+  setStore('tasks', taskId, 'mindMap', next);
+  // Opening the tab saves the task, map included.
+  if (store.tasks[taskId].canvasTabs?.some((tab) => tab.kind === 'mindmap')) await saveState();
+  else openCanvasMindMap(taskId);
+  return next;
+}
+
+/** Agents open a view on request ("show me the reasoning graph"); content stays untouched. */
+export function openCanvasViewFromAgent(taskId: string, input: unknown): void {
+  const view = parseCanvasView(input);
+  if (!Object.hasOwn(store.tasks, taskId) || store.tasks[taskId].closingStatus)
+    throw new Error('Task not available.');
+  if (view === 'mindmap') openCanvasMindMap(taskId);
+  else {
+    const agentId = store.tasks[taskId].agentIds[0];
+    const agent = store.agents[agentId];
+    if (agent)
+      setStore('tasks', taskId, 'reasoningCanvasRequest', {
+        agentId,
+        generation: agent.generation,
+      });
+    openCanvasReasoning(taskId);
+  }
+}
+
+/** Autosave persists the document; saving here again would write on every keystroke. */
+export function setTaskMindMap(taskId: string, document: MindMapDocument): void {
+  if (!store.tasks[taskId]) return;
+  setStore('tasks', taskId, 'mindMap', document);
+}
+
+export function openCanvasReasoning(taskId: string): void {
+  openCanvasTab(taskId, { kind: 'reasoning' });
+}
+
+export function setTaskReasoningProfile(taskId: string, profile: ReasoningProfile): void {
+  if (!store.tasks[taskId]) return;
+  setStore('tasks', taskId, 'reasoningProfile', profile);
+  void saveState();
+}
+
+/** Draft edits use the shared debounced autosave. */
+/** Only the current run's workspace is kept; archived runs would otherwise accumulate forever. */
+export function setTaskReasoningWorkspace(
+  taskId: string,
+  key: string,
+  workspace: ReasoningWorkspace,
+): void {
+  if (!store.tasks[taskId]) return;
+  // Assigning replaces the record; a plain setStore would merge the old keys back in.
+  setStore(
+    'tasks',
+    taskId,
+    produce((task) => {
+      task.reasoningWorkspaces = { [key]: workspace };
+    }),
+  );
 }
 
 /** Closes one tab; closing the last one closes the column. */
@@ -130,7 +288,12 @@ export function applyPlanContent(msg: PlanContentMessage): void {
     setPlanContent(msg.taskId, msg.content, msg.fileName, path);
     if (!msg.recovered) setStore('tasks', msg.taskId, 'livePlanPath', path ?? undefined);
   });
-  if (opens && path) openCanvasDocument(msg.taskId, path);
+  if (opens && path) {
+    // Reporting a Markdown plan must not hide the live graph and stop its reader.
+    // An explicit plan-approval request can still activate the plan below.
+    const keepReasoning = isTaskCanvasVisible(task) && task.canvasActiveTab === 'reasoning';
+    openCanvasTab(msg.taskId, { kind: 'markdown', path }, !keepReasoning);
+  }
 }
 
 /** Brings this session's plan back to the front when approval is asked for. A

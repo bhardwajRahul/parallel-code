@@ -1,3 +1,4 @@
+import { restoreMindMap } from '../mindmap/model';
 import { produce } from 'solid-js/store';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
@@ -7,6 +8,21 @@ import { effectiveAgentId } from './agent-select';
 import { randomPastelColor } from './projects';
 import { markAgentSpawned } from './taskStatus';
 import { clampCoordinatorConcurrentTasks } from '../lib/coordinator-limits';
+import { normalizeReasoningProfile } from '../investigation/profiles';
+import { restoreReasoningWorkspaces } from '../investigation/editing';
+
+/** A map that fails validation is kept aside rather than crashing load or being overwritten
+ *  by the next save; the user is told once. */
+function restoreTaskMindMap(
+  pt: PersistedTask,
+  unreadable: string[],
+): Pick<Task, 'mindMap' | 'mindMapUnreadable'> {
+  if (pt.mindMap === undefined || pt.mindMap === null) return {};
+  const document = restoreMindMap(pt.mindMap);
+  if (document) return { mindMap: document };
+  unreadable.push(pt.name || 'a task');
+  return { mindMapUnreadable: pt.mindMap };
+}
 
 // Hand-edited state files may hold anything; the IPC layer rejects non-integers.
 function restoredMaxConcurrentTasks(value: unknown): number | undefined {
@@ -29,7 +45,7 @@ import { validateCustomTheme, parseThemeCss, themeToCss } from '../lib/custom-th
 import type { CustomTheme } from '../lib/custom-theme';
 import { syncTerminalCounter } from './terminals';
 import { showNotification, NOTIFICATION_ERROR_MS } from './notification';
-import { errMessage } from '../lib/log';
+import { errMessage, warn as logWarn } from '../lib/log';
 import { canvasTabKey } from '../lib/canvas-tabs';
 import { documentAgentTaskIds } from '../documents/task-id';
 
@@ -147,8 +163,10 @@ function restoredCanvas(pt: PersistedTask): Pick<Task, 'canvasTabs' | 'canvasAct
   const tabs = Array.isArray(pt.canvasTabs)
     ? pt.canvasTabs.filter(
         (t) =>
-          typeof t?.path === 'string' &&
-          (t.kind === 'markdown' || (t.kind === 'browser' && t.path === 'preview')),
+          t?.kind === 'mindmap' ||
+          t?.kind === 'reasoning' ||
+          (t?.kind === 'markdown' && typeof t.path === 'string') ||
+          (t?.kind === 'browser' && t.path === 'preview'),
       )
     : typeof pt.canvasPath === 'string'
       ? [{ kind: 'markdown' as const, path: pt.canvasPath }]
@@ -204,6 +222,9 @@ function toPersistedTask(task: Task, agentDefs: AgentDef[], collapsed?: boolean)
     canvasTabs: task.canvasTabs,
     canvasActiveTab: task.canvasActiveTab,
     browserUrl: task.browserUrl,
+    mindMap: task.mindMap ?? task.mindMapUnreadable,
+    reasoningProfile: task.reasoningProfile,
+    reasoningWorkspaces: task.reasoningWorkspaces,
     stepsEnabled: task.stepsEnabled,
     branchAdoptedFrom: task.branchAdoptedFrom,
     branchOfferDismissed: task.branchOfferDismissed,
@@ -295,6 +316,8 @@ export async function saveState(): Promise<void> {
     defaultStepsEnabled: store.defaultStepsEnabled || undefined,
     defaultSkipPermissions: store.defaultSkipPermissions || undefined,
     defaultPropagateSkipPermissions: store.defaultPropagateSkipPermissions || undefined,
+    // Default on: only an explicit opt-out is stored.
+    canvasOwnershipBadges: store.canvasOwnershipBadges ? undefined : false,
     autoStartRemoteAccess: store.autoStartRemoteAccess || undefined,
   };
 
@@ -485,6 +508,7 @@ interface LegacyPersistedState {
   defaultStepsEnabled?: unknown;
   defaultSkipPermissions?: unknown;
   defaultPropagateSkipPermissions?: unknown;
+  canvasOwnershipBadges?: unknown;
   autoStartRemoteAccess?: unknown;
 }
 
@@ -552,6 +576,7 @@ export async function loadState(): Promise<void> {
   }
 
   const restoredRunningAgentIds: string[] = [];
+  const unreadableMindMaps: string[] = [];
   const usedRestoredAgentIds = new Set<string>();
   const today = getLocalDateKey();
 
@@ -701,6 +726,7 @@ export async function loadState(): Promise<void> {
             : raw.showSteps === true;
       s.defaultSkipPermissions = raw.defaultSkipPermissions === true;
       s.defaultPropagateSkipPermissions = raw.defaultPropagateSkipPermissions === true;
+      s.canvasOwnershipBadges = raw.canvasOwnershipBadges !== false;
 
       s.autoStartRemoteAccess = raw.autoStartRemoteAccess === true;
 
@@ -800,6 +826,9 @@ export async function loadState(): Promise<void> {
           savedPromptedAgentIndexes: validPromptedAgentIndexes(pt.savedPromptedAgentIndexes),
           planFileName: pt.planFileName,
           ...restoredCanvas(pt),
+          ...restoreTaskMindMap(pt, unreadableMindMaps),
+          reasoningProfile: normalizeReasoningProfile(pt.reasoningProfile),
+          reasoningWorkspaces: restoreReasoningWorkspaces(pt.reasoningWorkspaces),
           stepsEnabled: pt.stepsEnabled,
           branchAdoptedFrom: validBranch(pt.branchAdoptedFrom, pt.branchName),
           branchOfferDismissed: validBranch(pt.branchOfferDismissed),
@@ -913,6 +942,9 @@ export async function loadState(): Promise<void> {
           savedPromptedAgentIndexes: validPromptedAgentIndexes(pt.savedPromptedAgentIndexes),
           planFileName: pt.planFileName,
           ...restoredCanvas(pt),
+          ...restoreTaskMindMap(pt, unreadableMindMaps),
+          reasoningProfile: normalizeReasoningProfile(pt.reasoningProfile),
+          reasoningWorkspaces: restoreReasoningWorkspaces(pt.reasoningWorkspaces),
           stepsEnabled: pt.stepsEnabled,
           branchAdoptedFrom: validBranch(pt.branchAdoptedFrom, pt.branchName),
           branchOfferDismissed: validBranch(pt.branchOfferDismissed),
@@ -1009,5 +1041,12 @@ export async function loadState(): Promise<void> {
   // must not block app startup.
   if (store.autoStartRemoteAccess) {
     startRemoteAccess().catch((e) => console.warn('Failed to auto-start remote access:', e));
+  }
+  if (unreadableMindMaps.length) {
+    logWarn('persistence', 'Kept unreadable mind maps aside', { tasks: unreadableMindMaps });
+    showNotification(
+      `The saved mind map of ${unreadableMindMaps.join(', ')} could not be read; it is kept on disk but cannot be shown.`,
+      { durationMs: NOTIFICATION_ERROR_MS },
+    );
   }
 }

@@ -7,6 +7,8 @@ import { produce } from 'solid-js/store';
 import { store, setStore } from './core';
 import { setupAutosave, AUTOSAVE_DEBOUNCE_MS, AUTOSAVE_MAX_WAIT_MS } from './autosave';
 import { setTaskPromptDraft } from './tasks';
+import { setTaskReasoningWorkspace } from './canvas';
+import { emptyWorkspace, updateDraft } from '../investigation/editing';
 
 const { mockSaveState } = vi.hoisted(() => ({ mockSaveState: vi.fn(async () => {}) }));
 vi.mock('./persistence', async (importOriginal) => ({
@@ -81,6 +83,53 @@ describe('setupAutosave scheduling', () => {
       vi.advanceTimersByTime(AUTOSAVE_MAX_WAIT_MS * 2);
       expect(mockSaveState).not.toHaveBeenCalled();
     });
+  });
+
+  it('autosaves reasoning drafts and retains their deletion for active and collapsed tasks', () => {
+    const id = 'reasoning-autosave';
+    const previousOrder = [...store.taskOrder];
+    const previousCollapsed = [...store.collapsedTaskOrder];
+    setStore('tasks', id, {
+      id,
+      name: 'Graph',
+      projectId: 'p1',
+      worktreePath: '/graph',
+      branchName: '',
+      agentIds: [],
+      shellAgentIds: [],
+      notes: '',
+      lastPrompt: '',
+    });
+    setStore('taskOrder', [...previousOrder, id]);
+    const workspace = updateDraft(emptyWorkspace(), 'goal', {
+      title: 'Draft',
+      detail: '',
+      base: { title: 'Goal', detail: '' },
+      question: '',
+    });
+    try {
+      withAutosave(() => {
+        setTaskReasoningWorkspace(id, 'run', workspace);
+        vi.advanceTimersByTime(AUTOSAVE_DEBOUNCE_MS);
+        expect(mockSaveState).toHaveBeenCalledTimes(1);
+        setStore('taskOrder', previousOrder);
+        setStore('collapsedTaskOrder', [...previousCollapsed, id]);
+        vi.advanceTimersByTime(AUTOSAVE_DEBOUNCE_MS);
+        mockSaveState.mockClear();
+        setTaskReasoningWorkspace(id, 'run', updateDraft(workspace, 'goal', undefined));
+        expect(store.tasks[id].reasoningWorkspaces?.run.drafts).toEqual({});
+        vi.advanceTimersByTime(AUTOSAVE_DEBOUNCE_MS);
+        expect(mockSaveState).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      setStore('taskOrder', previousOrder);
+      setStore('collapsedTaskOrder', previousCollapsed);
+      setStore(
+        produce((state) => {
+          delete state.tasks['reasoning-autosave'];
+        }),
+      );
+    }
   });
 
   it('autosaves drafts of hidden document tasks after typing settles', () => {

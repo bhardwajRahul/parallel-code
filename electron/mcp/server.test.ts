@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { handleMCPToolCall } from './server.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { handleMCPToolCall, parseArgs, readTokenFile } from './server.js';
 import type { MCPClient } from './client.js';
 
 function makeClient(): MCPClient {
@@ -293,5 +296,154 @@ describe('MCP server tool handling', () => {
       content: [{ text: expect.stringContaining('not available to sub-tasks') }],
     });
     expect(client.sendPrompt).not.toHaveBeenCalled();
+  });
+});
+
+describe('mind map tools', () => {
+  it('returns an actionable operation error for the reported reasoning payload without blaming valid IDs', async () => {
+    const client = { updateReasoning: vi.fn() } as unknown as MCPClient;
+    const result = await handleMCPToolCall(
+      { client, taskId: 'own-task', coordinatorId: '', canvasOnly: true },
+      'reasoning_update',
+      {
+        runId: null,
+        newRunId: 'architecture-shallow-2026-09-15',
+        expectedRevision: 0,
+        activeId: 'repo',
+        operations: [
+          {
+            type: 'insert_node',
+            node: {
+              id: 'repo',
+              title: 'Repository architecture',
+              kind: 'claim',
+              status: 'accepted',
+              summary: 'A content-only repository.',
+            },
+          },
+        ],
+      },
+    );
+    expect(result).toMatchObject({
+      isError: true,
+      content: [
+        { text: expect.stringContaining('operations[0].type. Use one of: insert, update') },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain('Invalid graph ID');
+    expect(client.updateReasoning).not.toHaveBeenCalled();
+  });
+  it('uses the session task, never a caller-supplied task ID', async () => {
+    const client = {
+      readMindMap: vi.fn().mockResolvedValue({ revision: 2 }),
+      updateMindMap: vi.fn().mockResolvedValue({ revision: 3 }),
+    } as unknown as MCPClient;
+    const context = { client, taskId: 'own-task', coordinatorId: '', canvasOnly: true };
+    expect(
+      await handleMCPToolCall(context, 'mindmap_read', { taskId: 'other-task' }),
+    ).not.toHaveProperty('isError');
+    expect(client.readMindMap).toHaveBeenCalledWith('own-task');
+    const update = {
+      expectedRevision: 2,
+      operations: [{ type: 'update', id: 'root', changes: { title: 'New title' } }],
+    };
+    expect(await handleMCPToolCall(context, 'mindmap_update', update)).not.toHaveProperty(
+      'isError',
+    );
+    expect(client.updateMindMap).toHaveBeenCalledWith('own-task', update);
+    expect(await handleMCPToolCall(context, 'create_task', { prompt: 'No' })).toHaveProperty(
+      'isError',
+      true,
+    );
+  });
+  it('opens a canvas view for the session task and rejects unknown views before transport', async () => {
+    const client = {
+      openCanvas: vi.fn().mockResolvedValue({ ok: true, view: 'reasoning' }),
+    } as unknown as MCPClient;
+    const context = { client, taskId: 'own-task', coordinatorId: '', canvasOnly: true };
+    expect(
+      await handleMCPToolCall(context, 'canvas_open', { view: 'reasoning', taskId: 'other' }),
+    ).not.toHaveProperty('isError');
+    expect(client.openCanvas).toHaveBeenCalledWith('own-task', 'reasoning');
+    expect(await handleMCPToolCall(context, 'canvas_open', { view: 'browser' })).toMatchObject({
+      isError: true,
+      content: [{ text: expect.stringContaining('mindmap, reasoning') }],
+    });
+    expect(client.openCanvas).toHaveBeenCalledTimes(1);
+  });
+  it('rejects invalid operations before transport and exposes conflict failures', async () => {
+    const client = {
+      updateMindMap: vi.fn().mockRejectedValue(new Error('Read it again before editing.')),
+    } as unknown as MCPClient;
+    const context = { client, taskId: 'own-task', coordinatorId: '' };
+    expect(
+      await handleMCPToolCall(context, 'mindmap_update', {
+        expectedRevision: 0,
+        operations: [{ type: 'oops', id: 'root' }],
+      }),
+    ).toHaveProperty('isError', true);
+    expect(client.updateMindMap).not.toHaveBeenCalled();
+    expect(
+      await handleMCPToolCall(context, 'mindmap_update', {
+        expectedRevision: 0,
+        operations: [{ type: 'update', id: 'root', changes: { title: 'Mine' } }],
+      }),
+    ).toMatchObject({
+      isError: true,
+      content: [{ text: expect.stringContaining('Read it again') }],
+    });
+  });
+});
+
+describe('token file launches', () => {
+  it('reads the session token from the 0600 config instead of argv or env', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-token-file-'));
+    const file = path.join(directory, 'config.json');
+    try {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          mcpServers: { 'parallel-code': { env: { PARALLEL_CODE_MCP_TOKEN: 'secret' } } },
+        }),
+      );
+      expect(parseArgs(['--url', 'http://x', '--token-file', file, '--canvas-only'])).toMatchObject(
+        {
+          url: 'http://x',
+          tokenFile: file,
+          canvasOnly: true,
+        },
+      );
+      expect(readTokenFile(file)).toBe('secret');
+      fs.writeFileSync(file, '{"mcpServers":{}}');
+      expect(readTokenFile(file)).toBe('');
+      expect(readTokenFile(path.join(directory, 'missing.json'))).toBe('');
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('reports why a token file yielded no token before the generic usage error', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-token-file-'));
+    const file = path.join(directory, 'config.json');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(readTokenFile(path.join(directory, 'missing.json'))).toBe('');
+      expect(error).toHaveBeenLastCalledWith(
+        expect.stringContaining('token file'),
+        expect.objectContaining({ code: 'ENOENT' }),
+      );
+      fs.writeFileSync(file, '{not json');
+      expect(readTokenFile(file)).toBe('');
+      expect(error).toHaveBeenLastCalledWith(
+        expect.stringContaining('token file'),
+        expect.any(SyntaxError),
+      );
+      fs.writeFileSync(file, '{"mcpServers":{}}');
+      expect(readTokenFile(file)).toBe('');
+      expect(error).toHaveBeenLastCalledWith(expect.stringContaining('no PARALLEL_CODE_MCP_TOKEN'));
+    } finally {
+      error.mockRestore();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

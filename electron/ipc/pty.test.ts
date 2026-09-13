@@ -1152,6 +1152,31 @@ describe('spawnAgent docker mode — PTY spawn failure', () => {
 // ─── Item 8: No credentials leakage in spawn log ─────────────────────────────
 
 describe('spawnAgent docker mode — credential redaction in logs', () => {
+  it('redacts inline Codex MCP credentials from the Docker banner and console', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const win = createMockWindow();
+    const secret = 'test-canvas-secret';
+    await spawnAgent(
+      win,
+      buildSpawnArgs({
+        command: 'codex',
+        args: ['--config', `mcp_servers.parallel-code={env={PARALLEL_CODE_MCP_TOKEN="${secret}"}}`],
+      }),
+    );
+    expect(getLastSpawnCall().args.join(' ')).toContain(secret);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+    const messages = vi.mocked(win.webContents.send).mock.calls;
+    const banner = messages
+      .map(([, message]) => {
+        const payload = message as { type: string; data?: string };
+        return payload.type === 'Data' ? Buffer.from(payload.data ?? '', 'base64').toString() : '';
+      })
+      .join('');
+    expect(banner).toContain('[docker] command: codex --config <redacted MCP config>');
+    expect(banner).not.toContain(secret);
+    warn.mockRestore();
+  });
+
   it('does not log the MCP token when it appears in env vars', async () => {
     await spawnAgent(
       createMockWindow(),

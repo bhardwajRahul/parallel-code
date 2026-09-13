@@ -232,6 +232,10 @@ export function setDefaultSkipPermissions(enabled: boolean): void {
   setStore('defaultSkipPermissions', enabled);
 }
 
+export function setCanvasOwnershipBadges(enabled: boolean): void {
+  setStore('canvasOwnershipBadges', enabled);
+}
+
 export function setDefaultPropagateSkipPermissions(enabled: boolean): void {
   setStore('defaultPropagateSkipPermissions', enabled);
 }

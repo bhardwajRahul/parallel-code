@@ -12,6 +12,7 @@
   display: flex;
   flex: 1;
   min-width: 0;
+  min-height: 0;
 }
 
 .docws-workspace {
@@ -1076,6 +1077,10 @@
 
 .docws-zoom .docws-btn + .docws-btn {
   border-left: 1px solid var(--border-subtle);
+}
+
+.docws-zoom .docws-width-toggle[aria-pressed='true'] {
+  background: var(--bg-selected);
 }
 
 .docws-zoom .docws-btn:not(:disabled):hover {

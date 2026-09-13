@@ -1,10 +1,12 @@
-import { For, Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
+import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import {
   setTaskFocusedPanel,
   isPanelFocused,
   openCanvasDocument,
   openCanvasBrowser,
+  openCanvasReasoning,
+  openCanvasMindMap,
   activateCanvasTab,
   closeCanvasTab,
   closeTaskCanvas,
@@ -18,16 +20,21 @@ import { canvasTabKey, tabFromKey } from '../lib/canvas-tabs';
 import { useFocusRegistration } from '../lib/focus-registration';
 import { openFileInEditor } from '../lib/shell';
 import { errMessage } from '../lib/log';
-import type { Task } from '../store/types';
+import type { CanvasTab, Task } from '../store/types';
 import { ConfirmDialog } from './ConfirmDialog';
 import { CanvasFilePicker } from './CanvasFilePicker';
 import { CanvasTabStrip } from './CanvasTabStrip';
 import { TaskCanvasDocument } from './TaskCanvasDocument';
 import { TaskBrowserPanel } from './TaskBrowserPanel';
 
+type DocumentTab = Extract<CanvasTab, { path: string }>;
+const isDocumentTab = (tab: CanvasTab): tab is DocumentTab => 'path' in tab;
+
 interface TaskCanvasPanelProps {
   task: Task;
   agentId: string;
+  reasoning?: JSX.Element;
+  mindmap?: JSX.Element;
 }
 
 /**
@@ -39,7 +46,13 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
   let contextMenuRef: HTMLDivElement | undefined;
   onMount(() => {
     useFocusRegistration(`${props.task.id}:canvas`, () => {
-      if (!panelRef?.contains(document.activeElement)) panelRef?.focus();
+      if (!panelRef || panelRef.contains(document.activeElement)) return;
+      const graph = panelRef.querySelector('.task-canvas-reasoning-content');
+      const target =
+        graph?.querySelector<HTMLElement>('[data-record-id][tabindex="0"]') ??
+        graph?.querySelector<SVGSVGElement>('.investigation-svg') ??
+        panelRef;
+      target.focus({ preventScroll: true });
     });
   });
   const [pickerOpen, setPickerOpen] = createSignal(false);
@@ -55,6 +68,13 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
 
   const tabs = () => props.task.canvasTabs ?? [];
   const active = () => props.task.canvasActiveTab;
+  const markdownTabs = () => tabs().filter((tab) => tab.kind === 'markdown');
+  // Mind map and reasoning tabs render from props; only file-backed tabs mount documents.
+  const documentTabs = () => tabs().filter(isDocumentTab);
+  const documentTab = (key: string): DocumentTab | null => {
+    const tab = tabFromKey(key);
+    return tab && isDocumentTab(tab) ? tab : null;
+  };
 
   createEffect(() => {
     if (!contextMenu()) return;
@@ -63,9 +83,11 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
     );
   });
 
-  // Nothing to show: the column opened from the title bar, so ask.
+  // Ask for a file only while empty; a concrete tab opened by an agent or user
+  // dismisses a picker left open from the panel's initially empty state.
   createEffect(() => {
-    if (tabs().length === 0) setPickerOpen(true);
+    active();
+    setPickerOpen(tabs().length === 0);
   });
 
   const setDirty = (key: string, dirty: boolean) =>
@@ -123,7 +145,7 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
     if (e.defaultPrevented || e.target !== panelRef || e.key !== 'Enter') return;
     const key = active();
     const tab = key ? tabFromKey(key) : null;
-    if (!tab) return;
+    if (tab?.kind !== 'markdown') return;
     const editor = [...(panelRef?.querySelectorAll<HTMLElement>('[data-path]') ?? [])]
       .find((document) => document.dataset.path === tab.path)
       ?.querySelector<HTMLElement>('[contenteditable="true"]');
@@ -194,8 +216,11 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
           onActivate={(key) => activateCanvasTab(props.task.id, key)}
           onClose={requestCloseTab}
           onAdd={(kind) => {
-            setPickerOpen(kind === 'markdown');
+            setPickerOpen(false);
             if (kind === 'browser') openCanvasBrowser(props.task.id);
+            else if (kind === 'mindmap') openCanvasMindMap(props.task.id);
+            else if (kind === 'reasoning') openCanvasReasoning(props.task.id);
+            else setPickerOpen(true);
           }}
           onCloseAll={requestCloseAll}
           fullscreen={fullscreen()}
@@ -204,7 +229,7 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
         <Show when={pickerOpen()}>
           <CanvasFilePicker
             worktreePath={props.task.worktreePath}
-            current={tabs().map((t) => t.path)}
+            current={markdownTabs().map((t) => t.path)}
             onPick={(file) => {
               setPickerOpen(false);
               openCanvasDocument(props.task.id, file);
@@ -226,13 +251,20 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
             'font-size': sf(12),
           }}
         >
-          Use + to open a Browser or Markdown file.
+          Use + to open a Markdown file, browser, mind map, or reasoning view.
+        </div>
+      </Show>
+      <Show when={active() === 'reasoning' || active() === 'mindmap'}>
+        <div class="task-canvas-reasoning">
+          <div class="task-canvas-reasoning-content">
+            {active() === 'mindmap' ? props.mindmap : props.reasoning}
+          </div>
         </div>
       </Show>
       {/* Keyed by tab key, not object, so a document survives the list being rewritten. */}
-      <For each={tabs().map(canvasTabKey)}>
+      <For each={documentTabs().map(canvasTabKey)}>
         {(key) => (
-          <Show when={tabFromKey(key)}>
+          <Show when={documentTab(key)}>
             {(tab) => (
               <Show
                 when={tab().kind === 'browser'}

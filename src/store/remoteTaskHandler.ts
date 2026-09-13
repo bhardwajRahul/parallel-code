@@ -4,10 +4,13 @@
 // and reply with the resulting task id. See electron/ipc/register.ts for the
 // main-side bridge.
 
+import { getTaskMindMap, openCanvasViewFromAgent, updateTaskMindMapFromAgent } from './canvas';
+import { getTaskReasoning, updateTaskReasoningFromAgent } from './reasoning';
 import { store } from './core';
 import { codeProjects } from './projects';
 import { createTask, updateTaskNotes } from './tasks';
 import { invoke } from '../lib/ipc';
+import { errMessage } from '../lib/log';
 import { IPC } from '../../electron/ipc/channels';
 import { resolveSkipPermissionsArgs } from '../../electron/shared/skip-permissions';
 import type { AgentDef, GitIgnoredEntry } from '../ipc/types';
@@ -108,7 +111,7 @@ async function handleCreateTask(req: CreateTaskRequest): Promise<void> {
     });
     reply(req.reqId, true, { taskId });
   } catch (err) {
-    reply(req.reqId, false, undefined, err instanceof Error ? err.message : String(err));
+    reply(req.reqId, false, undefined, errMessage(err));
   }
 }
 
@@ -145,6 +148,28 @@ function handleSetNotes(req: SetNotesRequest): void {
 
 /** Subscribe to mobile task-creation requests. Returns an unsubscribe fn. */
 export function startRemoteTaskHandlers(): () => void {
+  const offReadReasoning = window.electron.ipcRenderer.on(
+    IPC.MCP_ReadReasoningRequest,
+    (data: unknown) => {
+      if (!data || typeof data !== 'object') return;
+      const req = data as GetNotesRequest;
+      void getTaskReasoning(req.taskId).then(
+        (document) => reply(req.reqId, true, document),
+        (error: unknown) => reply(req.reqId, false, undefined, errMessage(error)),
+      );
+    },
+  );
+  const offUpdateReasoning = window.electron.ipcRenderer.on(
+    IPC.MCP_UpdateReasoningRequest,
+    (data: unknown) => {
+      if (!data || typeof data !== 'object') return;
+      const req = data as GetNotesRequest & { update: unknown };
+      void updateTaskReasoningFromAgent(req.taskId, req.update).then(
+        (document) => reply(req.reqId, true, document),
+        (error: unknown) => reply(req.reqId, false, undefined, errMessage(error)),
+      );
+    },
+  );
   const offProjects = window.electron.ipcRenderer.on(
     IPC.Remote_GetProjectsRequest,
     (data: unknown) => {
@@ -169,7 +194,45 @@ export function startRemoteTaskHandlers(): () => void {
       if (data && typeof data === 'object') handleSetNotes(data as SetNotesRequest);
     },
   );
+  const offReadMap = window.electron.ipcRenderer.on(IPC.MCP_ReadMindMapRequest, (data: unknown) => {
+    if (!data || typeof data !== 'object') return;
+    const req = data as GetNotesRequest;
+    try {
+      reply(req.reqId, true, getTaskMindMap(req.taskId));
+    } catch (error) {
+      reply(req.reqId, false, undefined, errMessage(error));
+    }
+  });
+  const offUpdateMap = window.electron.ipcRenderer.on(
+    IPC.MCP_UpdateMindMapRequest,
+    (data: unknown) => {
+      if (!data || typeof data !== 'object') return;
+      const req = data as GetNotesRequest & { update: unknown };
+      void updateTaskMindMapFromAgent(req.taskId, req.update).then(
+        (map) => reply(req.reqId, true, map),
+        (error: unknown) => reply(req.reqId, false, undefined, errMessage(error)),
+      );
+    },
+  );
+  const offOpenCanvas = window.electron.ipcRenderer.on(
+    IPC.MCP_OpenCanvasRequest,
+    (data: unknown) => {
+      if (!data || typeof data !== 'object') return;
+      const req = data as GetNotesRequest & { view: unknown };
+      try {
+        openCanvasViewFromAgent(req.taskId, req);
+        reply(req.reqId, true, { ok: true });
+      } catch (error) {
+        reply(req.reqId, false, undefined, errMessage(error));
+      }
+    },
+  );
   return () => {
+    offReadReasoning();
+    offUpdateReasoning();
+    offReadMap();
+    offUpdateMap();
+    offOpenCanvas();
     offProjects();
     offCreate();
     offGetNotes();

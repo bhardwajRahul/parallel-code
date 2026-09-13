@@ -92,6 +92,7 @@ export function markAgentExited(
     produce((s) => {
       if (s.agents[agentId]) {
         s.agents[agentId].status = 'exited';
+        s.agents[agentId].canvasTools = undefined;
         s.agents[agentId].exitCode = exitInfo.exit_code;
         s.agents[agentId].signal = exitInfo.signal;
         s.agents[agentId].lastOutput = exitInfo.last_output;
@@ -112,6 +113,7 @@ export function restartAgent(agentId: string, useResumeArgs: boolean): void {
     produce((s) => {
       if (s.agents[agentId]) {
         s.agents[agentId].status = 'running';
+        s.agents[agentId].canvasTools = undefined;
         s.agents[agentId].exitCode = null;
         s.agents[agentId].signal = null;
         s.agents[agentId].lastOutput = [];
@@ -131,6 +133,7 @@ export function switchAgent(agentId: string, newDef: AgentDef): void {
       if (s.agents[agentId]) {
         s.agents[agentId].def = newDef;
         s.agents[agentId].status = 'running';
+        s.agents[agentId].canvasTools = undefined;
         s.agents[agentId].exitCode = null;
         s.agents[agentId].signal = null;
         s.agents[agentId].lastOutput = [];
@@ -184,4 +187,10 @@ async function refreshAvailableAgents(): Promise<void> {
   const custom = store.customAgents;
   const customIds = new Set(custom.map((a) => a.id));
   setStore('availableAgents', [...defaults.filter((d) => !customIds.has(d.id)), ...custom]);
+}
+
+/** Capability comes from the completed launch, including reattachment to an existing PTY. */
+export function setAgentCanvasTools(agentId: string, available: boolean): void {
+  if (store.agents[agentId]?.status === 'running')
+    setStore('agents', agentId, 'canvasTools', available);
 }

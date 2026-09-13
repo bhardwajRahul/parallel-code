@@ -1,3 +1,4 @@
+import { TaskMindMap } from './TaskMindMap';
 import { Show, createSignal, createEffect, createMemo, onMount, onCleanup, batch } from 'solid-js';
 import {
   store,
@@ -44,6 +45,8 @@ import { theme } from '../lib/theme';
 import { isMac } from '../lib/platform';
 import type { Task } from '../store/types';
 import type { CommitInfo } from '../ipc/types';
+import { TaskReasoningGraphHost } from './TaskReasoningGraphHost';
+import type { TranscriptMarks } from '../investigation/transcript';
 import { isLandedTaskState } from '../store/landing';
 import { shouldPollTaskCommits } from './task-commit-polling';
 import { devQualityFindingProvider } from './dev-quality-finding-fixture';
@@ -128,6 +131,26 @@ export function TaskPanel(props: TaskPanelProps) {
   const [stepNav, setStepNav] = createSignal<
     { jump: (stepIndex: number) => boolean; firstIndex: number } | undefined
   >();
+  // Per-agent scrollback markers; jumping also brings the terminal into focus.
+  const [transcriptMarks, setTranscriptMarks] = createSignal<ReadonlyMap<string, TranscriptMarks>>(
+    new Map(),
+  );
+  function handleTranscriptMarks(agentId: string, api: TranscriptMarks | undefined) {
+    setTranscriptMarks((prev) => {
+      const next = new Map(prev);
+      if (!api) next.delete(agentId);
+      else
+        next.set(agentId, {
+          mark: api.mark,
+          jump: (key) => {
+            const ok = api.jump(key);
+            if (ok) setTaskFocusedPanel(props.task.id, 'ai-terminal');
+            return ok;
+          },
+        });
+      return next;
+    });
+  }
   let panelRef!: HTMLDivElement;
   // The area left of the canvas column: what the split-mode threshold measures.
   let mainRef!: HTMLDivElement;
@@ -135,10 +158,11 @@ export function TaskPanel(props: TaskPanelProps) {
   let titleEditHandle: EditableTextHandle | undefined;
   let promptHandle: PromptInputHandle | undefined;
 
-  // Two-column focus-mode layout kicks in once the task panel is wide enough.
-  // Hysteresis: enter at >=1200, leave at <1150. A single threshold flickers
+  // Two-column focus-mode layout kicks in once the main column is wide enough.
+  // Hysteresis: enter at >=1080, leave at <1030. A single threshold flickers
   // when the user drags the window edge across it, and every flip remounts the
-  // xterm terminal inside the left column.
+  // xterm terminal inside the left column. With a graph tab primary the main
+  // column is about a third of the tile, so the split stays off by design.
   const SPLIT_ENTER_WIDTH = 1080;
   const SPLIT_EXIT_WIDTH = 1030;
   const [panelWidth, setPanelWidth] = createSignal(0);
@@ -317,11 +341,64 @@ export function TaskPanel(props: TaskPanelProps) {
         onStepJumpReady={(fn, fromIdx) => {
           setStepNav(fn ? { jump: fn, firstIndex: fromIdx } : undefined);
         }}
+        onTranscriptMarksReady={handleTranscriptMarks}
       />
     </div>
   );
   const shellSectionEl = <TaskShellSection task={props.task} isActive={props.isActive} />;
-  const canvasEl = <TaskCanvasPanel task={props.task} agentId={firstAgentId()} />;
+  const canvasVisible = () => isTaskCanvasVisible(props.task);
+  const mindMapActive = () => props.task.canvasActiveTab === 'mindmap';
+  const graphActive = () => mindMapActive() || props.task.canvasActiveTab === 'reasoning';
+  // A focused tile is the whole window, so a graph tab gets about two thirds
+  // of it. The layout keeps its own pins, leaving the tiling canvas width alone.
+  const graphPrimary = () =>
+    store.focusMode &&
+    props.isActive &&
+    !store.showNewTaskPanel &&
+    canvasVisible() &&
+    graphActive();
+  // Graph hosts mount on first use and then stay, so switching tabs keeps
+  // their held state.
+  const canvasMounted = (kind: 'mindmap' | 'reasoning') => {
+    const [mounted, setMounted] = createSignal(false);
+    createEffect(() => {
+      if (props.task.canvasTabs?.some((tab) => tab.kind === kind)) setMounted(true);
+    });
+    return mounted;
+  };
+  const mindMapMounted = canvasMounted('mindmap');
+  const reasoningMounted = canvasMounted('reasoning');
+  const mindMapEl = createMemo(() =>
+    mindMapMounted() ? (
+      <TaskMindMap
+        task={props.task}
+        visible={mindMapActive() && canvasVisible() && (!store.focusMode || props.isActive)}
+        wide={graphPrimary()}
+      />
+    ) : undefined,
+  );
+  const reasoningGraphEl = createMemo(() =>
+    reasoningMounted() ? (
+      <TaskReasoningGraphHost
+        taskId={props.task.id}
+        transcriptMarks={(agentId) => transcriptMarks().get(agentId)}
+        visible={
+          canvasVisible() &&
+          props.task.canvasActiveTab === 'reasoning' &&
+          (!store.focusMode || props.isActive)
+        }
+        wide={graphPrimary()}
+      />
+    ) : undefined,
+  );
+  const canvasEl = (
+    <TaskCanvasPanel
+      task={props.task}
+      agentId={firstAgentId()}
+      reasoning={reasoningGraphEl()}
+      mindmap={mindMapEl()}
+    />
+  );
   const notesBodyEl = (
     <TaskNotesBody
       task={props.task}
@@ -487,6 +564,7 @@ export function TaskPanel(props: TaskPanelProps) {
   // column reparents it instead of remounting the terminal.
   const mainEl = (
     <div ref={mainRef} style={{ height: '100%', 'min-height': '0' }}>
+      {/* Layout flips swap containers; the terminal, composer, notes, and canvas stay mounted. */}
       <Show
         when={useSplit()}
         fallback={
@@ -549,7 +627,6 @@ export function TaskPanel(props: TaskPanelProps) {
       </Show>
     </div>
   );
-  const canvasVisible = () => isTaskCanvasVisible(props.task);
   const mainChild: PanelChild = {
     id: 'main',
     // The canvas needs a usable neighbor; a lone body must fit a 300px task tile.
@@ -562,6 +639,7 @@ export function TaskPanel(props: TaskPanelProps) {
     id: 'canvas',
     minSize: CANVAS_MIN_WIDTH,
     defaultSize: CANVAS_DEFAULT_WIDTH,
+    absorberWeight: 2,
     content: () => canvasEl,
   };
 
@@ -694,8 +772,8 @@ export function TaskPanel(props: TaskPanelProps) {
       <div style={{ flex: '1', 'min-height': '0' }}>
         <ResizablePanel
           direction="horizontal"
-          persistKey={`task:${props.task.id}:canvas-cols`}
-          absorberIds={['main']}
+          persistKey={`task:${props.task.id}:${graphPrimary() ? 'canvas-cols-graph' : 'canvas-cols'}`}
+          absorberIds={graphPrimary() ? ['main', 'canvas'] : ['main']}
           children={canvasVisible() ? [mainChild, canvasChild] : [mainChild]}
         />
       </div>

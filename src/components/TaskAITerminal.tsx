@@ -1,4 +1,5 @@
 import { Show, For, createSignal, createEffect, onMount, onCleanup, untrack } from 'solid-js';
+import type { TranscriptMarks } from '../investigation/transcript';
 
 import {
   store,
@@ -38,7 +39,7 @@ import type { AgentDef } from '../ipc/types';
 import type { PromptInputHandle } from './PromptInput';
 import { buildTaskAgentArgs, isResumeArgsFailure } from '../lib/agent-args';
 
-type StepNavApi = { mark: (i: number) => void; jump: (i: number) => boolean };
+type StepNavApi = TranscriptMarks;
 
 interface TaskAITerminalProps {
   task: Task;
@@ -56,10 +57,15 @@ interface TaskAITerminalProps {
     jump: ((stepIndex: number) => boolean) | undefined,
     firstJumpableIndex: number,
   ) => void;
+  /** Each agent terminal's raw marker API, so other panels can anchor their own keys. */
+  onTranscriptMarksReady?: (agentId: string, api: TranscriptMarks | undefined) => void;
   /** First look at a Markdown path the agent printed; returns true when it
    *  took the link. Otherwise the file opens in the Markdown viewer. */
   onFileLink?: (filePath: string) => boolean;
 }
+
+/** Marker key of the step at index `i` in the agent's scrollback. */
+const stepKey = (i: number): string => `step:${i}`;
 
 export function TaskAITerminal(props: TaskAITerminalProps) {
   // Step bookmarks — TerminalView hands us a mark/jump API once the xterm
@@ -87,7 +93,7 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
 
     const firstJumpable = untrack(() => props.task.stepsContent?.length ?? 0);
     lastMarkedLen = firstJumpable;
-    props.onStepJumpReady?.(api.jump, firstJumpable);
+    props.onStepJumpReady?.((i) => api.jump(stepKey(i)), firstJumpable);
   }
 
   createEffect(() => syncStepNavSource(props.task.agentIds));
@@ -99,7 +105,7 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
       lastMarkedLen = len;
       return;
     }
-    for (let i = lastMarkedLen; i < len; i++) stepNav.mark(i);
+    for (let i = lastMarkedLen; i < len; i++) stepNav.mark(stepKey(i));
     lastMarkedLen = len;
   });
 
@@ -212,6 +218,7 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
   }
 
   function handleStepNavReady(agentId: string, api: StepNavApi | undefined) {
+    props.onTranscriptMarksReady?.(agentId, api);
     if (!api) {
       stepNavByAgent.delete(agentId);
       syncStepNavSource();
@@ -570,7 +577,7 @@ function AgentTerminalPane(props: {
   onReady: (agentId: string, focusFn: () => void) => void;
   onUnmount: (agentId: string) => void;
   onStepNavReady?: (
-    api: { mark: (i: number) => void; jump: (i: number) => boolean } | undefined,
+    api: { mark: (key: string) => void; jump: (key: string) => boolean } | undefined,
   ) => void;
 }) {
   onCleanup(() => props.onUnmount(props.agentId));
