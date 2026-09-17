@@ -1,5 +1,5 @@
 import { createMemo } from 'solid-js';
-import { MindMapGraph, type GraphProps } from '../mindmap/MindMapGraph';
+import { GraphCanvas, type GraphProps } from '../graph/GraphCanvas';
 import { fadedRecords, recordEmphasis, type InvestigationRecord, type Snapshot } from './state';
 import { notePresentation } from './presentation';
 
@@ -12,7 +12,7 @@ export function InvestigationGraph(props: Props) {
   const emphasis = createMemo(() => recordEmphasis(props.snapshot));
   const faded = createMemo(() => fadedRecords(props.snapshot.records));
   return (
-    <MindMapGraph
+    <GraphCanvas
       {...props}
       showActivity
       label="Branching investigation. Arrow keys pan; plus and minus zoom."

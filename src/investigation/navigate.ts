@@ -1,4 +1,4 @@
-import { nodeTrail, type MapData, type MapNode } from '../mindmap/model';
+import { nodeTrail, type MapData, type MapNode } from '../graph/model';
 
 /** The branch below `rootId` as its own map; the root loses its parent so layout starts there. */
 export function branchSnapshot<S extends MapData<N>, N extends MapNode>(

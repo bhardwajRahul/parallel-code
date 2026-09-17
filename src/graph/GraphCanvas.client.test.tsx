@@ -1,7 +1,7 @@
 import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { MindMapGraph } from './MindMapGraph';
+import { GraphCanvas } from './GraphCanvas';
 import type { MapOrientation } from './layout';
 import type { MindMapDocument } from './model';
 
@@ -50,7 +50,7 @@ function mount(
   const [orientation, setOrientation] = createSignal(initialOrientation);
   dispose = render(
     () => (
-      <MindMapGraph
+      <GraphCanvas
         snapshot={snapshot()}
         selected={selected()}
         locateId={selected()}

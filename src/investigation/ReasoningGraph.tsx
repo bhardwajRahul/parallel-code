@@ -23,12 +23,12 @@ import {
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { unwrap } from 'solid-js/store';
 import { store } from '../store/core';
-import { createInlineEditing } from '../mindmap/inlineEditing';
-import { createReducedMotion } from '../mindmap/reducedMotion';
-import { focusRecord } from '../mindmap/focus';
-import { branchAgentAction, type BranchRequest } from '../mindmap/agentActions';
-import { NodeContextMenu, type NodeAction } from '../mindmap/NodeContextMenu';
-import { nodeTrail, visibleNodes } from '../mindmap/model';
+import { createInlineEditing } from '../graph/inlineEditing';
+import { createReducedMotion } from '../graph/reducedMotion';
+import { focusRecord } from '../graph/focus';
+import { branchAgentAction, type BranchRequest } from '../graph/agentActions';
+import { NodeContextMenu, type NodeAction } from '../graph/NodeContextMenu';
+import { nodeTrail, visibleNodes } from '../graph/model';
 import { InvestigationGraph } from './InvestigationGraph';
 import { GraphSearch } from './GraphSearch';
 import { branchSnapshot } from './navigate';
@@ -36,8 +36,9 @@ import { InvestigationInspector } from './InvestigationInspector';
 import { OptionsComparison } from './OptionsComparison';
 import { NodeBadges } from './NodeBadges';
 import { noteTypes } from './presentation';
-import { exportFormats, exportReasoningGraphAs, type ExportFormat } from './export';
-import { createEditHistory } from '../mindmap/editHistory';
+import { exportReasoningGraphAs } from './export';
+import { exportFormats, type ExportFormat } from '../graph/graphExport';
+import { createEditHistory } from '../graph/editHistory';
 import {
   conflictMessage,
   describeSaveFailure,
@@ -991,7 +992,7 @@ export function ReasoningGraph(props: Props) {
           >
             Export <span aria-hidden="true">▾</span>
           </button>
-          {props.actions}
+          <span class="reasoning-graph-extra">{props.actions}</span>
         </fieldset>
       </div>
       <Show when={toolbarMenu()} keyed>

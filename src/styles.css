@@ -83,7 +83,9 @@ body.font-smoothing {
 
 /* Visible keyboard focus indicators for interactive controls. The selector
    includes native elements and ARIA widgets so keyboard focus remains visible
-   across the app, including content mounted through Solid <Portal>. */
+   across the app, including content mounted through Solid <Portal>. The colour is
+   --border-focus, the same variable the focused task panel's ring uses, so every
+   focus indicator reads as one signal rather than per-pane accents. */
 :where(
   button,
   input,
@@ -103,7 +105,7 @@ body.font-smoothing {
   [role='combobox'],
   [role='radio']
 ):focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }
 
@@ -1942,7 +1944,7 @@ html:is(
 .dialog-overlay .btn-secondary:focus,
 .dialog-overlay .btn-primary:focus,
 .dialog-overlay .btn-danger:focus {
-  outline: 2.5px solid var(--accent);
+  outline: 2.5px solid var(--border-focus);
   outline-offset: 1.5px;
 }
 
@@ -2903,7 +2905,7 @@ html[data-look='islands-light'] .window-title-icon {
 }
 
 .focus-mode-task-indicator:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 80%, white 20%);
+  outline: 2px solid color-mix(in srgb, var(--border-focus) 80%, white 20%);
   outline-offset: 2px;
 }
 

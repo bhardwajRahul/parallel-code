@@ -1,4 +1,4 @@
-import { createMindMap } from '../mindmap/model';
+import { createMindMap } from '../graph/model';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentDef } from '../ipc/types';
 import type { PersistedTask } from './types';

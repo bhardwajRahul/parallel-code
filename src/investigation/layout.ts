@@ -1,4 +1,4 @@
-import { positionsFor as layout } from '../mindmap/layout';
+import { positionsFor as layout } from '../graph/layout';
 import { notePresentation } from './presentation';
 import type { Snapshot } from './state';
 

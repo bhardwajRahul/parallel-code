@@ -11,7 +11,7 @@ import type { LookPreset, AppearanceMode } from '../lib/look';
 import type { KeyBinding } from '../lib/keybindings';
 import type { CustomTheme } from '../lib/custom-theme';
 import type { ReasoningProfile } from '../investigation/profiles';
-import type { MindMapDocument } from '../mindmap/model';
+import type { MindMapDocument } from '../graph/model';
 import type { ReasoningWorkspace } from '../investigation/editing';
 
 /** A user override for a binding: partial key/modifiers to apply, or null to unbind. */

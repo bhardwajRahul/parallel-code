@@ -1,6 +1,6 @@
 import { createSignal } from 'solid-js';
 import { MindMapEditor } from '../../mindmap/MindMapEditor';
-import { createMindMap } from '../../mindmap/model';
+import { createMindMap } from '../../graph/model';
 import { render } from 'solid-js/web';
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/600.css';

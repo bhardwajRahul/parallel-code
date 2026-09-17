@@ -3,10 +3,10 @@ import {
   applyMapOperations,
   type MindMapDocument,
   type MapNode,
-} from '../mindmap/model';
+} from '../graph/model';
 import { parseMindMapUpdate } from '../../electron/shared/mindmap';
 import { parseCanvasView } from '../../electron/shared/canvas-view';
-import { branchPrompt, type BranchRequest } from '../mindmap/agentActions';
+import { branchPrompt, type BranchRequest } from '../graph/agentActions';
 import { produce, unwrap } from 'solid-js/store';
 import { batch } from 'solid-js';
 import { IPC } from '../../electron/ipc/channels';

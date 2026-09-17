@@ -18,13 +18,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { makeFixture } from './fixture';
 
-import { nodeTrail } from '../mindmap/model';
+import { nodeTrail } from '../graph/model';
 
 import { ReasoningGraph } from './ReasoningGraph';
 
 import type { Snapshot } from './state';
 
-import type { BranchRequest } from '../mindmap/agentActions';
+import type { BranchRequest } from '../graph/agentActions';
 
 let container: HTMLDivElement;
 

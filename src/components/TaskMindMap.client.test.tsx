@@ -7,7 +7,7 @@ import { setStore } from '../store/core';
 import { isAgentIdle } from '../store/taskStatus';
 import { replaceUnreadableMindMap, setTaskMindMap } from '../store/canvas';
 import type { Task } from '../store/types';
-import type { MindMapDocument } from '../mindmap/model';
+import type { MindMapDocument } from '../graph/model';
 import { CANVAS_TOOLS_UNAVAILABLE } from '../investigation/live-activation';
 import { TaskMindMap } from './TaskMindMap';
 
@@ -85,18 +85,14 @@ function mount(
   return { task, setTask };
 }
 function sendItem() {
-  const buttons = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
-  return buttons.find((item) => item.querySelector('span')?.textContent?.startsWith('Send manual'));
-}
-function openMore() {
-  expectDefined(container.querySelector<HTMLButtonElement>('[aria-label="More actions"]')).click();
-  vi.runAllTicks();
+  return [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+    (item) => item.textContent?.trim() === 'Send changes',
+  );
 }
 
 it('sends manual mind map changes once per change set and shows ownership marks', async () => {
   const { setTask } = mount(editedMap());
   expect(container.querySelector('.mindmap-ownership')).not.toBeNull();
-  openMore();
   expectDefined(sendItem()).click();
   await vi.advanceTimersByTimeAsync(0);
   expect(sendPrompt).toHaveBeenCalledTimes(1);
@@ -104,7 +100,6 @@ it('sends manual mind map changes once per change set and shows ownership marks'
   expect([taskId, agentId]).toEqual(['task-1', 'agent-1']);
   expect(prompt).toContain('mind map');
   expect(prompt).toContain('mindmap_read');
-  openMore();
   expect(sendItem()).toBeUndefined();
   // A further edit produces a new change set worth sending.
   setTask('mindMap', {
@@ -115,10 +110,6 @@ it('sends manual mind map changes once per change set and shows ownership marks'
       { id: 'b', parent: 'root', title: 'Also mine', detail: '', userEdited: ['*'] },
     ],
   });
-  expectDefined(document.querySelector<HTMLButtonElement>('[role="menuitem"]')).dispatchEvent(
-    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-  );
-  openMore();
   expect(sendItem()?.disabled).toBe(false);
 });
 
@@ -126,30 +117,25 @@ it('disables sending while the agent is busy and without an agent, and hides it 
   vi.mocked(isAgentIdle).mockReturnValue(false);
   // The change set sent for task-1 above stays remembered for the session.
   mount(editedMap(), ['agent-1'], 'task-2');
-  openMore();
   expect(sendItem()?.disabled).toBe(true);
   expect(sendItem()?.title).toBe('Wait until the agent is idle.');
   dispose?.();
   mount(editedMap(), [], 'task-3');
-  openMore();
   expect(sendItem()?.title).toBe('No agent session available for this task.');
   dispose?.();
   mount(undefined, ['agent-1'], 'task-4');
   expect(setTaskMindMap).toHaveBeenCalledWith('task-4', expect.objectContaining({ version: 1 }));
-  openMore();
   expect(sendItem()).toBeUndefined();
 });
 
 it('blocks sending for an exited agent and for a session without canvas tools', () => {
   setStore('agents', 'agent-1', 'status', 'exited');
   mount(editedMap(), ['agent-1'], 'task-5');
-  openMore();
   expect(sendItem()?.disabled).toBe(true);
   expect(sendItem()?.title).toBe('Start the agent before sending changes.');
   dispose?.();
   setStore('agents', 'agent-1', { status: 'running', canvasTools: false });
   mount(editedMap(), ['agent-1'], 'task-6');
-  openMore();
   expect(sendItem()?.disabled).toBe(true);
   expect(sendItem()?.title).toBe(CANVAS_TOOLS_UNAVAILABLE);
 });

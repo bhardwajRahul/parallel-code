@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show }
 import { InvestigationGraph } from '../InvestigationGraph';
 import { InvestigationInspector } from '../InvestigationInspector';
 import { noteTypes } from '../presentation';
-import { KindMark } from '../../mindmap/KindMark';
+import { KindMark } from '../../graph/KindMark';
 import { LAST_STORY_SEQUENCE, makeFixture } from '../fixture';
 import { acceptUpdate, snapshotAt, visibleRecords } from '../state';
 import '../investigation.css';

@@ -8,7 +8,7 @@ import {
   untrack,
 } from 'solid-js';
 import { unwrap } from 'solid-js/store';
-import { MindMapGraph } from './MindMapGraph';
+import { GraphCanvas } from '../graph/GraphCanvas';
 import {
   applyMapOperations,
   graphDifference,
@@ -18,17 +18,18 @@ import {
   type MapNode,
   type MapOperation,
   type MindMapDocument,
-} from './model';
-import { createInlineEditing } from './inlineEditing';
-import type { BranchIntent, BranchRequest } from './agentActions';
-import { createEditHistory } from './editHistory';
-import { createReducedMotion } from './reducedMotion';
-import { focusRecord } from './focus';
-import type { MapOrientation } from './layout';
-import { NodeContextMenu, type NodeAction } from './NodeContextMenu';
+} from '../graph/model';
+import { createInlineEditing } from '../graph/inlineEditing';
+import type { BranchIntent, BranchRequest } from '../graph/agentActions';
+import { createEditHistory } from '../graph/editHistory';
+import { createReducedMotion } from '../graph/reducedMotion';
+import { focusRecord } from '../graph/focus';
+import type { MapOrientation } from '../graph/layout';
+import { NodeContextMenu, type NodeAction } from '../graph/NodeContextMenu';
 import { nodeActions, type NodeCommands } from './editorActions';
-import { isProtected } from './ownership';
-import { downloadText, graphToJson, graphToMarkdown } from './exportText';
+import { isProtected } from '../graph/ownership';
+import { exportFormats, exportGraphAs, type ExportFormat } from '../graph/graphExport';
+import { PlusIcon, RedoIcon, UndoIcon } from '../components/icons';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import './editor.css';
 
@@ -61,7 +62,7 @@ const handled = (event: Event) => {
 
 export function MindMapEditor(props: Props) {
   let root!: HTMLElement;
-  let moreButton!: HTMLButtonElement;
+  let exportButton!: HTMLButtonElement;
   let disposed = false;
   let focusInside = false;
   let knownRevision = untrack(() => props.document.revision);
@@ -83,6 +84,7 @@ export function MindMapEditor(props: Props) {
   const find = (id: string | undefined) =>
     props.document.records.find((record) => record.id === id);
   const node = () => find(selected());
+  const rootId = () => props.document.records[0].id;
   const siblingsOf = (id: string) => {
     const parent = find(id)?.parent;
     return props.document.records.filter((record) => record.parent === parent);
@@ -119,7 +121,8 @@ export function MindMapEditor(props: Props) {
     if (!exists(untrack(editing)?.id)) inline.reset();
     dropOrphanedNoteDrafts(exists);
     const id = untrack(selected);
-    if (shown.has(id)) return;
+    // An empty selection is a deliberate state (a background click), not a stale one.
+    if (!id || shown.has(id)) return;
     // A hidden selection cannot be reached; fall back to its nearest visible ancestor. The
     // error about that change must survive, so this bypasses the clearing in select().
     const trail = exists(id) ? nodeTrail(records, id) : [];
@@ -231,7 +234,7 @@ export function MindMapEditor(props: Props) {
     if (text === current.detail || commit([{ type: 'update', id, changes: { detail: text } }]))
       discardNoteDraft(id);
   }
-  function add(placement: 'child' | 'sibling', target = selected()) {
+  function add(placement: 'child' | 'sibling', target = selected() || rootId()) {
     if (!saveTitle()) return;
     const anchor = find(target);
     if (!anchor) return;
@@ -368,16 +371,24 @@ export function MindMapEditor(props: Props) {
     const record = find(id);
     if (record && saveTitle()) props.onReference?.(record);
   }
-  function exportMap(format: 'md' | 'json') {
-    const name =
-      props.document.records[0].title
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '')
-        .slice(0, 60) || 'mind-map';
-    if (format === 'md')
-      downloadText(`${name}.md`, graphToMarkdown(props.document), 'text/markdown');
-    else downloadText(`${name}.json`, graphToJson(props.document), 'application/json');
+  function exportMap(format: ExportFormat) {
+    setError('');
+    try {
+      exportGraphAs(
+        format,
+        {
+          graph: props.document,
+          title: props.document.records[0].title,
+          subtitle: `Revision ${props.document.revision} · ${new Date().toLocaleString()}`,
+          fallback: 'mind-map',
+          dataFormat: 'parallel-code-mind-map',
+        },
+        // Both canvases render through the same SVG, so the page export finds it the same way.
+        root.querySelector<SVGSVGElement>('.investigation-svg'),
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not export the map.');
+    }
   }
   async function sendChanges() {
     const delivery = props.sendChanges;
@@ -416,40 +427,15 @@ export function MindMapEditor(props: Props) {
       showOwnership: !!props.showOwnership,
       commands: commands(id),
     });
-  const moreActions = (): NodeAction[] => [
-    ...actionsFor(selected()),
-    ...(props.showOwnership && protectedIds().length
-      ? [
-          {
-            label: 'Release all to agent',
-            separator: true,
-            title: 'Let the agent change or remove every idea you edited.',
-            run: () => release(protectedIds()),
-          },
-        ]
-      : []),
-    {
-      label: 'Export',
-      separator: true,
-      children: [
-        { label: 'Markdown outline', run: () => exportMap('md') },
-        { label: 'JSON', run: () => exportMap('json') },
-      ],
-    },
-    ...(props.sendChanges
-      ? [
-          {
-            label: 'Send manual changes to agent',
-            disabled: !!props.sendChanges.blocker,
-            title: props.sendChanges.blocker,
-            run: () => void sendChanges(),
-          },
-        ]
-      : []),
-  ];
+  const exportActions = (): NodeAction[] =>
+    exportFormats.map((entry) => ({
+      label: entry.label,
+      title: entry.hint,
+      run: () => exportMap(entry.format),
+    }));
   function closeMenu() {
     setMenu(undefined);
-    moreButton.focus({ preventScroll: true });
+    exportButton.focus({ preventScroll: true });
   }
   function keydown(id: string, event: KeyboardEvent) {
     if (event.isComposing || event.ctrlKey || event.metaKey || !find(id)) return;
@@ -498,50 +484,75 @@ export function MindMapEditor(props: Props) {
     >
       <div class="mindmap-toolbar" role="toolbar" aria-label="Mind map actions">
         <button class="mindmap-add" onClick={() => add('child')} title="Add child (Tab)">
-          + Idea
+          <PlusIcon /> Idea
         </button>
         <button
           disabled={!node()?.parent}
           onClick={() => add('sibling')}
           title="Add sibling (Enter)"
         >
-          + Sibling
-        </button>
-        <button disabled={!history.canUndo()} onClick={() => undo()} title="Undo (Ctrl/Cmd+Z)">
-          Undo
+          <PlusIcon /> Sibling
         </button>
         <button
+          aria-label="Undo"
+          title="Undo (Ctrl/Cmd+Z)"
+          disabled={!history.canUndo()}
+          onClick={() => undo()}
+        >
+          <UndoIcon />
+        </button>
+        <button
+          aria-label="Redo"
+          title="Redo (Ctrl/Cmd+Shift+Z or Ctrl+Y)"
           disabled={!history.canRedo()}
           onClick={() => undo(true)}
-          title="Redo (Ctrl/Cmd+Shift+Z or Ctrl+Y)"
         >
-          Redo
-        </button>
-        <button aria-pressed={details()} onClick={() => setDetails(!details())}>
-          Notes
+          <RedoIcon />
         </button>
         <button
-          ref={moreButton}
-          class="mindmap-more"
-          aria-label="More actions"
+          ref={exportButton}
+          class="mindmap-export"
+          aria-label="Export map"
+          title="Save the current map"
           aria-haspopup="menu"
           aria-expanded={!!menu()}
           onClick={() => {
             if (menu()) return setMenu(undefined);
-            const bounds = moreButton.getBoundingClientRect();
+            const bounds = exportButton.getBoundingClientRect();
             setMenu({ x: bounds.left, y: bounds.bottom + 4 });
           }}
         >
-          •••
+          Export <span aria-hidden="true">▾</span>
         </button>
+        <span class="mindmap-optional">
+          <Show when={props.showOwnership && protectedIds().length}>
+            <button
+              title="Let the agent change or remove every idea you edited."
+              onClick={() => release(protectedIds())}
+            >
+              Release all
+            </button>
+          </Show>
+          <Show when={props.sendChanges}>
+            {/* Unkeyed: the delivery is a fresh object on every edit, and remounting the
+                button would drop keyboard focus mid-interaction. */}
+            <button
+              disabled={!!props.sendChanges?.blocker}
+              title={props.sendChanges?.blocker ?? 'Tell the agent what you changed by hand.'}
+              onClick={() => void sendChanges()}
+            >
+              Send changes
+            </button>
+          </Show>
+        </span>
       </div>
       <Show when={menu()} keyed>
         {(anchor) => (
           <NodeContextMenu
             anchor={anchor}
-            label="Map actions"
-            owner={moreButton}
-            actions={moreActions()}
+            label="Export format"
+            owner={exportButton}
+            actions={exportActions()}
             onClose={closeMenu}
           />
         )}
@@ -552,7 +563,7 @@ export function MindMapEditor(props: Props) {
         </p>
       </Show>
       <div class="mindmap-stage">
-        <MindMapGraph
+        <GraphCanvas
           snapshot={props.document}
           selected={selected()}
           locateId={selected()}
@@ -568,9 +579,16 @@ export function MindMapEditor(props: Props) {
           locateOnlyIfOutside
           reserveCollapsedSpace={false}
           dimUnselected={false}
+          dimUnconnected
           showOwnership={props.showOwnership}
           changeKey={String(restoreKey())}
           onSelect={select}
+          onClearSelection={() => {
+            // Clicking away saves an unfinished title, as clicking another idea does.
+            if (!saveTitle()) return;
+            select('');
+            setDetails(false);
+          }}
           onHold={() => {}}
           onEdit={edit}
           onNodeKeyDown={keydown}

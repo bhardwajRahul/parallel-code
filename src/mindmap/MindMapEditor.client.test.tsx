@@ -4,8 +4,13 @@ import { createStore, unwrap } from 'solid-js/store';
 import { render } from 'solid-js/web';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { MindMapEditor, type ChangeDelivery } from './MindMapEditor';
-import { applyMapOperations, createMindMap, restoreMindMap, type MindMapDocument } from './model';
-import type { BranchRequest } from './agentActions';
+import {
+  applyMapOperations,
+  createMindMap,
+  restoreMindMap,
+  type MindMapDocument,
+} from '../graph/model';
+import type { BranchRequest } from '../graph/agentActions';
 
 interface Extra {
   showOwnership?: boolean;
@@ -99,7 +104,7 @@ function type(value: string) {
 }
 function button(text: string) {
   const result = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
-    (button) => button.textContent?.trim() === text,
+    (button) => button.textContent?.trim() === text || button.getAttribute('aria-label') === text,
   );
   if (!result) throw new Error(`Missing button ${text}`);
   return result;
@@ -111,9 +116,13 @@ function menuItem(label: string) {
     ),
   );
 }
-function more() {
-  button('•••').click();
+function exportMenu() {
+  button('Export map').click();
   vi.runAllTicks();
+}
+/** Map-wide actions moved to the toolbar; node actions come from the context menu. */
+function nodeMenu(id: string) {
+  context(id);
 }
 function dialogButton(text: string) {
   return expectDefined(
@@ -354,7 +363,7 @@ it('starts without an agent, edits inline, and creates children and siblings wit
   key(input(), 'Enter');
   expect(state.document.records).toHaveLength(2);
   expect(document.activeElement).toBe(idea(state.document.records[1].id));
-  button('+ Sibling').click();
+  button('Sibling').click();
   vi.runAllTicks();
   expect(state.document.records.filter((node) => node.parent === root)).toHaveLength(2);
   type('Testing');
@@ -389,7 +398,7 @@ it('cancels a title, honors IME composition, and leaves Shift+Tab available', ()
 
 it('undoes and redoes title edits and node insertion without mutating history', () => {
   const { state } = mount();
-  button('+ Idea').click();
+  button('Idea').click();
   vi.runAllTicks();
   type('First idea');
   input().dispatchEvent(new FocusEvent('blur'));
@@ -406,19 +415,19 @@ it('undoes and redoes title edits and node insertion without mutating history', 
 
 it('moves and removes branches, then restores them with undo', () => {
   const { state } = mount();
-  button('+ Idea').click();
+  button('Idea').click();
   vi.runAllTicks();
   type('A');
   key(input(), 'Enter');
-  button('+ Sibling').click();
+  button('Sibling').click();
   vi.runAllTicks();
   type('B');
   input().dispatchEvent(new FocusEvent('blur'));
   const [root, a, b] = state.document.records.map((node) => node.id);
-  more();
+  nodeMenu(b);
   menuItem('Nest under previous idea').click();
   expect(state.document.records.find((node) => node.id === b)?.parent).toBe(a);
-  more();
+  nodeMenu(b);
   menuItem('Move one level up').click();
   expect(state.document.records.find((node) => node.id === b)?.parent).toBe(root);
   key(idea(b), 'Delete');
@@ -429,11 +438,12 @@ it('moves and removes branches, then restores them with undo', () => {
 
 it('keeps IDs and notes through persistence and visibility changes', () => {
   const { state, setVisible } = mount();
-  button('+ Idea').click();
+  button('Idea').click();
   vi.runAllTicks();
   type('Keep me');
   input().dispatchEvent(new FocusEvent('blur'));
-  button('Notes').click();
+  nodeMenu(state.document.records[1].id);
+  menuItem('Edit notes').click();
   const notes = expectDefined(
     container.querySelector<HTMLTextAreaElement>('[aria-label="Idea notes"]'),
   );
@@ -558,7 +568,7 @@ it('places the caret after the first typed character and supports explicit colla
   expect(input().selectionStart).toBe(1);
   expect(input().selectionEnd).toBe(1);
   key(input(), 'Escape');
-  button('+ Idea').click();
+  button('Idea').click();
   vi.runAllTicks();
   key(input(), 'Escape');
   const child = state.document.records[1].id;
@@ -568,12 +578,12 @@ it('places the caret after the first typed character and supports explicit colla
   vi.runAllTicks();
   expect(idea(child)).toBeDefined();
   key(idea(root), 'Escape');
-  expect(document.activeElement).toBe(button('+ Idea'));
+  expect(document.activeElement).toBe(button('Idea'));
 });
 
 it('does not undo over external revisions or overwrite a conflicting inline title', () => {
   const { state, setState } = mount();
-  button('+ Idea').click();
+  button('Idea').click();
   vi.runAllTicks();
   type('Local title');
   const child = state.document.records[1].id;
@@ -595,7 +605,8 @@ it('does not undo over external revisions or overwrite a conflicting inline titl
 
 it('retains a focused notes draft when an agent changes its detail and rejects conflicting blur', () => {
   const { state, setState } = mount();
-  button('Notes').click();
+  nodeMenu(state.document.records[0].id);
+  menuItem('Edit notes').click();
   const notes = expectDefined(
     container.querySelector<HTMLTextAreaElement>('[aria-label="Idea notes"]'),
   );
@@ -623,7 +634,8 @@ it('retains a focused notes draft when an agent changes its detail and rejects c
 it('drops notes for an idea the agent removed and says so instead of saving them elsewhere', () => {
   const { state, setState } = mount(twoBranches());
   idea('a').click();
-  button('Notes').click();
+  nodeMenu('a');
+  menuItem('Edit notes').click();
   const notes = expectDefined(
     container.querySelector<HTMLTextAreaElement>('[aria-label="Idea notes"]'),
   );
@@ -723,7 +735,7 @@ it('offers shared branch actions and includes collapsed descendants in their con
 
 it('drops an inline title when an agent removes the edited node and keeps editing usable', () => {
   const { state, setState } = mount();
-  button('+ Idea').click();
+  button('Idea').click();
   vi.runAllTicks();
   type('Doomed');
   const [root, child] = state.document.records.map((node) => node.id);
@@ -736,7 +748,7 @@ it('drops an inline title when an agent removes the edited node and keeps editin
   vi.runAllTicks();
   expect(container.querySelector('[aria-label="Idea title"]')).toBeNull();
   expect(document.activeElement).toBe(idea(root));
-  button('+ Idea').click();
+  button('Idea').click();
   vi.runAllTicks();
   expect(container.querySelector('[role="alert"]')).toBeNull();
   expect(state.document.records).toHaveLength(2);
@@ -746,7 +758,7 @@ it('drops an inline title when an agent removes the edited node and keeps editin
 it('keeps collapsed branches through undo and redo, revealing only the restored selection', () => {
   const { state } = mount();
   const root = state.document.records[0].id;
-  button('+ Idea').click();
+  button('Idea').click();
   vi.runAllTicks();
   type('A');
   key(input(), 'Enter');
@@ -783,30 +795,24 @@ it('keeps collapsed branches through undo and redo, revealing only the restored 
   expect(idea(a).getAttribute('aria-label')).toContain('A.');
 });
 
-it('disables sibling creation at the root and closes the ••• menu after use, Escape, or outside clicks', () => {
+it('disables sibling creation at the root and closes the export menu after Escape, outside clicks, or a second click', () => {
   const { state } = mount();
   const root = state.document.records[0].id;
-  expect(button('+ Sibling').disabled).toBe(true);
-  more();
-  expect(button('•••').getAttribute('aria-expanded')).toBe('true');
-  expect(document.activeElement).toBe(menuItem('Rename'));
-  menuItem('Rename').click();
-  vi.runAllTicks();
+  expect(button('Sibling').disabled).toBe(true);
+  exportMenu();
+  expect(button('Export map').getAttribute('aria-expanded')).toBe('true');
+  expect(document.activeElement).toBe(menuItem('HTML page'));
+  key(menuItem('HTML page'), 'Escape');
   expect(document.querySelector('[role="menu"]')).toBeNull();
-  expect(input().value).toBe('Central topic');
-  key(input(), 'Escape');
-  more();
-  key(menuItem('Rename'), 'Escape');
-  expect(document.querySelector('[role="menu"]')).toBeNull();
-  expect(document.activeElement).toBe(button('•••'));
-  more();
+  expect(document.activeElement).toBe(button('Export map'));
+  exportMenu();
   idea(root).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
   expect(document.querySelector('[role="menu"]')).toBeNull();
   // Clicking the button while open toggles the menu closed instead of reopening it.
-  more();
-  button('•••').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  exportMenu();
+  button('Export map').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
   expect(document.querySelector('[role="menu"]')).not.toBeNull();
-  more();
+  exportMenu();
   expect(document.querySelector('[role="menu"]')).toBeNull();
 });
 
@@ -951,7 +957,8 @@ it('does not pull focus into the map when nothing in the app is focused', () => 
 
 it('saves an unfinished title and notes when the editor unmounts', () => {
   const { state } = mount(twoBranches());
-  button('Notes').click();
+  nodeMenu(state.document.records[0].id);
+  menuItem('Edit notes').click();
   const notes = expectDefined(
     container.querySelector<HTMLTextAreaElement>('[aria-label="Idea notes"]'),
   );
@@ -1002,15 +1009,12 @@ it('shows subtle ownership marks and releases ideas to the agent only when enabl
   expect(mark('a')).toBeNull();
   button('Undo').click();
   expect(record(state.document, 'a').userEdited).toEqual(['title', 'detail']);
-  more();
-  menuItem('Release all to agent').click();
+  button('Release all').click();
   vi.runAllTicks();
   expect(state.document.records.some((node) => node.userEdited)).toBe(false);
-  more();
   expect(
-    [...document.querySelectorAll('[role="menuitem"] span')].map((span) => span.textContent),
-  ).not.toContain('Release all to agent');
-  key(menuItem('Rename'), 'Escape');
+    [...container.querySelectorAll('button')].map((item) => item.textContent?.trim()),
+  ).not.toContain('Release all');
   setExtra({ showOwnership: false });
   button('Undo').click();
   expect(record(state.document, 'a').userEdited).toEqual(['title', 'detail']);
@@ -1021,7 +1025,106 @@ it('shows subtle ownership marks and releases ideas to the agent only when enabl
   ).not.toContain('Release to agent');
 });
 
-it('exports the map as a Markdown outline or JSON from the ••• menu', async () => {
+it('clears the selection when the canvas background is clicked and still adds from the toolbar', () => {
+  const { state } = mount(twoBranches());
+  const muted = (id: string) =>
+    idea(id).closest('.investigation-node-shell')?.getAttribute('data-muted');
+  idea('a').click();
+  vi.runAllTicks();
+  expect(muted('b1')).toBe('true');
+  expect(idea('a').getAttribute('aria-current')).toBe('true');
+  // A click on a node reaches the canvas too, so only a real background hit clears.
+  expectDefined(container.querySelector<SVGSVGElement>('.investigation-svg')).dispatchEvent(
+    new MouseEvent('click', { bubbles: true }),
+  );
+  vi.runAllTicks();
+  expect(['root', 'a', 'a1', 'b', 'b1'].map(muted)).toEqual([
+    'false',
+    'false',
+    'false',
+    'false',
+    'false',
+  ]);
+  expect(idea('a').getAttribute('aria-current')).toBeNull();
+  // Nothing selected still adds: the new idea joins the central topic.
+  button('Idea').click();
+  vi.runAllTicks();
+  expect(childrenOf(state.document, 'root')).toHaveLength(3);
+});
+
+it('keeps the selection cleared when the agent changes the map', () => {
+  const { state, setState } = mount(twoBranches());
+  const muted = (id: string) =>
+    idea(id).closest('.investigation-node-shell')?.getAttribute('data-muted');
+  idea('a').click();
+  vi.runAllTicks();
+  expectDefined(container.querySelector<SVGSVGElement>('.investigation-svg')).dispatchEvent(
+    new MouseEvent('click', { bubbles: true }),
+  );
+  vi.runAllTicks();
+  expect(idea('a').getAttribute('aria-current')).toBeNull();
+  setState('document', {
+    ...unwrap(state.document),
+    revision: state.document.revision + 1,
+    records: [
+      ...unwrap(state.document).records,
+      { id: 'c', parent: 'root', title: 'C', detail: '' },
+    ],
+  });
+  vi.runAllTicks();
+  // Nothing may re-select the central topic behind the user's back and dim the map again.
+  expect(container.querySelector('[aria-current="true"]')).toBeNull();
+  expect(['root', 'a', 'a1', 'b', 'b1', 'c'].map(muted)).toEqual(Array(6).fill('false'));
+});
+
+it('dims ideas outside the selected one, its parent and its children', () => {
+  mount(twoBranches());
+  const muted = (id: string) =>
+    idea(id).closest('.investigation-node-shell')?.getAttribute('data-muted');
+  idea('a').click();
+  vi.runAllTicks();
+  expect(['a', 'root', 'a1'].map(muted)).toEqual(['false', 'false', 'false']);
+  expect(['b', 'b1'].map(muted)).toEqual(['true', 'true']);
+  idea('b').click();
+  vi.runAllTicks();
+  expect(['b', 'root', 'b1'].map(muted)).toEqual(['false', 'false', 'false']);
+  expect(['a', 'a1'].map(muted)).toEqual(['true', 'true']);
+});
+
+it('exports the map as a self-contained HTML page built from the live canvas', async () => {
+  mount(twoBranches());
+  const svg = expectDefined(container.querySelector<SVGSVGElement>('.investigation-svg'));
+  const group = expectDefined(svg.querySelector('g'));
+  // happy-dom has no layout, so the export's fit-to-bounds needs a measured box.
+  Object.assign(group, { getBBox: () => ({ x: 0, y: 0, width: 400, height: 200 }) });
+  let blob: Blob | undefined;
+  vi.spyOn(URL, 'createObjectURL').mockImplementation((value) => {
+    blob = value as Blob;
+    return 'blob:map';
+  });
+  const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+  let filename = '';
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    filename = this.download;
+  });
+  exportMenu();
+  menuItem('HTML page').click();
+  expect(filename).toBe('Root.html');
+  const html = await blob?.text();
+  expect(html).toContain('viewBox="-24 -24 448 248"');
+  expect(html).toContain('Revision 0 · ');
+  const saved = new DOMParser().parseFromString(html ?? '', 'text/html');
+  expect(saved.querySelector('svg')).not.toBeNull();
+  expect(JSON.parse(saved.querySelector('pre')?.textContent ?? '{}').format).toBe(
+    'parallel-code-mind-map',
+  );
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(revoke).toHaveBeenCalledWith('blob:map');
+});
+
+it('exports the map as a Markdown outline, Mermaid diagram or JSON from the toolbar', async () => {
   const map = twoBranches();
   record(map, 'a1').detail = 'Supporting note';
   mount(map);
@@ -1037,19 +1140,19 @@ it('exports the map as a Markdown outline or JSON from the ••• menu', asyn
   ) {
     names.push(this.download);
   });
-  more();
-  menuItem('Export').click();
-  menuItem('Markdown outline').click();
-  more();
-  menuItem('Export').click();
-  menuItem('JSON').click();
-  expect(names).toEqual(['root.md', 'root.json']);
-  expect(await blobs[0].text()).toBe(
-    '- Root\n  - A\n    - A1\n      > Supporting note\n  - B\n    - B1\n',
-  );
-  expect(JSON.parse(await blobs[1].text())).toEqual(map);
+  for (const format of ['Markdown outline', 'Mermaid diagram', 'JSON data']) {
+    exportMenu();
+    menuItem(format).click();
+  }
+  expect(names).toEqual(['Root.md', 'Root.mmd', 'Root.json']);
+  const outline = await blobs[0].text();
+  // The heading carries the revision and the export time; the outline follows it.
+  expect(outline).toMatch(/^# Root · Revision 0 · /);
+  expect(outline).toContain('- Root\n  - A\n    - A1\n      > Supporting note\n  - B\n    - B1\n');
+  expect(await blobs[1].text()).toContain('flowchart TD');
+  expect(JSON.parse(await blobs[2].text())).toEqual(map);
   await vi.advanceTimersByTimeAsync(1000);
-  expect(revoke).toHaveBeenCalledTimes(2);
+  expect(revoke).toHaveBeenCalledTimes(3);
 });
 
 it('offers to send manual changes when provided, respecting blockers and reporting failures', async () => {
@@ -1057,26 +1160,34 @@ it('offers to send manual changes when provided, respecting blockers and reporti
   const { setExtra } = mount(twoBranches(), undefined, 1, undefined, {
     sendChanges: { blocker: 'Wait until the agent is idle.', send },
   });
-  more();
-  expect(menuItem('Send manual changes to agent').disabled).toBe(true);
-  expect(menuItem('Send manual changes to agent').title).toBe('Wait until the agent is idle.');
-  key(menuItem('Rename'), 'Escape');
+  expect(button('Send changes').disabled).toBe(true);
+  expect(button('Send changes').title).toBe('Wait until the agent is idle.');
   setExtra({ sendChanges: { send } });
-  more();
-  menuItem('Send manual changes to agent').click();
+  button('Send changes').click();
   await vi.advanceTimersByTimeAsync(0);
   expect(send).toHaveBeenCalledTimes(1);
   expect(container.querySelector('[role="alert"]')).toBeNull();
   send.mockRejectedValueOnce(new Error('Agent unavailable'));
-  more();
-  menuItem('Send manual changes to agent').click();
+  button('Send changes').click();
   await vi.advanceTimersByTimeAsync(0);
   expect(container.querySelector('[role="alert"]')?.textContent).toBe('Agent unavailable');
   setExtra({});
-  more();
   expect(
-    [...document.querySelectorAll('[role="menuitem"] span')].map((span) => span.textContent),
-  ).not.toContain('Send manual changes to agent');
+    [...container.querySelectorAll('button')].map((item) => item.textContent?.trim()),
+  ).not.toContain('Send changes');
+});
+
+it('keeps focus on Send changes while the map keeps changing', () => {
+  const send = vi.fn(async () => undefined);
+  const { state, setState, setExtra } = mount(twoBranches(), undefined, 1, undefined, {
+    sendChanges: { send },
+  });
+  button('Send changes').focus();
+  // The host rebuilds the delivery on every edit; the button must survive that.
+  setExtra({ sendChanges: { send } });
+  setState('document', { ...unwrap(state.document), revision: state.document.revision + 1 });
+  vi.runAllTicks();
+  expect(document.activeElement).toBe(button('Send changes'));
 });
 
 it('describes the map with one hint instead of a key legend on every idea', () => {

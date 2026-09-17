@@ -1,4 +1,4 @@
-import { restoreMindMap } from '../mindmap/model';
+import { restoreMindMap } from '../graph/model';
 import { produce } from 'solid-js/store';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';

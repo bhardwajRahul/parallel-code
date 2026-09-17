@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, Show, untrack } from 'solid-js';
-import { createMindMap } from '../mindmap/model';
+import { createMindMap } from '../graph/model';
 import { MindMapEditor, type ChangeDelivery } from '../mindmap/MindMapEditor';
-import type { MapOrientation } from '../mindmap/layout';
+import type { MapOrientation } from '../graph/layout';
 import {
   hasManualChanges,
   manualChangesDigest,

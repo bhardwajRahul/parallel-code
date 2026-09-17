@@ -69,7 +69,7 @@ interface Frame extends Position {
 }
 
 /** Solid owns every visible element. D3 supplies layout and camera gestures only. */
-export function MindMapGraph<N extends MapNode>(props: GraphProps<N>) {
+export function GraphCanvas<N extends MapNode>(props: GraphProps<N>) {
   let host!: HTMLDivElement;
   let surface!: SVGSVGElement;
   let animation = 0;

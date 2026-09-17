@@ -403,8 +403,9 @@
   border-color: var(--border);
   background: transparent;
 }
+/* Selection shares the app-wide focus colour; both canvases inherit it. */
 .investigation-node-shell[data-selected='true'] .investigation-node {
-  outline: 2px solid var(--fg-muted);
+  outline: 2px solid var(--border-focus);
   outline-offset: 4px;
 }
 .investigation-node-shell[data-emphasis='working'] .investigation-node {
@@ -585,10 +586,10 @@
 
 .mindmap-title-editor {
   overflow: hidden;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--border-focus);
   border-radius: 6px;
   background: var(--bg-elevated);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--border-focus) 18%, transparent);
 }
 .mindmap-title-input {
   display: block;

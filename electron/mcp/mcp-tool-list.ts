@@ -75,7 +75,7 @@ export const MINDMAP_TOOLS: ToolDef[] = [
   {
     name: 'mindmap_update',
     description:
-      'Apply atomic graph operations with expectedRevision from mindmap_read. Insert or patch nodes, move or remove branches, and edit relations or explanations. Omitted fields stay unchanged; null clears optional fields. Preserve user edits; overrideUser is an explicit per-operation override. The root cannot be moved or removed. On conflict read again. Ordinary nodes may omit kind. observation displays as Evidence; work as Work item. Report public summaries, not private chain-of-thought.',
+      'Apply atomic graph operations with expectedRevision from mindmap_read. Insert or patch nodes, move or remove branches, and edit relations or explanations. Omitted fields stay unchanged; null clears optional fields. Preserve user edits; overrideUser is an explicit per-operation override. The root cannot be moved or removed. On conflict read again. Ordinary nodes may omit kind. observation displays as Evidence; work as Work item. Prefer the smallest map that answers the question: about three levels and thirty notes, then offer to expand a branch rather than pre-expanding it. Leave out redundancy, never content the user asked for. Report public summaries, not private chain-of-thought.',
     inputSchema: {
       type: 'object',
       properties: {

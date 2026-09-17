@@ -28,7 +28,7 @@
   cursor: default;
 }
 .investigation :is(button, select, input):focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--border-focus);
   outline-offset: 3px;
 }
 .investigation-heading {
@@ -289,6 +289,7 @@
   height: 100%;
 }
 .reasoning-graph-toolbar {
+  container: reasoning-toolbar / inline-size;
   display: flex;
   flex-wrap: wrap;
   flex-shrink: 0;
@@ -316,6 +317,21 @@
   margin: 0;
   padding: 0;
   border: 0;
+}
+.reasoning-graph-extra {
+  display: contents;
+}
+/* A cramped toolbar drops its optional controls rather than wrapping onto a second
+   row: find first, then the host's own actions. Both return when the pane widens. */
+@container reasoning-toolbar (max-width: 560px) {
+  .reasoning-graph-search {
+    display: none;
+  }
+}
+@container reasoning-toolbar (max-width: 460px) {
+  .reasoning-graph-extra {
+    display: none;
+  }
 }
 .reasoning-graph-actions button {
   display: inline-flex;
@@ -613,7 +629,7 @@
   white-space: pre-wrap;
 }
 .investigation-note-editor :is(input, textarea):focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }
 .investigation-edit-conflict {

@@ -24,22 +24,46 @@
   cursor: default;
 }
 .mindmap-editor :is(button, input, textarea):focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }
+/* Matches the reasoning graph's toolbar: small, flat controls that only pick up a
+   background on hover, so the canvas stays the loudest thing in the pane. */
 .mindmap-toolbar {
+  container: mindmap-toolbar / inline-size;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 10px;
+  flex-shrink: 0;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--border);
+  font-size: 11px;
 }
-.mindmap-toolbar .mindmap-add {
-  background: var(--accent);
-  color: var(--accent-text);
-  border-color: var(--accent);
+.mindmap-optional {
+  display: contents;
 }
-.mindmap-toolbar .mindmap-more {
+/* As in the reasoning toolbar, a cramped pane drops the agent-facing actions rather
+   than wrapping onto a second row. They return when the pane widens. */
+@container mindmap-toolbar (max-width: 460px) {
+  .mindmap-optional {
+    display: none;
+  }
+}
+.mindmap-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 4px 6px;
+  white-space: nowrap;
+  border-color: transparent;
+  background: transparent;
+}
+/* Editing actions stay left; the map-wide ones sit together on the right. */
+.mindmap-toolbar .mindmap-export {
   margin-left: auto;
 }
 .mindmap-stage {
@@ -60,9 +84,6 @@
   font-size: 14px;
   line-height: 1.4;
   font-weight: 500;
-}
-.mindmap-editor .investigation-node-shell[data-selected='true'] .investigation-node {
-  outline-color: var(--accent);
 }
 .mindmap-notes {
   position: absolute;

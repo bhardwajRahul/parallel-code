@@ -1,4 +1,4 @@
-import { visibleNodes } from '../mindmap/model';
+import { visibleNodes } from '../graph/model';
 import type { InvestigationRecord, Snapshot } from '../../electron/shared/reasoning-state';
 export {
   acceptUpdate,

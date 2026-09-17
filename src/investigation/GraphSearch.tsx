@@ -1,5 +1,5 @@
 import { createMemo, createSignal, createUniqueId, For, Show } from 'solid-js';
-import type { MapNode } from '../mindmap/model';
+import type { MapNode } from '../graph/model';
 import { searchRecords } from './navigate';
 
 /** Finds notes by title or saved text and hands the chosen one back for locating. */

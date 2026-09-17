@@ -10,7 +10,7 @@ import {
   type JSX,
 } from 'solid-js';
 import { notePresentation, recordTrail } from './presentation';
-import { KindMark } from '../mindmap/KindMark';
+import { KindMark } from '../graph/KindMark';
 import type { InvestigationRecord, InvestigationSource, Snapshot } from './state';
 import type { NoteDraft } from './editing';
 import { invoke } from '../lib/ipc';

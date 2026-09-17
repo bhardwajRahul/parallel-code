@@ -1,8 +1,8 @@
-import { mapNodeKinds, type MapNodeKind, type MindMapDocument } from './model';
-import { noteTypes } from './presentation';
-import { isProtected } from './ownership';
-import { branchAgentAction, type BranchIntent } from './agentActions';
-import type { NodeAction } from './NodeContextMenu';
+import { mapNodeKinds, type MapNodeKind, type MindMapDocument } from '../graph/model';
+import { noteTypes } from '../graph/presentation';
+import { isProtected } from '../graph/ownership';
+import { branchAgentAction, type BranchIntent } from '../graph/agentActions';
+import type { NodeAction } from '../graph/NodeContextMenu';
 import {
   InfoIcon,
   MentionIcon,

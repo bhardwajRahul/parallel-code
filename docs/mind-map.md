@@ -1,5 +1,9 @@
 # Mind-map foundation
 
+A free-form map of ideas you own, one per task, usable with no agent connected. The
+task's other canvas, the agent-authored [reasoning graph](reasoning-graph.md), shares
+this model, renderer and editing; that page covers what is specific to it.
+
 Based on `task/lets-try-this-8d94c5` at `bc9df7e` (the source worktree was clean).
 The source snapshot was imported into this checkout without merging branches.
 
@@ -15,16 +19,19 @@ to change the share, which is remembered separately from the tiling width.
 - Right-click a topic (or press Shift+F10 / Menu) for every action: rename, notes,
   node type, add child/sibling, move up/down, nest, move one level up,
   expand/collapse, ask the agent, reference in chat, release to agent, and branch
-  deletion. The toolbar **•••** button opens the same menu for the selected topic
-  plus map-wide items: release all to agent, export (Markdown outline or JSON), and
-  **Send manual changes to agent** when there are edits the agent has not heard about
-  (disabled while the agent is busy). Escape or an outside click closes the menu.
+  deletion. Every topic action lives there; the toolbar carries only map-wide ones.
   Reasoning nodes offer their own editing actions through the same menu. Text inputs
   keep their native context menu.
+- The toolbar holds **Idea** and **Sibling**, icon buttons for undo and redo, and
+  **Export** on the right, which opens the four formats. **Release all** appears
+  while you hold ideas the agent may not change, and **Send changes** while there are
+  edits the agent has not heard about (disabled while the agent is busy). Both hide in
+  a pane too narrow for them and return when it widens, as the reasoning toolbar's
+  optional controls do. Escape or an outside click closes the export menu.
 - Enter creates a sibling of the focused topic (a child of the central topic); Tab
   creates a child; Shift+Tab moves the topic one level up; Alt+Shift+↑/↓ reorders it
   among its siblings. While editing, Enter saves the title and returns focus to the
-  topic; Tab saves and creates a child. **+ Sibling** is disabled on the central topic.
+  topic; Tab saves and creates a child. **Sibling** is disabled on the central topic.
 - Arrow keys focus nearby visible nodes in the requested screen direction.
   Use the branch's +/− button to expand or collapse it; collapsing a branch that
   holds the selection selects the branch itself. Escape focuses the toolbar.
@@ -39,6 +46,12 @@ to change the share, which is remembered separately from the tiling width.
 - Ideas you edited or created show a faint lock; its tooltip lists the protected
   fields. **Release to agent** lets the agent change them again. **Settings →
   Show ownership badges on canvases** hides the locks and the release actions.
+- Selecting an idea keeps it, its parent, its children and its cross-linked ideas at
+  full strength and fades the rest; hovering an idea moves the highlight to it after a
+  short pause. Faded ideas stay clickable, and the reasoning graph behaves the same way.
+  Click the canvas background to clear the selection and bring the whole map back to full
+  strength; an unfinished title is saved first, as it is when you click another idea.
+  With nothing selected, **Idea** adds to the central topic.
 - Agent additions get a short highlight; additions inside a collapsed branch show
   an "N new" badge beside its + button until you expand it. Cross-links are drawn
   faintly and light up for the hovered idea; while an idea is selected only its own
@@ -57,7 +70,7 @@ inline titles, and undo history are session state rather than persisted document
 
 ## Extension boundary
 
-`electron/shared/mindmap.ts` (re-exported by `src/mindmap/model.ts`) defines stable node IDs, ordered parent relationships,
+`electron/shared/mindmap.ts` (re-exported by `src/graph/model.ts`) defines stable node IDs, ordered parent relationships,
 optional cross-links, and a versioned document. Plain nodes require only a title
 and detail, with no investigation type or status. Restore validation rejects
 cycles, missing references, duplicate IDs, and invalid bounds before rendering.
@@ -69,39 +82,19 @@ incident links. Failed transactions leave the original untouched. The editor
 clears undo history on externally supplied revisions and protects an inline title
 from conflicting updates.
 
-`MindMapGraph` owns the existing Solid/SVG renderer, D3 tree layout, camera, and
+`GraphCanvas` (`src/graph/`) owns the existing Solid/SVG renderer, D3 tree layout, camera, and
 animations. Appearance and activity are optional inputs. The investigation
 renderer is now a thin adapter supplying its node shapes, assessments, confidence,
 and active-work emphasis. Both views share tree navigation helpers and the inline title controller in
-`src/mindmap/inlineEditing.tsx`. The controller handles input focus, typing,
+`src/graph/inlineEditing.tsx`. The controller handles input focus, typing,
 IME composition, cancellation, and Enter/Tab creation; document adapters own
 validation, persistence, and undo. Investigation
 collapse retains its previous layout spacing; plain-map collapse compacts the tree.
 
 The reasoning feed, editing overlays, contextual questions, and workflow profiles
 remain available in **Canvas → + → Reasoning**. Its semantic records extend the
-base node/link interfaces. Select a reasoning node with one click; double-click or
-F2 renames it on the canvas. Enter adds a child question, or saves the current title
-while editing. Tab saves and adds a child question. Arrows navigate spatially.
-New nodes start plain; pick another type afterwards from **Node type** in the
-menu. A selected card shows two quick buttons: **+** adds a child node and **⋯**
-opens the same menu as right-click. There, **Edit details** opens descriptions,
-evidence, and explicit conflict resolution, while **Ask about this node…** opens
-only a question composer (the node's title and notes are included; **Back to
-details** returns). Inline renames preserve description drafts, unsent questions,
-and agent metadata. Conflicting agent titles block automatic saving; Details lets
-you compare versions. Reasoning drafts retain their existing per-run persistence.
-Right-click a node for editing and **Delete node**. Del or Backspace deletes the
-focused branch, except the root; text inputs retain their normal key behavior.
-Undo/redo affects your edits, additions, and deletions, leaving the agent report
-intact. Deleted report branches stay hidden even when the agent adds descendants.
-Once you have saved edits, added notes, or deleted branches, the panel offers
-**Send manual changes to agent**. It sends the agent a summary of those changes
-with the run and revision, asks it to adopt what is right in its next update and
-say what it disagrees with, and points it at `reasoning_read` for the full view.
-Unsent drafts are not included. A busy agent queues the request (see below); once
-sent, the button stays hidden until you change the graph again. The mind map's
-**•••** menu offers the same request for map edits.
+base node/link interfaces, and its editing, runs, storage and agent tools are
+documented in [the reasoning graph page](reasoning-graph.md).
 
 ## Agent access
 
@@ -168,52 +161,6 @@ by the latest caption. When you mention a mind map, reasoning graph, or live map
 a chat prompt, the app appends a short reminder of the canvas tools once per agent
 session; prompts the app sends on your behalf never carry it.
 
-An empty reasoning tab (**Canvas → + → Reasoning**) shows the setup form instead
-of a graph: pick a workflow (Investigation, Architecture, Research, or Explanation, each with a
-one-line summary), optionally tick **Restart … first for a clean context**,
-and click **Start live map**. The app sends the workflow instructions to the task's
-main agent. If it is busy, has unsent terminal input, or is still starting after a
-restart, the request queues until it is ready; **Cancel** removes it. Ticking
-**Restart the agent first** asks for confirmation before the conversation is lost.
-Questions about a node and **Send manual changes to agent** queue the same way:
-the status line reads **1 request queued until the agent is ready** with its own
-**Cancel**, and the graph stays usable meanwhile. Only one request waits at a time.
-An agent exit drops a queued request with a notice; a workflow change from another
-pane cancels only a queued activation and leaves a live connection alone. The form
-also reminds you that a chat request works just as well.
-
-Once a report exists the form disappears and a status line takes over. While live
-it shows the agent, revision, and latest caption; after ten quiet minutes it shows
-the idle time instead. After an agent restart it reads **not live** and offers
-**Resume live map**, which continues the existing run. **Waiting for the agent's
-first update…** notes that this usually takes under a minute, and an append that
-stays incomplete for ten seconds is flagged so a stopped agent is not mistaken for
-a slow one. **New map…** brings
-the setup form back over the current graph: starting from it asks the agent for a
-fresh run at sequence 0, which archives the current report beside the feed and
-starts an empty graph. Saved edits stay keyed to the archived run. **Cancel**
-returns to the current graph unchanged. The status line says **Waiting for first
-update…** until the requested report arrives.
-
-`reasoning_read` returns the single current `graph` (the report with saved user
-edits applied, plus the protected `userEdited` fields and `userDeleted` IDs),
-`runId`, `revision`, `workflow`, and a `warning` when the feed is stuck. Unsent
-drafts and questions are excluded. `reasoning_update` takes the same atomic
-operations as `mindmap_update` (`insert`, `update`, `move`, `remove`, relation and
-explanation operations) with `runId` and `expectedRevision` from the last read, a
-brief `caption`, and optional `activeId`. Existing IDs, kinds, and parents stay
-stable; omitted fields remain unchanged. A stale revision or run rejects the whole
-batch; the agent reads again. User-edited fields and deletions are protected unless
-an operation sets `overrideUser`. For an empty graph, or on an explicit request to
-start over, the update also supplies `newRunId`: the old file is archived beside
-the feed and the graph starts fresh. When the existing report is stuck (a truncated
-or malformed line) the error message says to start over the same way. The reasoning
-tab opens when a run starts and stays closed for later updates after you close it.
-
-The app validates and appends reports to the existing task/agent JSONL history;
-agents use the MCP tools instead of writing files. Saved user edits and deletions
-remain separate and survive new reports. Existing JSONL histories still load.
-
 New task sessions using the built-in Claude Code, Codex, or Copilot commands receive
 the canvas tools automatically. Restart agents that were already running before
 this update; existing processes cannot acquire new launch arguments. Coordinators
@@ -230,10 +177,9 @@ Both canvases mark ideas you edited or created with a faint lock; hovering lists
 the protected fields, and **Release to agent** (per idea or for the whole map) lets
 the agent change them again. Undoing a removal restores the agent's authority
 over the restored ideas. **Settings → Show ownership badges on canvases** turns the
-badges and release actions off. Both canvases also export through **Export**: an
-HTML page or Mermaid diagram for reasoning, and a Markdown outline or JSON document
-for either view, downloaded as a file. A task keeps only the reasoning
-workspace of its current run; starting a new run drops older drafts.
+badges and release actions off. Both canvases also export through **Export**, in the
+same four formats: a self-contained HTML page carrying the current canvas, a Markdown
+outline, a Mermaid diagram, or the JSON document, downloaded as a file.
 
 Try asking the task agent:
 
@@ -294,20 +240,24 @@ are represented and rendered, but editing cross-links, free positioning, draggin
 file import/export, and converting between plain maps and reasoning reports are
 not implemented.
 
-Reasoning reports are files in the task checkout. Deleting a task removes them with
-its worktree; when a task shares a checkout (direct mode or an external worktree),
-closing the task removes only its own report directory. Ending phone access while an
-agent still uses the canvas tools keeps the transport on the local loopback address
-instead of stopping it, so the shared URL stops working but the agent keeps its
-tools.
+Ending phone access while an agent still uses the canvas tools keeps the transport
+on the local loopback address instead of stopping it, so the shared URL stops
+working but the agent keeps its tools.
 
 ## Development
 
 Run Vite with the existing Electron config and open
 `/investigation.html?view=mindmap` for an isolated, in-memory editor. The original
-investigation demo remains at `/investigation.html`. Use
-`/investigation.html?view=reasoning` for the editable reasoning fixture.
+investigation demo remains at `/investigation.html`.
 
 The larger change comprises the requested source-worktree import, extraction of
 the shared renderer/styles, and the new editor, model, persistence, and host tests.
 It adds no dependencies beyond those already in the source worktree.
+
+## Module layout
+
+`src/graph/` holds what both canvases share: the `GraphCanvas` renderer, the model,
+layout, inline editing, undo history, context menu, ownership, agent actions and the
+export formats. `src/mindmap/` holds only what is specific to the mind map
+(`MindMapEditor` and its actions and styles), and `src/investigation/` only what is
+specific to the reasoning graph.
