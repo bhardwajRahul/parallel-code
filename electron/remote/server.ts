@@ -922,10 +922,21 @@ export function startRemoteServer(opts: {
 
   /** Disconnect every paired phone, session-only ones included. Clearing the credential file
    *  alone would not revoke anything: `isPairedToken` authenticates against `pairedTokenBufs`,
-   *  and re-enabling the same file is a no-op, so the file is never re-read. */
+   *  and re-enabling the same file is a no-op, so the file is never re-read. Sockets authenticate
+   *  once on connect, so an open one keeps reading output and sending input until it is closed. */
   function revokePairedDevices(): void {
-    if (pairedDevicesPath) saveRememberedDevices([]);
+    // Revoke before persisting. A credential file that cannot be written — read-only directory,
+    // full disk — must not leave every paired phone holding a working token.
     pairedTokenBufs = [];
+    for (const [client, type] of clientTokenTypes) if (type === 'paired') client.terminate();
+    try {
+      if (pairedDevicesPath) saveRememberedDevices([]);
+    } catch (error) {
+      warn(
+        'remote',
+        `Could not clear the remembered devices file; phones are revoked for this run: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   // At most one pending PIN at a time — a fresh mint replaces any prior one.

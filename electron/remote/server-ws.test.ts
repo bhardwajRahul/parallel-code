@@ -169,6 +169,16 @@ describe('paired token over WebSocket', () => {
     expect(pty.killAgent).not.toHaveBeenCalled();
   });
 
+  it('disconnects a paired phone that is already connected when devices are forgotten', async () => {
+    const paired = await pair();
+    const ws = await connectAndAuth(paired);
+    const closed = waitForClose(ws);
+    srv.forgetRememberedDevices();
+    // A socket authenticates once, on its auth message. Revoking the token alone would leave
+    // this one streaming every agent's output and still allowed to send input.
+    await closed;
+  });
+
   it('a paired token from a stopped server is refused (4001)', async () => {
     const paired = await pair();
     await stop();
