@@ -79,10 +79,14 @@ import {
   navigateRow,
   navigateTask,
   isPanelFocused,
+  registerAction,
   registerFocusFn,
   scrollTaskElementIntoView,
   setPendingAction,
   setTaskFocusedPanel,
+  triggerAction,
+  triggerFocus,
+  unregisterAction,
   unregisterFocusFn,
 } from './focus';
 import { showNotification } from './notification';
@@ -139,6 +143,37 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('focus and action registries', () => {
+  it('lets a replacement keep the key when the component it replaced cleans up', () => {
+    const oldFocus = vi.fn();
+    const newFocus = vi.fn();
+    const oldSend = vi.fn();
+    const newSend = vi.fn();
+    registerFocusFn('task-1:prompt', oldFocus);
+    registerAction('task-1:send-prompt', oldSend);
+    // Two composers share a task's keys; whichever registers last is the visible one.
+    registerFocusFn('task-1:prompt', newFocus);
+    registerAction('task-1:send-prompt', newSend);
+
+    unregisterFocusFn('task-1:prompt', oldFocus);
+    unregisterAction('task-1:send-prompt', oldSend);
+
+    triggerFocus('task-1:prompt');
+    triggerAction('task-1:send-prompt');
+    expect(newFocus).toHaveBeenCalledOnce();
+    expect(newSend).toHaveBeenCalledOnce();
+    expect(oldFocus).not.toHaveBeenCalled();
+    expect(oldSend).not.toHaveBeenCalled();
+
+    unregisterFocusFn('task-1:prompt', newFocus);
+    unregisterAction('task-1:send-prompt', newSend);
+    triggerFocus('task-1:prompt');
+    triggerAction('task-1:send-prompt');
+    expect(newFocus).toHaveBeenCalledOnce();
+    expect(newSend).toHaveBeenCalledOnce();
+  });
+});
+
 describe('focus navigation neighbor map', () => {
   it('includes an open new-task panel after the last task', () => {
     setTask('task-1');
@@ -165,6 +200,21 @@ describe('focus navigation neighbor map', () => {
 
     expect(mockStore.activeTaskId).toBe('task-2');
     expect(mockStore.focusedPanel['task-2']).toBe('ai-terminal:agent-1');
+  });
+
+  it('keeps row navigation inside the new-task draft', () => {
+    setTask('task-1');
+    mockStore.focusedPanel['task-1'] = 'notes';
+    mockStore.showNewTaskPanel = true;
+    mockStore.newTaskPanelFocused = true;
+
+    navigateRow('down');
+    navigateRow('up');
+
+    // Row keys are global, so without a guard they reach the background task and
+    // pull focus out of the half-typed prompt.
+    expect(mockStore.newTaskPanelFocused).toBe(true);
+    expect(mockStore.focusedPanel['task-1']).toBe('notes');
   });
 
   it('includes an open new-task panel in direct next-task navigation', () => {

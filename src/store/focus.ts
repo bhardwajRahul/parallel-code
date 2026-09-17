@@ -42,8 +42,10 @@ export function registerAction(key: string, fn: () => void): void {
   actionRegistry.set(key, fn);
 }
 
-export function unregisterAction(key: string): void {
-  actionRegistry.delete(key);
+/** Pass the registered `fn` so a component leaving a key does not delete the registration
+ *  a replacement has already made under it. */
+export function unregisterAction(key: string, fn?: () => void): void {
+  if (!fn || actionRegistry.get(key) === fn) actionRegistry.delete(key);
 }
 
 export function triggerAction(key: string): void {
@@ -302,6 +304,10 @@ export function navigateRow(direction: 'up' | 'down'): void {
     }
     return;
   }
+
+  // The draft is a single tile with no panel rows of its own. Row keys are global, so
+  // without this it would fall through and pull focus onto the background task's panels.
+  if (store.showNewTaskPanel && store.newTaskPanelFocused) return;
 
   const taskId = store.activeTaskId;
   if (!taskId) return;

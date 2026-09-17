@@ -35,8 +35,10 @@ export function registerFocusFn(key: string, fn: () => void): void {
   focusRegistry.set(key, fn);
 }
 
-export function unregisterFocusFn(key: string): void {
-  focusRegistry.delete(key);
+/** Pass the registered `fn` so a component leaving a key does not delete the registration
+ *  a replacement has already made under it. */
+export function unregisterFocusFn(key: string, fn?: () => void): void {
+  if (!fn || focusRegistry.get(key) === fn) focusRegistry.delete(key);
 }
 
 export function triggerFocus(key: string): void {
