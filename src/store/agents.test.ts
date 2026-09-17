@@ -6,10 +6,20 @@ const { mockMarkAgentSpawned, mockRefreshUsage } = vi.hoisted(() => ({
   mockRefreshUsage: vi.fn(),
 }));
 const core = vi.hoisted(() => ({
-  harness: undefined as MockStoreHarness<{ agents: Record<string, AgentLike> }> | undefined,
+  harness: undefined as
+    | MockStoreHarness<{ agents: Record<string, AgentLike>; tasks: Record<string, TaskLike> }>
+    | undefined,
 }));
 
 let mockAgents: Record<string, AgentLike> = {};
+let mockTasks: Record<string, TaskLike> = {};
+
+interface TaskLike {
+  id: string;
+  agentIds: string[];
+  mainAgentView?: 'terminal' | 'chat';
+  selectedAgentId?: string;
+}
 
 interface AgentLike {
   id: string;
@@ -44,6 +54,12 @@ vi.mock('./core', async () => {
     set agents(next) {
       mockAgents = next;
     },
+    get tasks() {
+      return mockTasks;
+    },
+    set tasks(next) {
+      mockTasks = next;
+    },
   });
   return core.harness.moduleMock();
 });
@@ -55,13 +71,13 @@ vi.mock('./taskStatus', () => ({
 }));
 
 vi.mock('./persistence', () => ({ saveState: vi.fn() }));
-vi.mock('../lib/ipc', () => ({ invoke: vi.fn() }));
+vi.mock('../lib/ipc', () => ({ invoke: vi.fn(() => Promise.resolve()) }));
 vi.mock('./usage', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./usage')>()),
   refreshUsage: mockRefreshUsage,
 }));
 
-import { markAgentExited, restartAgent, switchAgent } from './agents';
+import { closeAgentInTask, markAgentExited, restartAgent, switchAgent } from './agents';
 
 const codexDef: AgentDefLike = {
   id: 'codex',
@@ -95,6 +111,33 @@ beforeEach(() => {
   const harness = expectDefined(core.harness, 'mock store harness');
   harness.reset(harness.state());
   mockAgents = { 'agent-1': exitedAgent() };
+  mockTasks = {};
+});
+
+describe('closeAgentInTask', () => {
+  beforeEach(() => {
+    mockAgents = {
+      'agent-1': exitedAgent({ id: 'agent-1' }),
+      'agent-2': exitedAgent({ id: 'agent-2' }),
+    };
+    mockTasks = { 'task-1': { id: 'task-1', agentIds: ['agent-1', 'agent-2'] } };
+  });
+
+  it('drops chat view when the chat agent is closed, so the promoted terminal stays visible', async () => {
+    mockTasks['task-1'].mainAgentView = 'chat';
+    await closeAgentInTask('task-1', 'agent-1');
+    expect(mockTasks['task-1'].agentIds).toEqual(['agent-2']);
+    // agent-2 is now agentIds[0]; leaving 'chat' set would hide its running terminal
+    // and start a new chat session against it.
+    expect(mockTasks['task-1'].mainAgentView).toBe('terminal');
+  });
+
+  it('leaves the view alone when a later agent is closed', async () => {
+    mockTasks['task-1'].mainAgentView = 'chat';
+    await closeAgentInTask('task-1', 'agent-2');
+    expect(mockTasks['task-1'].agentIds).toEqual(['agent-1']);
+    expect(mockTasks['task-1'].mainAgentView).toBe('chat');
+  });
 });
 
 describe('restartAgent', () => {

@@ -71,6 +71,9 @@ export async function closeAgentInTask(taskId: string, agentId: string): Promise
         t.chatPermissionMode = undefined;
       }
       t.agentIds.splice(idx, 1);
+      // Chat belongs to the first agent. Promoting the next one into that slot would
+      // hide its running terminal and open a fresh chat session against it instead.
+      if (idx === 0 && t.mainAgentView === 'chat') t.mainAgentView = 'terminal';
       const promptedAgentIds = t.promptedAgentIds?.filter((id) => id !== agentId);
       t.promptedAgentIds =
         promptedAgentIds && promptedAgentIds.length > 0 ? promptedAgentIds : undefined;
