@@ -4,9 +4,9 @@ import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { IPC } from './channels.js';
-import { startAgentChat, getAgentChat, releaseCodexChat } from '../chat/sessions.js';
+import { startAgentChat, getAgentChat, stopAgentChat, releaseCodexChat } from '../chat/sessions.js';
 import { getChatConnection } from '../chat/protocol.js';
-import { isChatDecision } from '../shared/agent-chat-types.js';
+import { isChatDecision, isChatPermissionMode } from '../shared/agent-chat-types.js';
 import { buildPtySpawnEnv, validateCommand, handoffCodexTerminal } from './pty.js';
 import { loadEnvFile } from './env-file.js';
 import { appendGitInfoExcludeBlock } from './git-exclude.js';
@@ -458,6 +458,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
       assertOptionalString(args.envFile, 'envFile');
       assertOptionalString(args.threadId, 'threadId');
       assertOptionalBoolean(args.skipPermissions, 'skipPermissions');
+      if (args.permissionMode !== undefined && !isChatPermissionMode(args.permissionMode))
+        throw new Error('Invalid permission mode.');
       assertString(args.channelId, 'channelId');
       validateUUID(args.channelId, 'channelId');
       const channel = `channel:${args.channelId}`;
@@ -469,6 +471,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
           cwd: args.cwd as string,
           threadId: args.threadId,
           skipPermissions: args.skipPermissions,
+          permissionMode: args.permissionMode,
           env: buildPtySpawnEnv({}, args.envFile ? loadEnvFile(args.envFile) : {}),
         },
         (state) => {
@@ -484,8 +487,19 @@ export function registerAllHandlers(win: BrowserWindow): void {
       }
       return;
     }
+    if (args.action === 'stop') {
+      // Ending the session is how a new conversation starts: the next start has no
+      // running chat to reuse, and the caller decides whether to resume a thread.
+      stopAgentChat(args.agentId);
+      return;
+    }
     const chat = getAgentChat(args.agentId);
     if (args.action === 'connection') return getChatConnection(chat);
+    if (args.action === 'setPermissionMode') {
+      if (!isChatPermissionMode(args.permissionMode)) throw new Error('Invalid permission mode.');
+      if (!chat.setPermissionMode) throw new Error('This agent cannot change its permission mode.');
+      return chat.setPermissionMode(args.permissionMode);
+    }
     if (args.action === 'models') return chat.loadModels();
     if (args.action === 'selectModel') {
       assertString(args.model, 'model');

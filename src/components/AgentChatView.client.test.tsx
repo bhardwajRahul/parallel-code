@@ -163,6 +163,71 @@ describe('Codex chat view', () => {
     expect(task().codexChatThreadId).toBe('saved-thread');
   });
 
+  it('starts a fresh conversation and forgets the session it replaced', async () => {
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    await tick();
+    mocks.channel?.onmessage?.(state({ items: [{ id: 'a', kind: 'assistant', text: 'Old' }] }));
+    expect(task().codexChatThreadId).toBe('thread-1');
+    const newChat = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'New chat',
+    );
+    // Losing a conversation is asked about first, and a refusal keeps it.
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    newChat?.click();
+    expect(mocks.invoke).not.toHaveBeenCalledWith(IPC.AgentChat, {
+      action: 'stop',
+      agentId: 'agent-1',
+    });
+    confirm.mockReturnValue(true);
+    newChat?.click();
+    vi.unstubAllGlobals();
+    await vi.waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(IPC.AgentChat, {
+        action: 'stop',
+        agentId: 'agent-1',
+      }),
+    );
+    expect(task().codexChatThreadId).toBeUndefined();
+    expect(store.agents['agent-1'].chatState?.items).toEqual([]);
+    await vi.waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        IPC.AgentChat,
+        expect.objectContaining({ action: 'start', threadId: undefined }),
+      ),
+    );
+  });
+
+  it('applies a permission mode to the running Claude session and remembers it', async () => {
+    setStore('agents', 'agent-1', 'def', 'id', 'claude-code');
+    setStore('agents', 'agent-1', 'def', 'command', 'claude');
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    await tick();
+    mocks.channel?.onmessage?.(
+      state({ permissionMode: 'default', permissionNote: 'Your settings use auto mode, which…' }),
+    );
+    expect(container.querySelector('.codex-chat-note')?.textContent).toContain('auto mode');
+    const select = container.querySelector<HTMLSelectElement>('.codex-chat-mode');
+    if (!select) throw new Error('The Claude chat header has no permission mode control.');
+    expect(select.value).toBe('default');
+    select.value = 'acceptEdits';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(IPC.AgentChat, {
+        action: 'setPermissionMode',
+        agentId: 'agent-1',
+        permissionMode: 'acceptEdits',
+      }),
+    );
+    expect(task().chatPermissionMode).toBe('acceptEdits');
+  });
+
+  it('offers no permission mode for Codex, which has no such control', async () => {
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    await tick();
+    expect(container.querySelector('.codex-chat-mode')).toBeNull();
+  });
+
   it('shows approvals without granting them and sends only the clicked decision', async () => {
     setStore(
       'agents',

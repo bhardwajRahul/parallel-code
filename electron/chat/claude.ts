@@ -6,9 +6,15 @@ import type {
   Query,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { AgentChatState, ChatDecision, ChatItem } from '../shared/agent-chat-types.js';
+import type {
+  AgentChatState,
+  ChatDecision,
+  ChatItem,
+  ChatPermissionMode,
+} from '../shared/agent-chat-types.js';
 import { stripAnsi } from '../shared/prompt-detect.js';
 import { describePermissionUpdates, describeToolCall, visibleUserText } from './describe.js';
+import { settingsDefaultMode } from './settings-mode.js';
 import type { AgentChat, ChatStartOptions } from './types.js';
 
 type ClaudeSDK = Pick<
@@ -112,15 +118,18 @@ export class ClaudeChat implements AgentChat {
         includePartialMessages: true,
         extraArgs: { 'replay-user-messages': null },
         executable: 'node',
-        // Send no permission mode unless the task opts out. The SDK turns this option
-        // into --permission-mode, a flag that outranks permissions.defaultMode in the
-        // user's settings, so passing 'default' re-asked for work they already allow.
+        // Send no permission mode unless the task opts out or the user picked one for
+        // this chat. The SDK turns this option into --permission-mode, a flag that
+        // outranks permissions.defaultMode in the user's settings, so passing 'default'
+        // re-asked for work they already allow.
         ...(this.opts.skipPermissions
           ? {
               permissionMode: 'bypassPermissions' as const,
               allowDangerouslySkipPermissions: true,
             }
-          : {}),
+          : this.opts.permissionMode
+            ? { permissionMode: this.opts.permissionMode }
+            : {}),
         canUseTool: this.canUseTool,
         // Diagnostics can include private tool arguments once a session is running.
         // Keep the launch output only, and never forward the rest to the UI or log.
@@ -137,8 +146,22 @@ export class ClaudeChat implements AgentChat {
     await this.loadModels();
     if (this.isClosed())
       throw new Error(this.state.error ?? 'Claude disconnected while connecting.');
+    this.noteUnavailableSettingsMode();
     this.state.status = 'ready';
     this.publish();
+  }
+
+  /**
+   * Claude Code's auto mode lives in its terminal UI only: a session driven over
+   * the SDK silently runs as 'default' instead, which asks for work auto mode would
+   * have handled. Say so rather than leave the user wondering why their settings
+   * stopped applying.
+   */
+  private noteUnavailableSettingsMode(): void {
+    if (this.opts.skipPermissions || this.opts.permissionMode) return;
+    if (settingsDefaultMode(this.opts.cwd) !== 'auto') return;
+    this.state.permissionNote =
+      'Your settings use auto mode, which works only in a terminal. Chat is running in default mode, so every tool asks. Pick a mode here or add permissions.allow rules.';
   }
 
   subscribe(publish: (state: AgentChatState) => void): void {
@@ -201,6 +224,17 @@ export class ClaudeChat implements AgentChat {
       if (!this.isClosed()) this.state.status = 'ready';
       this.publish();
     }
+  }
+
+  async setPermissionMode(mode: ChatPermissionMode): Promise<void> {
+    if (this.isClosed() || !this.query) throw new Error('Reconnect Chat before changing this.');
+    if (this.opts.skipPermissions)
+      throw new Error('This task skips permissions; turn that off to choose a mode.');
+    await this.query.setPermissionMode(mode);
+    this.state.permissionMode = mode;
+    // The user has now chosen for themselves what the settings could not carry over.
+    this.state.permissionNote = undefined;
+    this.publish();
   }
 
   send(text: string): Promise<void> {
@@ -422,6 +456,8 @@ export class ClaudeChat implements AgentChat {
     if (message.parent_tool_use_id) return; // Subagents are represented by their parent tool activity.
     if (message.type === 'system' && message.subtype === 'init') {
       this.state.model = string(message.model) || this.state.model;
+      // What the CLI resolved, which is not always what the settings asked for.
+      this.state.permissionMode = string(message.permissionMode) || this.state.permissionMode;
     } else if (message.type === 'stream_event') {
       this.acceptSend();
       const event = record(message.event);

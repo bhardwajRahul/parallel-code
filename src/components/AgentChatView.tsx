@@ -1,8 +1,13 @@
-import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
+import { For, Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { reconcile } from 'solid-js/store';
 import { Channel, invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
-import type { AgentChatState } from '../../electron/shared/agent-chat-types';
+import {
+  CHAT_PERMISSION_MODES,
+  isChatPermissionMode,
+  type AgentChatState,
+  type ChatPermissionMode,
+} from '../../electron/shared/agent-chat-types';
 import { chatMessages, type ChatConnection } from '../../electron/shared/chat-messages';
 import { store, setStore } from '../store/core';
 import { agentChatProvider } from '../store/agent-chat';
@@ -17,6 +22,12 @@ import { LOOK_PRESETS } from '../lib/look';
 import { GitBranchIcon } from './icons';
 import type { ChatActions, ChatProps, mountChat } from './chat/CopilotChat.react';
 import './AgentChatView.css';
+
+const PERMISSION_MODE_LABELS: Record<ChatPermissionMode, string> = {
+  default: 'Ask each time',
+  acceptEdits: 'Accept edits',
+  plan: 'Plan only',
+};
 
 export function AgentChatView(props: {
   task: Task;
@@ -68,6 +79,7 @@ export function AgentChatView(props: {
         envFile: store.agentEnvFiles[agent.def.id],
         threadId: props.task[sessionKey()],
         skipPermissions: props.task.skipPermissions,
+        permissionMode: props.task.chatPermissionMode,
         channelId: channel.id,
       });
       const next = await invoke<ChatConnection>(IPC.AgentChat, {
@@ -79,6 +91,45 @@ export function AgentChatView(props: {
       if (!disposed) setError(String(error));
     } finally {
       connecting = false;
+    }
+  }
+  /** Drop this conversation and open a new one; the agent keeps no thread to resume. */
+  async function newChat() {
+    if (
+      state()?.items.length &&
+      !window.confirm(`Start a new ${agentName()} chat? This conversation is cleared from here.`)
+    )
+      return;
+    setError('');
+    try {
+      await invoke(IPC.AgentChat, { action: 'stop', agentId: props.agentId });
+    } catch (error) {
+      setError(String(error));
+      return;
+    }
+    setStore('tasks', props.task.id, sessionKey(), undefined);
+    setStore(
+      'agents',
+      props.agentId,
+      'chatState',
+      reconcile({ status: 'starting', items: [], requests: [] } satisfies AgentChatState),
+    );
+    void saveState();
+    await connect();
+  }
+  async function selectPermissionMode(mode: ChatPermissionMode) {
+    setError('');
+    try {
+      await invoke(IPC.AgentChat, {
+        action: 'setPermissionMode',
+        agentId: props.agentId,
+        permissionMode: mode,
+      });
+      // Remember it for this task, so the next session starts the way it ended.
+      setStore('tasks', props.task.id, 'chatPermissionMode', mode);
+      void saveState();
+    } catch (error) {
+      setError(String(error));
     }
   }
   const callbacks: Pick<
@@ -180,6 +231,8 @@ export function AgentChatView(props: {
           : state()?.status === 'ready'
             ? 'Ready'
             : 'Connecting…';
+  /** The mode this session is really in: the user's pick, else what the agent reported. */
+  const permissionMode = () => props.task.chatPermissionMode ?? state()?.permissionMode ?? '';
   return (
     <div class="codex-chat" role="region" aria-label={`${agentName()} conversation`}>
       <div class="codex-chat-header">
@@ -191,13 +244,52 @@ export function AgentChatView(props: {
         <span class="codex-chat-status" role="status">
           {status()}
         </span>
+        <Show when={provider() === 'claude'}>
+          <select
+            class="codex-chat-mode"
+            aria-label="Permission mode"
+            title={
+              props.task.skipPermissions
+                ? 'This task skips permissions, so nothing is asked.'
+                : 'How this chat handles permission requests'
+            }
+            value={permissionMode()}
+            disabled={props.task.skipPermissions || state()?.status !== 'ready'}
+            onChange={(event) => {
+              const mode = event.currentTarget.value;
+              if (isChatPermissionMode(mode)) void selectPermissionMode(mode);
+            }}
+          >
+            {/* A mode this view cannot switch to, such as the task's own bypass,
+                still has to name itself rather than show someone else's value. */}
+            <Show when={!isChatPermissionMode(permissionMode())}>
+              <option value={permissionMode()} disabled>
+                {permissionMode() === 'bypassPermissions'
+                  ? 'Skipping permissions'
+                  : permissionMode() || 'Permissions'}
+              </option>
+            </Show>
+            <For each={CHAT_PERMISSION_MODES}>
+              {(mode) => <option value={mode}>{PERMISSION_MODE_LABELS[mode]}</option>}
+            </For>
+          </select>
+        </Show>
+        <button class="codex-chat-action" onClick={() => void newChat()}>
+          New chat
+        </button>
+        <button class="codex-chat-action" onClick={() => void connect()}>
+          Reconnect
+        </button>
       </div>
+      <Show when={state()?.permissionNote}>
+        <p class="codex-chat-note">{state()?.permissionNote}</p>
+      </Show>
       <div class="codex-chat-island" ref={host} />
       <Show when={error() || state()?.error}>
         <div role="alert" class="codex-chat-error">
           {error() || state()?.error}
+          {/* Reconnect lives in the header now, where it is reachable before an error too. */}
           <Show when={error() || state()?.status === 'closed'}>
-            <button onClick={() => void connect()}>Reconnect</button>
             <p>If sign-in is needed, use {agentName()}’s login flow in Terminal, then reconnect.</p>
           </Show>
         </div>

@@ -44,6 +44,20 @@ export interface ChatRequest {
   alwaysAllowNote?: string;
 }
 
+/**
+ * Permission modes a chat session can run in. Claude Code's own 'auto' mode is
+ * missing on purpose: it exists only in the interactive terminal and the CLI
+ * downgrades it to 'default' for a session driven over the SDK. 'bypassPermissions'
+ * is missing too — it cannot be switched on mid-session, so it stays the task's
+ * own "skip permissions" setting, applied when the session launches.
+ */
+export const CHAT_PERMISSION_MODES = ['default', 'acceptEdits', 'plan'] as const;
+export type ChatPermissionMode = (typeof CHAT_PERMISSION_MODES)[number];
+
+export function isChatPermissionMode(value: unknown): value is ChatPermissionMode {
+  return CHAT_PERMISSION_MODES.includes(value as ChatPermissionMode);
+}
+
 export interface ChatModel {
   model: string;
   displayName: string;
@@ -61,4 +75,8 @@ export interface AgentChatState {
   items: ChatItem[];
   requests: ChatRequest[];
   error?: string;
+  /** The mode the agent reports it is actually running in, once it says so. */
+  permissionMode?: string;
+  /** Why the running mode differs from the one the user configured, if it does. */
+  permissionNote?: string;
 }

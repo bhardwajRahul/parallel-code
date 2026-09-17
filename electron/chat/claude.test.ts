@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -23,6 +26,7 @@ const chats: ClaudeChat[] = [];
 afterEach(() => {
   chats.forEach((chat) => chat.stop());
   chats.length = 0;
+  vi.unstubAllEnvs();
 });
 function harness(
   history: SessionMessage[] = [],
@@ -41,6 +45,7 @@ function harness(
       },
     ]),
     applyFlagSettings: vi.fn(async () => {}),
+    setPermissionMode: vi.fn(async () => {}),
     interrupt: vi.fn(async () => {}),
     close: vi.fn(() => output.end()),
   };
@@ -115,6 +120,43 @@ describe('Claude chat adapter', () => {
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
     });
+  });
+
+  it('runs the mode the user picked for this chat, and only then overrides their settings', async () => {
+    const h = harness([], undefined, { permissionMode: 'acceptEdits' });
+    await h.chat.start();
+    expect(h.options().permissionMode).toBe('acceptEdits');
+    expect(h.options().allowDangerouslySkipPermissions).toBeUndefined();
+    expect(h.chat.state.permissionNote).toBeUndefined();
+  });
+
+  it('explains an auto mode the CLI silently drops, until the user picks a mode instead', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'claude-chat-auto-'));
+    vi.stubEnv('CLAUDE_CONFIG_DIR', join(root, 'config'));
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'settings.json'), '{"permissions":{"defaultMode":"auto"}}');
+    const h = harness([], undefined, { cwd: root });
+    try {
+      await h.chat.start();
+      // Nothing is sent to the CLI: auto is the user's setting, and the CLI still reads it.
+      expect(h.options().permissionMode).toBeUndefined();
+      expect(h.chat.state.permissionNote).toContain('auto mode');
+      await h.emit({ type: 'system', subtype: 'init', permissionMode: 'default' });
+      expect(h.chat.state.permissionMode).toBe('default');
+      await h.chat.setPermissionMode('acceptEdits');
+      expect(h.controls.setPermissionMode).toHaveBeenCalledWith('acceptEdits');
+      expect(h.chat.state.permissionMode).toBe('acceptEdits');
+      expect(h.chat.state.permissionNote).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a mode change that the task has already opted out of', async () => {
+    const h = harness([], undefined, { skipPermissions: true });
+    await h.chat.start();
+    await expect(h.chat.setPermissionMode('plan')).rejects.toThrow('skips permissions');
+    expect(h.controls.setPermissionMode).not.toHaveBeenCalled();
   });
 
   it('acknowledges prompts and reconciles partial and complete messages without duplicates', async () => {
