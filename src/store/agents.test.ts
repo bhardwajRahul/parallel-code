@@ -18,6 +18,7 @@ interface TaskLike {
   id: string;
   agentIds: string[];
   mainAgentView?: 'terminal' | 'chat';
+  claudeChatSessionId?: string;
   selectedAgentId?: string;
 }
 
@@ -125,11 +126,13 @@ describe('closeAgentInTask', () => {
 
   it('drops chat view when the chat agent is closed, so the promoted terminal stays visible', async () => {
     mockTasks['task-1'].mainAgentView = 'chat';
+    mockTasks['task-1'].claudeChatSessionId = 'session-1';
     await closeAgentInTask('task-1', 'agent-1');
     expect(mockTasks['task-1'].agentIds).toEqual(['agent-2']);
-    // agent-2 is now agentIds[0]; leaving 'chat' set would hide its running terminal
-    // and start a new chat session against it.
-    expect(mockTasks['task-1'].mainAgentView).toBe('terminal');
+    // agent-2 is now agentIds[0]; leaving 'chat' set would hide its running terminal,
+    // and a carried-over session id would resume agent-1's conversation against it.
+    expect(mockTasks['task-1'].mainAgentView).toBeUndefined();
+    expect(mockTasks['task-1'].claudeChatSessionId).toBeUndefined();
   });
 
   it('leaves the view alone when a later agent is closed', async () => {
