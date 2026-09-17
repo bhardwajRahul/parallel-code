@@ -261,6 +261,89 @@ it('archives a stuck graph only on an explicit revision-checked fresh run', asyn
   expect(fs.readFileSync(path.join(path.dirname(target), archived[0]), 'utf8')).toBe(stuck);
 });
 
+/** Grow a feed one update at a time, as an agent does; returns the last revision. */
+function appendRun(dir: string, count: number, from: number): number {
+  let revision = from;
+  for (let i = 0; i < count; i++)
+    revision = appendReasoningUpdate(dir, 'task', 'agent', {
+      runId: 'run',
+      expectedRevision: revision,
+      operations: [{ type: 'update', id: 'goal', changes: { title: `Step ${i}` } }],
+    }).revision;
+  return revision;
+}
+
+/** Insert `count` children of the central topic; the graph cost per replayed update. */
+function growGraph(dir: string, count: number, from: number): number {
+  let revision = from;
+  for (let i = 0; i < count; i++)
+    revision = appendReasoningUpdate(dir, 'task', 'agent', {
+      runId: 'run',
+      expectedRevision: revision,
+      operations: [
+        {
+          type: 'insert',
+          node: {
+            id: `n${i}`,
+            parent: 'goal',
+            kind: 'observation',
+            status: 'observed',
+            title: `Observation number ${i}`,
+            detail: 'Some detail text, so the graph is a realistic size to clone.',
+          },
+        },
+      ],
+    }).revision;
+  return revision;
+}
+
+it('keeps one append cheap however long the history is', async () => {
+  const dir = root();
+  let revision = appendReasoningUpdate(dir, 'task', 'agent', initial).revision;
+  revision = growGraph(dir, 180, revision);
+  revision = appendRun(dir, 120, revision);
+  const started = performance.now();
+  const last = appendReasoningUpdate(dir, 'task', 'agent', {
+    runId: 'run',
+    expectedRevision: revision,
+    operations: [{ type: 'update', id: 'goal', changes: { title: 'Last' } }],
+  });
+  const elapsed = performance.now() - started;
+  expect(last.revision).toBe(revision + 1);
+  // Re-deriving the graph from every line costs O(history × graph) on the main process and
+  // blocked it for hundreds of milliseconds per append before the parsed history carried over.
+  expect(elapsed).toBeLessThan(120);
+  const parsed = parseReasoningFeed((await read(dir)) ?? '');
+  expect(parsed.error).toBeUndefined();
+  expect(parsed.history.updates).toHaveLength(302);
+});
+
+it('re-reads a feed that changed outside the append path', async () => {
+  const dir = root();
+  const target = path.join(dir, reasoningFeedPath('task', 'agent'));
+  const first = appendReasoningUpdate(dir, 'task', 'agent', initial).revision;
+  const second = appendRun(dir, 2, first);
+  const full = fs.readFileSync(target, 'utf8');
+  // Roll the feed back to its first line; a carried-forward history must not be trusted.
+  fs.writeFileSync(target, full.split('\n').slice(0, 1).join('\n') + '\n');
+  expect(() =>
+    appendReasoningUpdate(dir, 'task', 'agent', {
+      runId: 'run',
+      expectedRevision: second,
+      operations: [],
+    }),
+  ).toThrow('revision');
+  const resumed = appendReasoningUpdate(dir, 'task', 'agent', {
+    runId: 'run',
+    expectedRevision: first,
+    operations: [],
+  });
+  expect(resumed.revision).toBe(first + 1);
+  const parsed = parseReasoningFeed((await read(dir)) ?? '');
+  expect(parsed.error).toBeUndefined();
+  expect(parsed.history.updates).toHaveLength(2);
+});
+
 it('reports an unchanged feed by stamp and a new stamp after an append or rotation', async () => {
   const dir = root();
   appendReasoningUpdate(dir, 'task', 'agent', initial);

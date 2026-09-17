@@ -12,6 +12,7 @@ import { parseReasoningFeed, parseReasoningUpdate } from '../shared/reasoning-fe
 import {
   acceptUpdate,
   emptyHistory,
+  type History,
   type InvestigationUpdate,
   type Snapshot,
 } from '../shared/reasoning-state.js';
@@ -200,6 +201,28 @@ function stuckError(error: string | undefined, pending: boolean): Error {
   );
 }
 
+// Replaying the feed on every append costs O(updates × graph) — a clone and a full validation
+// per line — synchronously on the main process: ~270 ms per append at 180 nodes and 300 updates.
+// Remember what the last append produced so the parser can reuse the updates it already
+// accepted. The remembered text is the proof: only a feed that still starts with it may reuse
+// the history, so an out-of-band edit, a rollback or a rotation falls back to a full parse.
+const MAX_CACHED_FEEDS = 16;
+const parsedFeeds = new Map<string, { raw: string; history: History }>();
+
+function rememberParsedFeed(file: string, raw: string, history: History): void {
+  parsedFeeds.delete(file);
+  parsedFeeds.set(file, { raw, history });
+  for (const oldest of parsedFeeds.keys()) {
+    if (parsedFeeds.size <= MAX_CACHED_FEEDS) break;
+    parsedFeeds.delete(oldest);
+  }
+}
+
+function parseOpenFeed(file: string, raw: string): ReturnType<typeof parseReasoningFeed> {
+  const cached = parsedFeeds.get(file);
+  return parseReasoningFeed(raw, cached && raw.startsWith(cached.raw) ? cached.history : undefined);
+}
+
 /** Synchronous compare-and-append serializes MCP writers without rewriting history. */
 export function appendReasoningUpdate(
   worktreePath: string,
@@ -214,7 +237,7 @@ export function appendReasoningUpdate(
   const fd = fs.openSync(file, OPEN_FLAGS, 0o600);
   try {
     const { stat, raw, size } = readOpenFeed(fd, file);
-    const current = parseReasoningFeed(raw);
+    const current = parseOpenFeed(file, raw);
     const stuck = !!current.error || current.pending;
     const currentRun = current.history.updates[0]?.runId ?? null;
     const revision = current.history.snapshots[current.history.snapshots.length - 1]?.revision ?? 0;
@@ -247,11 +270,13 @@ export function appendReasoningUpdate(
     if (fresh && size) {
       assertUnchanged(fd, file, stat, size);
       rotateFeed(file, line);
+      rememberParsedFeed(file, line, next);
       return snapshot;
     }
     assertUnchanged(fd, file, stat, size);
     fs.writeFileSync(fd, line);
     fs.fsyncSync(fd);
+    rememberParsedFeed(file, raw + line, next);
     return snapshot;
   } finally {
     fs.closeSync(fd);
