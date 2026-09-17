@@ -739,6 +739,7 @@ export async function discardDocumentEdits(): Promise<boolean> {
 /** Saves tracked content edits immediately instead of waiting for the next run. */
 export async function commitDocumentEdits(): Promise<boolean> {
   const { project } = requireProject();
+  if (!(await flushMarkdownEditor()) || !stillOpen(project.id)) return false;
   try {
     await invoke(IPC.CommitDocumentEdits, { projectRoot: project.path });
     showNotification('Uncommitted edits committed');
