@@ -568,6 +568,31 @@ it('leaves a same-id restart its canvas token when the spawn it replaced is canc
   ).toBe(true);
 });
 
+it('revokes the canvas token when the user kills an agent mid-spawn', async () => {
+  vi.spyOn(fs, 'accessSync').mockImplementation(() => {});
+  registerAllHandlers(testWindow());
+  const server = mockServer();
+  vi.spyOn(remote, 'startRemoteServer').mockResolvedValue(asHandle(server));
+  let cancel!: (error: Error) => void;
+  spawnAgent.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        cancel = reject;
+      }),
+  );
+  const spawn = handlers.get(IPC.SpawnAgent)?.(undefined, canvasSpawn('cleanup-test-agent'));
+  await tick();
+  await handlers.get(IPC.KillAgent)?.(undefined, { agentId: 'cleanup-test-agent' });
+  cancel(new Error('Agent startup was cancelled.'));
+  await expect(spawn).rejects.toThrow('Agent startup was cancelled.');
+  // Nobody took the spawn over, and no PTY exists to ever fire an exit, so this is the last
+  // chance to revoke. A live token authenticates on its own, with no check that the agent runs.
+  expect(server.unregisterCanvasAgent).toHaveBeenCalledWith('cleanup-test-agent');
+  expect(
+    fs.existsSync(path.join(os.tmpdir(), 'parallel-code-canvas-cleanup-test-agent.json')),
+  ).toBe(false);
+});
+
 it('shares one listener between a manual start and a canvas spawn that overlap', async () => {
   vi.spyOn(fs, 'accessSync').mockImplementationOnce(() => {});
   registerAllHandlers(testWindow());

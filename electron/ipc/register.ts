@@ -608,6 +608,10 @@ export function registerAllHandlers(win: BrowserWindow): void {
 
   // A kill must also cancel startup while optional MCP transport is awaiting I/O.
   const pendingSpawns = new Map<string, object>();
+  /** Which spawn minted the agent's live canvas token. `pendingSpawns` cannot answer this: a
+   *  kill clears the entry to cancel the spawn, and a finished restart clears its own, so an
+   *  absent entry means both "nobody owns this" and "the owner already left". */
+  const canvasOwners = new Map<string, object>();
   /** Container agents on macOS reach the host only through a wide bind; track who needs it. */
   const wideBindAgents = new Set<string>();
   const needsWideBind = (dockerMode: boolean) => dockerMode && process.platform !== 'linux';
@@ -619,6 +623,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       console.warn('Could not remove canvas MCP credentials:', error);
     }
     wideBindAgents.delete(agentId);
+    canvasOwners.delete(agentId);
     // The server's own exit listener runs after this one; drop the agent here so the
     // idle check below already sees it gone.
     remoteServer?.unregisterCanvasAgent(agentId);
@@ -681,6 +686,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
             .join(thisDir, '..', 'mcp-server.cjs')
             .replace('/app.asar/', '/app.asar.unpacked/');
           const token = server.registerCanvasAgent(args.taskId, args.agentId);
+          canvasOwners.set(args.agentId, pending);
           if (needsWideBind(args.dockerMode === true)) wideBindAgents.add(args.agentId);
           releaseCanvas = () => {
             server.unregisterCanvasAgent(args.agentId);
@@ -717,9 +723,11 @@ export function registerAllHandlers(win: BrowserWindow): void {
       try {
         await spawnAgent(win, canvasTools ? { ...args, canvasTools: true } : args);
       } catch (error) {
-        // No PTY exit will ever arrive for this agent; revoke the token and its file now.
-        // A same-id restart that already took over owns them, so only the current spawn cleans up.
-        if (pendingSpawns.get(args.agentId) === pending) {
+        // No PTY exit will ever arrive for this agent, so this is the last chance to revoke.
+        // Skip only when a same-id restart has since minted its own token over ours: tearing
+        // down then would strand it. A kill leaves nobody behind, and we must still clean up.
+        if (canvasOwners.get(args.agentId) === pending) {
+          canvasOwners.delete(args.agentId);
           releaseCanvas?.();
           removeCanvasConfig(args.agentId);
         }
