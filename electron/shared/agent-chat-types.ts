@@ -18,14 +18,30 @@ export interface ChatQuestion {
   options: { label: string; description: string }[];
 }
 
+/** How the user answered a request. 'accept-always' also stops the agent asking again. */
+export type ChatDecision = 'accept' | 'accept-always' | 'decline';
+
+export function isChatDecision(value: unknown): value is ChatDecision {
+  return value === 'accept' || value === 'accept-always' || value === 'decline';
+}
+
 export interface ChatRequest {
   id: string | number;
   since: number;
   kind: 'approval' | 'question';
+  /** What the agent wants to do, in the agent's own words. */
   text: string;
+  /** Short noun phrase for the action, e.g. "Read file". Heads the card when present. */
+  action?: string;
+  /** The raw tool name and arguments, shown only when the user opens the details. */
+  details?: string;
   questions?: ChatQuestion[];
   /** The agent asked that approval not be one keystroke away; open the card on Decline. */
   defaultToNo?: boolean;
+  /** Approving can be remembered, so this ask does not come back. */
+  canAlwaysAllow?: boolean;
+  /** What remembering would change, including any settings file it would write. */
+  alwaysAllowNote?: string;
 }
 
 export interface ChatModel {

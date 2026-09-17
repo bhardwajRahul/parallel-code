@@ -1,6 +1,11 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import type { ChatItem, ChatModel, AgentChatState } from '../shared/agent-chat-types.js';
+import type {
+  ChatDecision,
+  ChatItem,
+  ChatModel,
+  AgentChatState,
+} from '../shared/agent-chat-types.js';
 
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): RecordValue =>
@@ -273,13 +278,13 @@ export class CodexChat {
     await this.rpc('turn/interrupt', { threadId: this.state.threadId, turnId: this.turnId });
   }
 
-  respond(
-    id: string | number,
-    decision: 'accept' | 'decline',
-    answers?: Record<string, string>,
-  ): void {
+  respond(id: string | number, decision: ChatDecision, answers?: Record<string, string>): void {
     const request = this.state.requests.find((r) => r.id === id);
     if (!request) throw new Error('This request is no longer pending.');
+    // Codex requests never offer to be remembered, so an "always" can only reach here
+    // from a stale card; answer the one ask rather than send the app-server a word it
+    // does not know.
+    const answer = decision === 'decline' ? 'decline' : 'accept';
     const result =
       request.kind === 'question'
         ? {
@@ -287,7 +292,7 @@ export class CodexChat {
               (request.questions ?? []).map((q) => [q.id, { answers: [answers?.[q.id] ?? ''] }]),
             ),
           }
-        : { decision };
+        : { decision: answer };
     this.write({ id, result });
     this.state.requests = this.state.requests.filter((r) => r.id !== id);
     this.publish();

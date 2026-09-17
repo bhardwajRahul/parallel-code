@@ -2,10 +2,13 @@ import { randomUUID } from 'node:crypto';
 import type {
   CanUseTool,
   PermissionResult,
+  PermissionUpdate,
   Query,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { AgentChatState, ChatItem } from '../shared/agent-chat-types.js';
+import type { AgentChatState, ChatDecision, ChatItem } from '../shared/agent-chat-types.js';
+import { stripAnsi } from '../shared/prompt-detect.js';
+import { describePermissionUpdates, describeToolCall, visibleUserText } from './describe.js';
 import type { AgentChat, ChatStartOptions } from './types.js';
 
 type ClaudeSDK = Pick<
@@ -44,6 +47,8 @@ export class ClaudeChat implements AgentChat {
     string,
     {
       input: Record<string, unknown>;
+      /** The rules that would stop this ask coming back, as the SDK suggested them. */
+      suggestions?: PermissionUpdate[];
       finish: (result: PermissionResult, cancelled?: boolean) => void;
     }
   >();
@@ -231,26 +236,31 @@ export class ClaudeChat implements AgentChat {
     // The result event marks the turn finished. Keep Send disabled until it arrives.
   }
 
-  respond(
-    id: string | number,
-    decision: 'accept' | 'decline',
-    answers?: Record<string, string>,
-  ): void {
+  respond(id: string | number, decision: ChatDecision, answers?: Record<string, string>): void {
     const permission = this.permissions.get(String(id));
     if (!permission) throw new Error('This request is no longer pending.');
     const request = this.state.requests.find((request) => request.id === id);
     if (
-      decision === 'accept' &&
+      decision !== 'decline' &&
       request?.questions?.some((question) => !answers?.[question.id]?.trim())
     )
       throw new Error('Answer every question before continuing.');
+    const remember = decision === 'accept-always' && !!permission.suggestions?.length;
     permission.finish(
       decision === 'decline'
-        ? { behavior: 'deny', message: 'User declined this request.' }
+        ? {
+            behavior: 'deny',
+            message: 'User declined this request.',
+            decisionClassification: 'user_reject',
+          }
         : {
             behavior: 'allow',
             updatedInput:
               request?.kind === 'question' ? { ...permission.input, answers } : permission.input,
+            // Remembering is the agent's own suggestion; an ask that offered none is
+            // allowed this once, which is all "always" could have meant for it.
+            ...(remember ? { updatedPermissions: permission.suggestions } : {}),
+            decisionClassification: remember ? 'user_permanent' : 'user_temporary',
           },
     );
   }
@@ -371,7 +381,11 @@ export class ClaudeChat implements AgentChat {
         resolve(result);
         this.publish();
       };
-      this.permissions.set(id, { input, finish });
+      // An ask the agent marked unrememberable keeps no suggestions at all, so no
+      // later answer can write the rules it asked us not to offer.
+      const suggestions =
+        options.suppressAlwaysAllowRule === true ? undefined : options.suggestions;
+      this.permissions.set(id, { input, suggestions, finish });
       this.state.requests.push({
         id,
         since: Date.now(),
@@ -379,13 +393,24 @@ export class ClaudeChat implements AgentChat {
         questions,
         // Claude asks that this one never be approvable by a stray keystroke.
         defaultToNo: options.defaultToNo === true,
-        text: [
-          options.decisionReason,
-          `${tool}\n${JSON.stringify(input, null, 2)}`,
-          options.blockedPath,
-        ]
-          .filter(Boolean)
-          .join('\n'),
+        // A question is answered, not permitted; remembering an answer means nothing.
+        canAlwaysAllow: !questions && !!suggestions?.length,
+        alwaysAllowNote: suggestions?.length ? describePermissionUpdates(suggestions) : undefined,
+        action: options.displayName,
+        // The CLI writes this prompt for its own UI; only describe the call ourselves
+        // when it sent none. Its text may carry ANSI escapes, which say nothing here
+        // and can garble the sentence the user is deciding on.
+        text: stripAnsi(
+          [
+            options.title || describeToolCall(tool, input),
+            options.description,
+            options.decisionReason,
+            options.blockedPath,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        ),
+        details: `${tool}\n${JSON.stringify(input, null, 2)}`,
       });
       options.signal.addEventListener('abort', cancel, { once: true });
       this.publish();
@@ -425,7 +450,11 @@ export class ClaudeChat implements AgentChat {
         ? body.content
         : [{ type: 'text', text: string(body.content) }];
       if (message.type === 'user' && !message.isSynthetic) {
-        const text = contentText(content);
+        // A message this app already rendered stands as the user wrote it: the CLI
+        // injects reminders and notifications into the turn it replays back, but a
+        // user who types those tags themselves must still see their own words.
+        const shown = this.state.items.some((item) => item.id === id && item.kind === 'user');
+        const text = shown ? '' : visibleUserText(contentText(content));
         if (text) this.upsert({ id, kind: 'user', text });
       }
       content.forEach((value, index) => {
@@ -444,7 +473,7 @@ export class ClaudeChat implements AgentChat {
           this.upsert({
             id: string(block.id),
             kind: 'tool',
-            text: JSON.stringify(input, null, 2),
+            text: describeToolCall(tool, input),
             activity: {
               type,
               label: string(input.command) || string(input.file_path) || tool,
@@ -461,7 +490,9 @@ export class ClaudeChat implements AgentChat {
           this.upsert({
             id: toolId,
             kind: 'tool',
-            text: [previous?.text, contentText(block.content)].filter(Boolean).join('\n'),
+            // A blank line so the call stays legible above its output, which for a
+            // failure is the error text the user came to read.
+            text: [previous?.text, contentText(block.content)].filter(Boolean).join('\n\n'),
             activity: {
               type: previous?.activity?.type ?? 'tool',
               label: previous?.activity?.label ?? 'Tool activity',

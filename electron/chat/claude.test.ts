@@ -1,6 +1,7 @@
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
+  PermissionUpdate,
   Query,
   Options,
   SDKUserMessage,
@@ -8,6 +9,15 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { ClaudeChat } from './claude.js';
 import type { ChatStartOptions } from './types.js';
+
+/** The ask the CLI sends, typed, so a fixture cannot drift from what it really sends. */
+type AskOptions = Parameters<NonNullable<Options['canUseTool']>>[2];
+const askOptions = (overrides: Partial<AskOptions> = {}): AskOptions => ({
+  signal: new AbortController().signal,
+  requestId: 'request',
+  toolUseID: 'tool',
+  ...overrides,
+});
 
 const chats: ClaudeChat[] = [];
 afterEach(() => {
@@ -137,6 +147,30 @@ describe('Claude chat adapter', () => {
     expect(h.chat.state.status).toBe('ready');
   });
 
+  it('keeps the words the user sent and cleans up only the turns it did not send', async () => {
+    const h = harness();
+    await h.chat.start();
+    // The CLI replays our own turn back; a user quoting these tags still wrote them.
+    const quoted = 'Why does <system-reminder>this</system-reminder> show up in my prompt?';
+    await h.send(quoted);
+    expect(h.chat.state.items[0].text).toBe(quoted);
+    await h.emit({
+      type: 'user',
+      uuid: 'injected',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: '<system-reminder>Be careful.</system-reminder>' },
+          {
+            type: 'text',
+            text: '<task-notification><status>completed</status><summary>Build finished</summary></task-notification>',
+          },
+        ],
+      },
+    });
+    expect(h.chat.state.items[1].text).toBe('Build finished');
+  });
+
   it('records tools and their final results, including replay and subagent events', async () => {
     const h = harness();
     await h.chat.start();
@@ -189,7 +223,11 @@ describe('Claude chat adapter', () => {
     expect(h.chat.state.requests[0].defaultToNo).toBe(false);
     const id = h.chat.state.requests[0].id;
     h.chat.respond(id, 'accept');
-    await expect(pending).resolves.toEqual({ behavior: 'allow', updatedInput: input });
+    await expect(pending).resolves.toEqual({
+      behavior: 'allow',
+      updatedInput: input,
+      decisionClassification: 'user_temporary',
+    });
     expect(() => h.chat.respond(id, 'accept')).toThrow('no longer pending');
     const cancelled = h.options().canUseTool?.('Bash', input, {
       signal: signal.signal,
@@ -201,6 +239,109 @@ describe('Claude chat adapter', () => {
     signal.abort();
     await expect(cancelled).resolves.toMatchObject({ behavior: 'deny' });
     expect(h.chat.state.requests).toEqual([]);
+  });
+
+  it('shows the prompt the CLI wrote and remembers a decision on request', async () => {
+    const h = harness();
+    await h.chat.start();
+    await h.send();
+    const suggestions: PermissionUpdate[] = [
+      {
+        type: 'addRules',
+        rules: [{ toolName: 'Bash', ruleContent: 'npm test:*' }],
+        behavior: 'allow',
+        destination: 'localSettings',
+      },
+    ];
+    const pending = h.options().canUseTool?.(
+      'Bash',
+      { command: 'npm test' },
+      askOptions({
+        title: 'Claude wants to run npm test',
+        displayName: 'Run command',
+        suggestions,
+      }),
+    );
+    const request = h.chat.state.requests[0];
+    expect(request).toMatchObject({ action: 'Run command', canAlwaysAllow: true });
+    expect(request.text).toBe('Claude wants to run npm test');
+    expect(request.details).toContain('"command": "npm test"');
+    // The card has to name the settings file a click would write, not just "always".
+    expect(request.alwaysAllowNote).toBe(
+      'always allow Bash(npm test:*) in this checkout’s local settings',
+    );
+    h.chat.respond(request.id, 'accept-always');
+    await expect(pending).resolves.toEqual({
+      behavior: 'allow',
+      updatedInput: { command: 'npm test' },
+      updatedPermissions: suggestions,
+      decisionClassification: 'user_permanent',
+    });
+  });
+
+  it('describes a call the CLI did not write a prompt for, and never offers to remember it', async () => {
+    const h = harness();
+    await h.chat.start();
+    await h.send();
+    const pending = h.options().canUseTool?.(
+      'Bash',
+      { command: 'npm test' },
+      askOptions({
+        suppressAlwaysAllowRule: true,
+        suggestions: [
+          { type: 'setMode', mode: 'acceptEdits', destination: 'session' },
+          {
+            type: 'addRules',
+            rules: [{ toolName: 'Bash' }],
+            behavior: 'allow',
+            destination: 'userSettings',
+          },
+        ],
+      }),
+    );
+    const request = h.chat.state.requests[0];
+    expect(request.text).toBe('Bash: npm test');
+    expect(request).toMatchObject({ canAlwaysAllow: false, alwaysAllowNote: undefined });
+    // Even an "always" from a stale card writes no rule the agent withheld.
+    h.chat.respond(request.id, 'accept-always');
+    await expect(pending).resolves.toEqual({
+      behavior: 'allow',
+      updatedInput: { command: 'npm test' },
+      decisionClassification: 'user_temporary',
+    });
+  });
+
+  it('strips terminal escapes from the sentence the user decides on', async () => {
+    const h = harness();
+    await h.chat.start();
+    await h.send();
+    void h
+      .options()
+      .canUseTool?.(
+        'Read',
+        { file_path: '/etc/hosts' },
+        askOptions({ title: '\u001b[31mClaude wants to read /etc/hosts\u001b[0m' }),
+      );
+    expect(h.chat.state.requests[0].text).toBe('Claude wants to read /etc/hosts');
+  });
+
+  it('never treats an unanswered question as approvable, however it is accepted', async () => {
+    const h = harness();
+    await h.chat.start();
+    await h.send();
+    const pending = h
+      .options()
+      .canUseTool?.(
+        'AskUserQuestion',
+        { questions: [{ question: 'Which scope?', options: [{ label: 'Narrow' }] }] },
+        askOptions({ suggestions: [{ type: 'setMode', mode: 'plan', destination: 'session' }] }),
+      );
+    const request = h.chat.state.requests[0];
+    // An answer is not a permission: remembering it must not even be offered.
+    expect(request.canAlwaysAllow).toBe(false);
+    expect(() => h.chat.respond(request.id, 'accept-always', {})).toThrow('Answer every question');
+    h.chat.respond(request.id, 'decline');
+    await expect(pending).resolves.toMatchObject({ behavior: 'deny' });
   });
 
   it('maps Claude questions and validates answers before returning them', async () => {
@@ -231,6 +372,7 @@ describe('Claude chat adapter', () => {
     await expect(pending).resolves.toEqual({
       behavior: 'allow',
       updatedInput: { questions, answers: { 'Which features?': 'A, B' } },
+      decisionClassification: 'user_temporary',
     });
   });
 

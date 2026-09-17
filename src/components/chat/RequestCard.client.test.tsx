@@ -132,3 +132,46 @@ describe('approval card keyboard handling', () => {
     expect(button('Submit answers')?.disabled).toBe(true);
   });
 });
+
+describe('approval card contents', () => {
+  it('offers Always allow only when the agent said this ask can be remembered', async () => {
+    await show(approval());
+    expect(button('Always allow')).toBeUndefined();
+    const remembered = approval({
+      canAlwaysAllow: true,
+      alwaysAllowNote: 'always allow Bash(npm test:*) in this checkout’s local settings',
+    });
+    await show(remembered);
+    // Remembering is never one keystroke away: Enter still allows once.
+    expect(focused()).toBe('Allow once');
+    // What it writes is on the card, not only in a tooltip.
+    expect(container.querySelector('.chat-request-note')?.textContent).toContain(
+      'this checkout’s local settings',
+    );
+    await act(async () => button('Always allow')?.click());
+    expect(respond).toHaveBeenCalledWith(remembered, 'accept-always', {});
+  });
+
+  it('never offers to remember an answer to a question', async () => {
+    await show({ ...question(), canAlwaysAllow: true, alwaysAllowNote: 'always allow Read' });
+    expect(button('Always allow')).toBeUndefined();
+    expect(container.querySelector('.chat-request-note')).toBeNull();
+  });
+
+  it('leads with the prompt sentence and keeps the raw arguments folded away', async () => {
+    const request = approval({
+      action: 'Run command',
+      text: 'Claude wants to run npm test',
+      details: 'Bash\n{\n  "command": "npm test"\n}',
+    });
+    await show(request);
+    // Naming the action must not cost the card its "this is a gate" framing.
+    expect(container.querySelector('strong')?.textContent).toBe('Approval needed: Run command');
+    expect(container.querySelector('.chat-request-text')?.textContent).toBe(
+      'Claude wants to run npm test',
+    );
+    const details = container.querySelector('details');
+    expect(details?.open).toBe(false);
+    expect(details?.querySelector('pre')?.textContent).toContain('"command": "npm test"');
+  });
+});

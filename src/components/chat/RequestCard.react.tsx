@@ -1,10 +1,10 @@
 /** @jsxImportSource react */
 import { useEffect, useRef, useState } from 'react';
-import type { ChatRequest } from '../../../electron/shared/agent-chat-types';
+import type { ChatDecision, ChatRequest } from '../../../electron/shared/agent-chat-types';
 
 export type RespondToRequest = (
   request: ChatRequest,
-  decision: 'accept' | 'decline',
+  decision: ChatDecision,
   answers: Record<string, string>,
 ) => Promise<void>;
 
@@ -44,6 +44,8 @@ export function RequestCard({
   const card = useRef<HTMLElement>(null);
   const preselected = useRef<HTMLButtonElement>(null);
   const allowIsDefault = request.kind === 'approval' && !request.defaultToNo;
+  // Only an approval can be remembered; an answer to a question is not a permission.
+  const canRemember = request.kind === 'approval' && request.canAlwaysAllow === true;
   // Open the card on the choice the user most likely wants so Enter alone answers it.
   // Questions have nothing safe to preselect, so they start on their first control.
   useEffect(() => {
@@ -57,7 +59,7 @@ export function RequestCard({
   function focusedElement(): Element | null {
     return (card.current?.getRootNode() as DocumentOrShadowRoot | undefined)?.activeElement ?? null;
   }
-  async function submit(decision: 'accept' | 'decline') {
+  async function submit(decision: ChatDecision) {
     setPending(true);
     setError('');
     try {
@@ -79,9 +81,22 @@ export function RequestCard({
       ref={card}
     >
       <strong>
-        {request.kind === 'question' ? `${agentName} needs your input` : 'Approval needed'}
+        {request.kind === 'question'
+          ? `${agentName} needs your input`
+          : // Naming the action still has to read as a gate, not as a status line.
+            `Approval needed${request.action ? `: ${request.action}` : ''}`}
       </strong>
-      {request.kind === 'approval' && <pre>{request.text}</pre>}
+      {request.kind === 'approval' && (
+        <>
+          <p className="chat-request-text">{request.text}</p>
+          {request.details && (
+            <details className="chat-request-details">
+              <summary>Details</summary>
+              <pre>{request.details}</pre>
+            </details>
+          )}
+        </>
+      )}
       {request.questions?.map((q) => (
         <label key={q.id}>
           {q.question}
@@ -132,6 +147,15 @@ export function RequestCard({
         >
           {request.kind === 'question' ? 'Submit answers' : 'Allow once'}
         </button>
+        {canRemember && (
+          <button
+            disabled={pending}
+            title={request.alwaysAllowNote}
+            onClick={() => void submit('accept-always')}
+          >
+            Always allow
+          </button>
+        )}
         {request.kind === 'approval' && (
           <button
             ref={request.defaultToNo ? preselected : undefined}
@@ -143,6 +167,10 @@ export function RequestCard({
           </button>
         )}
       </div>
+      {canRemember && request.alwaysAllowNote && (
+        // Said out loud, not hidden in a tooltip: remembering can outlive the session.
+        <p className="chat-request-note">Always allow will {request.alwaysAllowNote}.</p>
+      )}
       {request.kind === 'approval' && (
         <p className="chat-request-hint">
           {allowIsDefault ? 'Enter allows once' : 'Enter declines'}

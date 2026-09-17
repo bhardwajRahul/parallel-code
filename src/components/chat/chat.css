@@ -239,6 +239,29 @@
   background: var(--chat-surface-strong);
   font-size: 12px;
 }
+/* Monospace because this line often is a shell command: proportional spacing hides
+   the whitespace tricks an approval exists to catch. */
+.chat-request-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  margin: 8px 0;
+}
+.chat-request-note {
+  margin: 0 0 4px;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+.chat-request-details > summary {
+  cursor: pointer;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+.chat-request-details pre {
+  font-size: 11px;
+  max-height: 160px;
+  overflow: auto;
+}
 .chat-request label {
   display: block;
   margin: 12px 0 0;

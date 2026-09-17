@@ -1,4 +1,4 @@
-import type { AgentChatState } from '../shared/agent-chat-types.js';
+import type { AgentChatState, ChatDecision } from '../shared/agent-chat-types.js';
 
 export interface AgentChat {
   readonly state: AgentChatState;
@@ -6,11 +6,7 @@ export interface AgentChat {
   observe(listener: (state: AgentChatState) => void): () => void;
   send(text: string): Promise<void>;
   interrupt(): Promise<void>;
-  respond(
-    id: string | number,
-    decision: 'accept' | 'decline',
-    answers?: Record<string, string>,
-  ): void;
+  respond(id: string | number, decision: ChatDecision, answers?: Record<string, string>): void;
   loadModels(): Promise<void>;
   selectModel(model: string, reasoningEffort?: string): void | Promise<void>;
   stop(): void;

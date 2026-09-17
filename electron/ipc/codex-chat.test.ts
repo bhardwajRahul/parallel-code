@@ -304,6 +304,24 @@ describe('Codex chat app-server protocol', () => {
     h.chat.stop();
   });
 
+  it('answers an always-allow as a plain accept, a word its app-server knows', async () => {
+    const h = harness();
+    await h.start();
+    h.receive({
+      id: 'approval-2',
+      method: 'item/commandExecution/requestApproval',
+      params: { command: 'npm test' },
+    });
+    // Codex never offers to remember, so this can only come from a stale card.
+    expect(h.chat.state.requests[0].canAlwaysAllow).toBeUndefined();
+    h.chat.respond('approval-2', 'accept-always');
+    expect(h.messages[h.messages.length - 1]).toEqual({
+      id: 'approval-2',
+      result: { decision: 'accept' },
+    });
+    h.chat.stop();
+  });
+
   it('answers structured questions and clears requests resolved by the server', async () => {
     const h = harness();
     await h.start();

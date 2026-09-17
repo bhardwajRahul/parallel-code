@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { IPC } from './channels.js';
 import { startAgentChat, getAgentChat, releaseCodexChat } from '../chat/sessions.js';
 import { getChatConnection } from '../chat/protocol.js';
+import { isChatDecision } from '../shared/agent-chat-types.js';
 import { buildPtySpawnEnv, validateCommand, handoffCodexTerminal } from './pty.js';
 import { loadEnvFile } from './env-file.js';
 import { appendGitInfoExcludeBlock } from './git-exclude.js';
@@ -501,8 +502,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
     if (args.action === 'respond') {
       if (typeof args.requestId !== 'string' && typeof args.requestId !== 'number')
         throw new Error('Invalid request ID.');
-      if (args.decision !== 'accept' && args.decision !== 'decline')
-        throw new Error('Invalid approval decision.');
+      if (!isChatDecision(args.decision)) throw new Error('Invalid approval decision.');
       let answers: Record<string, string> | undefined;
       if (args.answers !== undefined) {
         if (!args.answers || typeof args.answers !== 'object' || Array.isArray(args.answers))
