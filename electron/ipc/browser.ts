@@ -7,7 +7,6 @@ import {
   type IpcMainInvokeEvent,
 } from 'electron';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
 import { IPC } from './channels.js';
 import {
   normalizeBrowserUrl,
@@ -71,8 +70,10 @@ export function registerBrowserHandlers(win: BrowserWindow): void {
     }
     if (args.action === 'create') {
       if (previews.has(args.id)) return previews.get(args.id)?.state;
-      // In-memory, separate from the app and every other preview. No inherited clipboard/mic grants.
-      const previewSession = session.fromPartition(`preview-${randomUUID()}`);
+      // In-memory, separate from the app and every other preview. No inherited clipboard/mic
+      // grants. Keyed by the validated preview ID, not a fresh UUID: Electron cannot destroy a
+      // Session, so a new partition per open would leak a network context and cache each time.
+      const previewSession = session.fromPartition(`preview-${args.id}`);
       previewSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
       previewSession.setPermissionCheckHandler(() => false);
       previewSession.on('will-download', (e) => e.preventDefault());
