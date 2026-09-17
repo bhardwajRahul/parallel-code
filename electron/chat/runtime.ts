@@ -66,6 +66,9 @@ class ChatRunner extends AgentRunner {
     return new Observable((subscriber) => {
       const runId = this.runId;
       let started = text === undefined;
+      // A reconnect attaches to a chat that may still hold the last turn's error; a send
+      // clears it first, so there is nothing to carry on that path.
+      const carriedError = text === undefined ? this.chat.state.error : undefined;
       let previous: AgentChatState['items'] = [];
       let streamingId: string | undefined;
       const endText = () => {
@@ -128,11 +131,14 @@ class ChatRunner extends AgentRunner {
         }
         previous = state.items.map((item) => ({ ...item }));
         if (state.status === 'working') started = true;
-        if (state.status === 'closed' || (started && state.status === 'ready' && state.error)) {
+        // The chat keeps a failed turn's error until the next successful send, and a
+        // reconnect is `started` from its first frame — only a newly raised error is ours.
+        const failure = state.error && state.error !== carriedError ? state.error : undefined;
+        if (state.status === 'closed' || (started && state.status === 'ready' && failure)) {
           endText();
           subscriber.next({
             type: EventType.RUN_ERROR,
-            message: state.error ?? 'Agent disconnected.',
+            message: failure ?? state.error ?? 'Agent disconnected.',
           } as BaseEvent);
           subscriber.complete();
         } else if (started && state.status === 'ready') {

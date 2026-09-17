@@ -99,6 +99,18 @@ describe('app-owned CopilotKit runtime', () => {
     expect(h.sends()).toBe(0);
     expect(h.observers.size).toBe(0);
   });
+  it('does not replay a previous turn as a fresh failure on every reconnect', async () => {
+    const h = harness();
+    // A failed turn leaves the error on the chat until the next successful send.
+    h.state.error = 'Usage limit reached';
+    for (let attach = 0; attach < 2; attach++) {
+      const response = await h.request('connect', h.input);
+      const events = await response.text();
+      expect(events).not.toContain('RUN_ERROR');
+      expect(events).toContain('RUN_FINISHED');
+    }
+  });
+
   it('detaching a view leaves work running and reconnecting observes completion', async () => {
     const h = harness();
     const controller = new AbortController();
