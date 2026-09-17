@@ -135,12 +135,17 @@ it.each(['working', 'draft', 'queued prompt'] as const)(
     else setStore('tasks', 'task', 'initialPrompt', 'Queued instruction');
     mount();
     clickChat();
+    // The reason must be announced, not only offered as a tooltip on a button
+    // that cannot be reached by keyboard or screen reader.
+    const chat = host.querySelector<HTMLButtonElement>('[aria-label="Show main agent chat"]');
+    expect(chat?.getAttribute('aria-disabled')).toBe('true');
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(chat?.title);
+    expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/before switching views/);
     expect(
-      host.querySelector<HTMLButtonElement>('[aria-label="Show main agent chat"]')?.disabled,
-    ).toBe(true);
-    expect(
-      host.querySelector<HTMLButtonElement>('[aria-label="Show main agent terminal"]')?.disabled,
-    ).toBe(false);
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Show main agent terminal"]')
+        ?.getAttribute('aria-disabled'),
+    ).toBe('false');
     expect(store.tasks.task.mainAgentView).not.toBe('chat');
     expect(mocks.invoke).not.toHaveBeenCalledWith(
       IPC.AgentChat,
@@ -148,6 +153,39 @@ it.each(['working', 'draft', 'queued prompt'] as const)(
     );
   },
 );
+
+it('reports the reason that holds now, not the one that was clicked on', () => {
+  setStore('tasks', 'task', 'initialPrompt', 'Queued instruction');
+  mount();
+  clickChat();
+  const alert = () => host.querySelector('[role="alert"]')?.textContent;
+  expect(alert()).toMatch(/queued prompt/);
+  // The queued prompt goes out, but the user starts typing in the terminal
+  // before retrying. The alert must not still be citing the prompt.
+  setStore('tasks', 'task', 'initialPrompt', undefined);
+  setStore('tasks', 'task', 'terminalInputPending', true);
+  expect(alert()).toMatch(/terminal draft/);
+  setStore('tasks', 'task', 'terminalInputPending', false);
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+});
+
+it('explains itself while a handoff is in flight', async () => {
+  let release: ((value: unknown) => void) | undefined;
+  mocks.invoke.mockReturnValueOnce(
+    new Promise((resolve) => {
+      release = resolve;
+    }),
+  );
+  mount();
+  clickChat();
+  const chat = host.querySelector<HTMLButtonElement>('[aria-label="Show main agent chat"]');
+  // Marked unavailable, so it owes the user a reason — and must keep focus.
+  expect(chat?.getAttribute('aria-disabled')).toBe('true');
+  expect(chat?.title).toBe('Switching conversation…');
+  expect(chat?.disabled).toBe(false);
+  release?.({ threadId: 'exact-thread' });
+  await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('chat'));
+});
 
 it('stops Chat before restarting Terminal with the same session and settings', async () => {
   mount();
@@ -229,9 +267,10 @@ it.each(['dockerMode', 'coordinatorMode', 'coordinatedBy'] as const)(
     mount();
     const chat = host.querySelector<HTMLButtonElement>('[aria-label="Show main agent chat"]');
     expect(chat).not.toBeNull();
-    expect(chat?.disabled).toBe(true);
+    expect(chat?.getAttribute('aria-disabled')).toBe('true');
     expect(chat?.title).toContain(mode === 'dockerMode' ? 'Docker' : 'coordinator');
     clickChat();
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(chat?.title);
     expect(store.tasks.task.mainAgentView).not.toBe('chat');
     expect(mocks.invoke).not.toHaveBeenCalled();
   },
@@ -284,14 +323,19 @@ it.each(['working', 'starting', 'approval'] as const)(
       '[aria-label="Show main agent terminal"]',
     );
     const chat = host.querySelector<HTMLButtonElement>('[aria-label="Show main agent chat"]');
-    expect(terminal?.disabled).toBe(true);
-    expect(chat?.disabled).toBe(false);
+    expect(terminal?.getAttribute('aria-disabled')).toBe('true');
+    expect(chat?.getAttribute('aria-disabled')).toBe('false');
     expect(chat?.getAttribute('aria-pressed')).toBe('true');
     terminal?.click();
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(terminal?.title);
     expect(mocks.invoke).not.toHaveBeenCalledWith(
       IPC.AgentChat,
       expect.objectContaining({ action: 'handoffToTerminal' }),
     );
+    // Once the agent is done, the alert must stop demanding that it be stopped.
+    setStore('agents', 'agent', 'chatState', { status: 'ready', items: [], requests: [] });
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(terminal?.getAttribute('aria-disabled')).toBe('false');
   },
 );
 

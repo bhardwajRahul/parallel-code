@@ -11,7 +11,12 @@ import {
 } from '@copilotkit/react-core/v2';
 import type { Message } from '@ag-ui/core';
 import { HttpAgent } from '@ag-ui/client';
-import type { ChatConnection } from '../../../electron/shared/chat-messages';
+import {
+  reasoningEffortLabel,
+  selectedChatModel,
+  effectiveReasoningEffort,
+  type ChatConnection,
+} from '../../../electron/shared/chat-messages';
 import type { ChatItem, AgentChatState } from '../../../electron/shared/agent-chat-types';
 import libraryCss from '@copilotkit/react-core/v2/styles.css?inline';
 import chatCss from './chat.css?inline';
@@ -111,7 +116,7 @@ function ModelPicker({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const models = state.models ?? [];
-  const selected = models.find((model) => model.model === state.model);
+  const selected = selectedChatModel(state);
   const efforts = selected?.supportedReasoningEfforts ?? [];
   const unavailable = disabled || pending || state.status !== 'ready';
   async function change(action: () => Promise<void>) {
@@ -157,7 +162,7 @@ function ModelPicker({
                 ? 'This model does not offer adjustable reasoning'
                 : 'Reasoning level for the next message'
           }
-          value={state.reasoningEffort ?? selected?.defaultReasoningEffort ?? ''}
+          value={effectiveReasoningEffort(state) ?? ''}
           disabled={unavailable || !efforts.length}
           onChange={(event) =>
             void change(() => onSelectModel(selected?.model ?? '', event.target.value))
@@ -182,7 +187,7 @@ function ModelPicker({
                   value={option.reasoningEffort}
                   title={option.description}
                 >
-                  {option.reasoningEffort.charAt(0).toUpperCase() + option.reasoningEffort.slice(1)}
+                  {reasoningEffortLabel(option.reasoningEffort)}
                 </option>
               ))}
             </>

@@ -38,6 +38,13 @@
   text-overflow: ellipsis;
   color: var(--fg-muted);
 }
+.codex-chat-effort {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+}
 .codex-chat-status {
   margin-left: auto;
   flex-shrink: 0;

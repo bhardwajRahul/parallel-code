@@ -68,8 +68,11 @@ const state = (overrides: Partial<AgentChatState> = {}): AgentChatState => ({
   requests: [],
   ...overrides,
 });
-async function tick() {
+/** Waits for the first render and returns what it was given, so a caller that
+ *  cleared `chatProps` can still read the result without re-narrowing it. */
+async function tick(): Promise<ChatProps> {
   await vi.waitFor(() => expect(mocks.chatProps).toBeDefined());
+  return mocks.chatProps as ChatProps;
 }
 
 beforeEach(() => {
@@ -190,6 +193,8 @@ describe('Codex chat view', () => {
     );
     expect(task().codexChatThreadId).toBeUndefined();
     expect(store.agents['agent-1'].chatState?.items).toEqual([]);
+    // The replaced transcript leaves the screen right away, without a new frame.
+    await vi.waitFor(() => expect(mocks.chatProps?.messages).toEqual([]));
     await vi.waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith(
         IPC.AgentChat,
@@ -310,6 +315,81 @@ describe('Codex chat view', () => {
     mocks.channel?.onmessage?.(state({ model: 'model-b', reasoningEffort: 'high' }));
     expect(mocks.chatProps?.state.model).toBe('model-b');
     expect(mocks.chatProps?.state.reasoningEffort).toBe('high');
+  });
+
+  it('renders the newest frame and reopens on the transcript the store kept', async () => {
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    await tick();
+    mocks.channel?.onmessage?.(
+      state({ status: 'working', items: [{ id: 'a', kind: 'assistant', text: 'Thin' }] }),
+    );
+    // The store adopts each frame and writes the next one over its top level.
+    // What the renderer was given has to stay put, or it would drift out of
+    // step with the `messages` built from it at the same moment.
+    const firstFrame = await tick();
+    mocks.channel?.onmessage?.(
+      state({
+        items: [
+          { id: 'a', kind: 'assistant', text: 'Thinking' },
+          { id: 'b', kind: 'user', text: 'Go on' },
+        ],
+      }),
+    );
+    expect(firstFrame.state.status).toBe('working');
+    expect(firstFrame.state.items.map((item) => item.text)).toEqual(['Thin']);
+    expect(firstFrame.messages.map((message) => message.content)).toEqual(['Thin']);
+    // The newest frame is what is on screen.
+    expect(mocks.chatProps?.state.items.map((item) => item.text)).toEqual(['Thinking', 'Go on']);
+    expect(mocks.chatProps?.messages.map((message) => message.content)).toEqual([
+      'Thinking',
+      'Go on',
+    ]);
+    // Toggling the view away and back must not start from an empty transcript.
+    dispose();
+    mocks.chatProps = undefined;
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    const remounted = await tick();
+    expect(remounted.state.items.map((item) => item.text)).toEqual(['Thinking', 'Go on']);
+  });
+
+  it('names the current model and reasoning level in the header', async () => {
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    await tick();
+    const header = () => container.querySelector('.codex-chat-context')?.textContent;
+    // Nothing to claim before the conversation reports its settings.
+    expect(header()).toBeUndefined();
+    mocks.channel?.onmessage?.(state({ model: 'model-b' }));
+    // The raw id stands in until the catalog arrives, rather than showing nothing.
+    expect(header()).toBe('model-b');
+    mocks.channel?.onmessage?.(
+      state({
+        model: 'model-b',
+        models: [
+          {
+            model: 'model-b',
+            displayName: 'GPT-5 Codex',
+            defaultReasoningEffort: 'medium',
+            supportedReasoningEfforts: [],
+          },
+        ],
+      }),
+    );
+    expect(header()).toBe('GPT-5 Codex Medium');
+    mocks.channel?.onmessage?.(
+      state({
+        model: 'model-b',
+        reasoningEffort: 'high',
+        models: [
+          {
+            model: 'model-b',
+            displayName: 'GPT-5 Codex',
+            defaultReasoningEffort: 'medium',
+            supportedReasoningEfforts: [],
+          },
+        ],
+      }),
+    );
+    expect(header()).toBe('GPT-5 Codex High');
   });
 
   it('updates the isolated view with theme changes and interruption', async () => {

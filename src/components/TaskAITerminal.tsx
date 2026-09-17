@@ -133,10 +133,10 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
   const firstAgentId = () => props.task.agentIds[0] ?? '';
   const [switchingView, setSwitchingView] = createSignal(false);
   const [viewError, setViewError] = createSignal('');
+  const [noticeRequested, setNoticeRequested] = createSignal(false);
   const currentView = () => (isAgentChat(props.task, firstAgentId()) ? 'chat' : 'terminal');
   const codexHandoff = () => agentChatProvider(firstAgentId()) === 'codex';
   const switchBlockedReason = () => {
-    if (switchingView()) return 'Switching conversation…';
     const unavailable = agentChatUnavailableReason(props.task);
     if (unavailable) return unavailable;
     if (currentView() === 'chat') {
@@ -153,12 +153,22 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
     }
     return '';
   };
+  // A handoff failure stands until the next attempt, but a precondition is
+  // transient: report whichever one holds *now*, so the alert can neither keep
+  // asking for something already done nor resurface a reason that has since
+  // been replaced by a different one.
+  const viewNotice = () => viewError() || (noticeRequested() ? switchBlockedReason() : '');
   async function switchView(mode: 'chat' | 'terminal') {
-    if (currentView() === mode || switchBlockedReason()) return;
+    if (currentView() === mode || switchingView()) return;
+    // A disabled button's tooltip is unreachable by keyboard and screen readers,
+    // so the precondition is reported where the handoff errors already appear.
+    const blocked = switchBlockedReason();
+    setNoticeRequested(!!blocked);
+    setViewError('');
+    if (blocked) return;
     const agentId = firstAgentId();
     const taskId = props.task.id;
     setSwitchingView(true);
-    setViewError('');
     try {
       if (codexHandoff()) {
         const session = await invoke<NonNullable<Task['codexChatHandoff']>>(IPC.AgentChat, {
@@ -491,15 +501,21 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
                           type="button"
                           aria-label={`Show main agent ${mode}`}
                           aria-pressed={selected()}
-                          disabled={blocked()}
+                          // Never `disabled`: it would move focus to <body> mid
+                          // handoff, and `switchView` already guards re-entry.
+                          aria-disabled={blocked() || switchingView()}
                           title={
-                            blocked()
-                              ? switchBlockedReason()
-                              : mode === 'chat'
-                                ? codexHandoff()
-                                  ? 'Continue this conversation in Chat'
-                                  : 'Open a separate Claude chat in this worktree'
-                                : 'Open the terminal conversation'
+                            // Without this the button announces itself disabled
+                            // mid-handoff while promising that it works.
+                            switchingView()
+                              ? 'Switching conversation…'
+                              : blocked()
+                                ? switchBlockedReason()
+                                : mode === 'chat'
+                                  ? codexHandoff()
+                                    ? 'Continue this conversation in Chat'
+                                    : 'Open a separate Claude chat in this worktree'
+                                  : 'Open the terminal conversation'
                           }
                           onClick={(event) => {
                             event.stopPropagation();
@@ -516,9 +532,9 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
             </div>
           </div>
         </InfoBar>
-        <Show when={viewError()}>
+        <Show when={viewNotice()}>
           <div class="agent-view-error" role="alert">
-            {viewError()}
+            {viewNotice()}
           </div>
         </Show>
         <div

@@ -1,5 +1,15 @@
-import { For, Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
-import { reconcile } from 'solid-js/store';
+import {
+  For,
+  Show,
+  batch,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+  untrack,
+} from 'solid-js';
+import { reconcile, unwrap } from 'solid-js/store';
 import { Channel, invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import {
@@ -8,7 +18,13 @@ import {
   type AgentChatState,
   type ChatPermissionMode,
 } from '../../electron/shared/agent-chat-types';
-import { chatMessages, type ChatConnection } from '../../electron/shared/chat-messages';
+import {
+  chatMessages,
+  effectiveReasoningEffort,
+  reasoningEffortLabel,
+  selectedChatModel,
+  type ChatConnection,
+} from '../../electron/shared/chat-messages';
 import { store, setStore } from '../store/core';
 import { agentChatProvider } from '../store/agent-chat';
 import { saveState } from '../store/persistence';
@@ -19,7 +35,6 @@ import type { Task } from '../store/types';
 import { isLandedTaskState } from '../store/landing';
 import { detectThemeTone } from '../lib/custom-theme';
 import { LOOK_PRESETS } from '../lib/look';
-import { GitBranchIcon } from './icons';
 import type { ChatActions, ChatProps, mountChat } from './chat/CopilotChat.react';
 import './AgentChatView.css';
 
@@ -28,6 +43,16 @@ const PERMISSION_MODE_LABELS: Record<ChatPermissionMode, string> = {
   acceptEdits: 'Accept edits',
   plan: 'Plan only',
 };
+
+/** Detach a frame from the store, which mutates the object it adopted whenever
+ *  the next one arrives — including item objects, in place, when their ids
+ *  match. A shallow copy is therefore not enough: what the renderer holds has
+ *  to stay in step with the `messages` built from it at the same moment.
+ *  This runs once per frame, not once per render, which is what matters — the
+ *  render effect also reruns on every keystroke. */
+function detach(state: AgentChatState): AgentChatState {
+  return structuredClone(state);
+}
 
 export function AgentChatView(props: {
   task: Task;
@@ -40,7 +65,15 @@ export function AgentChatView(props: {
   const agentName = () => (provider() === 'claude' ? 'Claude' : 'Codex');
   const sessionKey = () =>
     provider() === 'claude' ? ('claudeChatSessionId' as const) : ('codexChatThreadId' as const);
-  const state = () => store.agents[props.agentId]?.chatState;
+  // This view renders from its own mirror of the conversation rather than from
+  // the store. The store still gets every frame for the status readers outside
+  // this view, and is where a remount picks the conversation back up.
+  const [state, setState] = createSignal(
+    untrack(() => {
+      const stored = store.agents[props.agentId]?.chatState;
+      return stored && detach(unwrap(stored));
+    }),
+  );
   const [error, setError] = createSignal('');
   const [connection, setConnection] = createSignal<ChatConnection>();
   const [view, setView] = createSignal<ReturnType<typeof mountChat>>();
@@ -51,15 +84,18 @@ export function AgentChatView(props: {
   const channel = new Channel<AgentChatState>();
   channel.onmessage = (next) => {
     if (disposed || !store.agents[props.agentId]) return;
-    setStore('agents', props.agentId, 'chatState', reconcile(next));
-    if (
-      next.threadId &&
-      next.threadId !== props.task[sessionKey()] &&
-      (provider() === 'codex' || next.items.some((item) => item.kind === 'user'))
-    ) {
-      setStore('tasks', props.task.id, sessionKey(), next.threadId);
-      void saveState();
-    }
+    batch(() => {
+      setState(detach(next));
+      setStore('agents', props.agentId, 'chatState', reconcile(next));
+      if (
+        next.threadId &&
+        next.threadId !== props.task[sessionKey()] &&
+        (provider() === 'codex' || next.items.some((item) => item.kind === 'user'))
+      ) {
+        setStore('tasks', props.task.id, sessionKey(), next.threadId);
+        void saveState();
+      }
+    });
   };
   async function connect() {
     if (connecting) return;
@@ -108,12 +144,13 @@ export function AgentChatView(props: {
       return;
     }
     setStore('tasks', props.task.id, sessionKey(), undefined);
-    setStore(
-      'agents',
-      props.agentId,
-      'chatState',
-      reconcile({ status: 'starting', items: [], requests: [] } satisfies AgentChatState),
-    );
+    // The view renders from its own mirror, so empty that as well rather than
+    // keep the replaced conversation on screen until the first new frame.
+    const cleared = { status: 'starting', items: [], requests: [] } satisfies AgentChatState;
+    batch(() => {
+      setState(detach(cleared));
+      setStore('agents', props.agentId, 'chatState', reconcile(cleared));
+    });
     void saveState();
     await connect();
   }
@@ -194,12 +231,17 @@ export function AgentChatView(props: {
       clearPrefillPrompt(props.task.id);
     }
   });
+  // Rebuilt only when the conversation itself changes — not when the draft,
+  // the theme or the landing state re-runs the render effect below.
+  const messages = createMemo(() => {
+    const current = state();
+    return current ? chatMessages(current) : [];
+  });
   createEffect(() => {
     const renderer = view();
     const connected = connection();
     const current = state();
     if (!renderer || !connected || !current) return;
-    const snapshot = JSON.parse(JSON.stringify(current)) as AgentChatState;
     const custom = store.activeCustomThemeId
       ? store.customThemes[store.activeCustomThemeId]
       : undefined;
@@ -210,17 +252,26 @@ export function AgentChatView(props: {
       ...callbacks,
       agentName: agentName(),
       connection: connected,
-      state: snapshot,
-      messages: chatMessages(snapshot),
+      state: current,
+      messages: messages(),
       draft: props.task.promptDraft ?? '',
       dark,
       disabled: isLandedTaskState(props.task.landingState),
       // Read the focus state only while a request is pending. Every tiled task keeps
-      // its chat mounted, so subscribing unconditionally would re-render and deep-clone
-      // each one on any focus change elsewhere in the app.
-      active: snapshot.requests.length > 0 && props.active,
+      // its chat mounted, so subscribing unconditionally would re-render each one on
+      // any focus change elsewhere in the app.
+      active: current.requests.length > 0 && props.active,
     });
   });
+  const modelLabel = () => {
+    const current = state();
+    return current ? (selectedChatModel(current)?.displayName ?? current.model ?? '') : '';
+  };
+  const reasoningLabel = () => {
+    const current = state();
+    const effort = current && effectiveReasoningEffort(current);
+    return effort ? reasoningEffortLabel(effort) : '';
+  };
   const status = () =>
     state()?.status === 'closed'
       ? 'Disconnected'
@@ -236,11 +287,25 @@ export function AgentChatView(props: {
   return (
     <div class="codex-chat" role="region" aria-label={`${agentName()} conversation`}>
       <div class="codex-chat-header">
-        <strong>{agentName()}</strong>
-        <span class="codex-chat-context" title={props.task.worktreePath}>
-          <GitBranchIcon size={13} />
-          {props.task.branchName || 'Local worktree'}
-        </span>
+        <strong
+          title={
+            [props.task.branchName, props.task.worktreePath].filter(Boolean).join(' · ') ||
+            undefined
+          }
+        >
+          {agentName()}
+        </strong>
+        <Show when={modelLabel()}>
+          <span class="codex-chat-context" title="Model for the next message">
+            {modelLabel()}
+            <Show when={reasoningLabel()}>
+              {' '}
+              <span class="codex-chat-effort" title="Reasoning level for the next message">
+                {reasoningLabel()}
+              </span>
+            </Show>
+          </span>
+        </Show>
         <span class="codex-chat-status" role="status">
           {status()}
         </span>

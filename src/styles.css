@@ -2241,9 +2241,9 @@ html:is(
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
-.agent-view-switch button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+/* Still clickable — clicking reports why the switch is blocked. */
+.agent-view-switch button[aria-disabled='true'] {
+  opacity: 0.55;
 }
 
 .agent-header-tabs > * {
