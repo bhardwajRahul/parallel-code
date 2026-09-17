@@ -122,7 +122,15 @@ export function stopAgentChat(agentId: string, immediate = false): void {
 /** Called on app shutdown, where a chat's own grace timer would never get to run. */
 export function stopAllAgentChats(immediate = false): void {
   for (const starting of starts.values()) starting.cancelled = true;
-  for (const id of chats.keys()) stopAgentChat(id, immediate);
+  for (const id of chats.keys()) {
+    // One provider failing to shut down must not strand the remaining chats — nor the PTYs
+    // and containers killed after this returns.
+    try {
+      stopAgentChat(id, immediate);
+    } catch (error) {
+      console.error('Could not stop agent chat', id, error);
+    }
+  }
 }
 export function runningAgentChatIds(): string[] {
   return [...chats].filter(([, entry]) => entry.chat.state.status !== 'closed').map(([id]) => id);

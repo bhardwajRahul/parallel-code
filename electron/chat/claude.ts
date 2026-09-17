@@ -304,9 +304,12 @@ export class ClaudeChat implements AgentChat {
     );
   }
 
-  stop(): void {
+  stop(_immediate = false): void {
     if (this.isClosed()) return;
     this.fail('Claude chat stopped. Reopen Chat to reconnect.');
+    // shortcut: `immediate` cannot be honoured — the Agent SDK's Query exposes only a
+    // cooperative close(), no child handle to signal. On quit the CLI may outlive us
+    // briefly. Upgrade path: have the SDK expose the child pid, then SIGKILL it here.
     this.query?.close();
   }
 
