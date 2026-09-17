@@ -327,7 +327,7 @@ export class CodexChat {
     return session;
   }
 
-  stop(): void {
+  stop(immediate = false): void {
     if (this.stopped) return;
     this.stopped = true;
     this.fail('Codex chat stopped.');
@@ -342,6 +342,12 @@ export class CodexChat {
       }
     };
     signalGroup('SIGTERM');
+    // Electron exits well before a 2 s timer fires on quit, and an unref'd timer cannot
+    // hold the loop open, so a group ignoring SIGTERM would outlive the app with no owner.
+    if (immediate) {
+      signalGroup('SIGKILL');
+      return;
+    }
     const hardKill = setTimeout(() => signalGroup('SIGKILL'), 2_000);
     hardKill.unref?.();
     this.proc.once('close', () => clearTimeout(hardKill));

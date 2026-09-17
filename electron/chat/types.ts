@@ -15,7 +15,8 @@ export interface AgentChat {
   selectModel(model: string, reasoningEffort?: string): void | Promise<void>;
   /** Only agents whose CLI can change mode mid-session offer this. */
   setPermissionMode?(mode: ChatPermissionMode): Promise<void>;
-  stop(): void;
+  /** `immediate` is for app shutdown: no process may outlive Electron waiting on a timer. */
+  stop(immediate?: boolean): void;
 }
 
 export interface ChatStartOptions {

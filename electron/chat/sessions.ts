@@ -113,15 +113,16 @@ export function getAgentChat(agentId: string): AgentChat {
   if (!chat) throw new Error('Open Chat before sending a message.');
   return chat;
 }
-export function stopAgentChat(agentId: string): void {
+export function stopAgentChat(agentId: string, immediate = false): void {
   const starting = starts.get(agentId);
   if (starting) starting.cancelled = true;
-  chats.get(agentId)?.chat.stop();
+  chats.get(agentId)?.chat.stop(immediate);
   chats.delete(agentId);
 }
-export function stopAllAgentChats(): void {
+/** Called on app shutdown, where a chat's own grace timer would never get to run. */
+export function stopAllAgentChats(immediate = false): void {
   for (const starting of starts.values()) starting.cancelled = true;
-  for (const id of chats.keys()) stopAgentChat(id);
+  for (const id of chats.keys()) stopAgentChat(id, immediate);
 }
 export function runningAgentChatIds(): string[] {
   return [...chats].filter(([, entry]) => entry.chat.state.status !== 'closed').map(([id]) => id);

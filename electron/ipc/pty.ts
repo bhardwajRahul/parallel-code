@@ -750,7 +750,8 @@ export function countRunningAgents(): number {
 export function killAllAgents(): void {
   pendingSpawns.clear();
   codexExitIds.clear();
-  stopAllAgentChats();
+  // Only called on shutdown, so detached chat process groups must die now, not on a timer.
+  stopAllAgentChats(true);
   for (const [, session] of sessions) {
     if (session.flushTimer) clearTimeout(session.flushTimer);
     session.subscribers.clear();
