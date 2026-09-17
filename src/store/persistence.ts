@@ -146,7 +146,9 @@ function validPromptedAgentIndexes(value: unknown): number[] | undefined {
 
 function restoredPromptHistory(value: unknown): Task['promptHistory'] {
   if (!Array.isArray(value)) return undefined;
-  return value.slice(-MAX_PROMPT_HISTORY).flatMap((entry: unknown) => {
+  // Drop the malformed entries before capping, so junk at the tail of an old save cannot
+  // push out prompts the user can still read.
+  const entries = value.flatMap((entry: unknown) => {
     if (!entry || typeof entry !== 'object' || !('text' in entry)) return [];
     if (typeof entry.text !== 'string' || !entry.text.trim()) return [];
     return [
@@ -161,6 +163,7 @@ function restoredPromptHistory(value: unknown): Task['promptHistory'] {
       },
     ];
   });
+  return entries.slice(-MAX_PROMPT_HISTORY);
 }
 
 function validAgentId(value: unknown, agentIds: string[]): string | undefined {
