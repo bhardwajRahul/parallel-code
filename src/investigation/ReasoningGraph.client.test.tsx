@@ -743,6 +743,28 @@ describe('editing', () => {
     expect(initial.records.find((record) => record.id === 'H2')?.title).toBe('Retry reapplication');
   });
 
+  it('drops an inline rename whose node the agent removed', () => {
+    const initial = makeFixture().snapshots[2];
+    const controls = mount(initial);
+    canvasKey(canvasNode('H2'), 'F2');
+    editorInput('Idea title', 'Local explanation');
+    controls.setSnapshot({
+      ...initial,
+      version: 1,
+      revision: 4,
+      sequence: 3,
+      records: initial.records.filter((record) => record.id !== 'H2'),
+      relations: (initial.relations ?? []).filter(
+        (link) => link.source !== 'H2' && link.target !== 'H2',
+      ),
+    });
+    // The draft can never save now, and inlineEditing short-circuits every other action
+    // on a failed save — rename, add, delete and Export would all stay dead.
+    expect(container.querySelector('[aria-label="Idea title"]')).toBeNull();
+    canvasKey(canvasNode('H1'), 'F2');
+    expect(inlineTitle().value).toBe('Network redelivery');
+  });
+
   it('keeps description and question drafts independent from inline rename and cancellation', () => {
     mount(makeFixture().snapshots[2], async () => {});
     inspect('[data-record-id="H2"]');

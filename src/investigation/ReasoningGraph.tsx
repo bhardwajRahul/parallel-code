@@ -723,6 +723,14 @@ export function ReasoningGraph(props: Props) {
     if (comparisonOpen() && !hasOptions()) setComparisonOpen(false);
   });
   createEffect(() => {
+    // An agent update may remove the node being renamed. onSave then fails forever, and
+    // inlineEditing refuses every other action while a draft will not save, so the whole
+    // canvas — rename, add, delete, Export — would stay wedged on the lost draft.
+    const live = latest()?.records;
+    const draftId = untrack(inline.editing)?.id;
+    if (draftId && live && !live.some((record) => record.id === draftId)) inline.reset();
+  });
+  createEffect(() => {
     const all = (comparisonOpen() ? projected() : shown())?.records ?? [];
     const records = comparisonOpen() ? all : visibleNodes(all, collapsed());
     const id = untrack(selected);
