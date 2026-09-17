@@ -140,6 +140,7 @@ export function removeReasoningFeeds(worktreePath: string, taskId: string): void
     throw error;
   }
   fs.rmSync(directory, { recursive: true, force: true });
+  forgetParsedFeeds(directory);
 }
 
 const OPEN_FLAGS =
@@ -206,8 +207,18 @@ function stuckError(error: string | undefined, pending: boolean): Error {
 // Remember what the last append produced so the parser can reuse the updates it already
 // accepted. The remembered text is the proof: only a feed that still starts with it may reuse
 // the history, so an out-of-band edit, a rollback or a rotation falls back to a full parse.
-const MAX_CACHED_FEEDS = 16;
+// An entry is not cheap: `history.snapshots` keeps a cloned graph per update, so a long-running
+// feed retains roughly (updates × graph size). Keep only the few feeds actually being appended
+// to — the win is consecutive appends to the same one, which even a small cache captures.
+// shortcut: a count bounds entries, not bytes. Cap total retained snapshots if this grows.
+const MAX_CACHED_FEEDS = 4;
 const parsedFeeds = new Map<string, { raw: string; history: History }>();
+
+/** Drop cached feeds under `directory`; their bytes are gone and must not be held for reuse. */
+function forgetParsedFeeds(directory: string): void {
+  const prefix = directory.endsWith(path.sep) ? directory : directory + path.sep;
+  for (const file of parsedFeeds.keys()) if (file.startsWith(prefix)) parsedFeeds.delete(file);
+}
 
 function rememberParsedFeed(file: string, raw: string, history: History): void {
   parsedFeeds.delete(file);
