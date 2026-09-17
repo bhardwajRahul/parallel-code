@@ -9,6 +9,7 @@ import { effectiveAgentId } from './agent-select';
 import { randomPastelColor } from './projects';
 import { markAgentSpawned } from './taskStatus';
 import { clampCoordinatorConcurrentTasks } from '../lib/coordinator-limits';
+import { MAX_PROMPT_HISTORY } from '../lib/prompt-history';
 import { normalizeReasoningProfile } from '../investigation/profiles';
 import { restoreReasoningWorkspaces } from '../investigation/editing';
 
@@ -145,7 +146,7 @@ function validPromptedAgentIndexes(value: unknown): number[] | undefined {
 
 function restoredPromptHistory(value: unknown): Task['promptHistory'] {
   if (!Array.isArray(value)) return undefined;
-  return value.flatMap((entry: unknown) => {
+  return value.slice(-MAX_PROMPT_HISTORY).flatMap((entry: unknown) => {
     if (!entry || typeof entry !== 'object' || !('text' in entry)) return [];
     if (typeof entry.text !== 'string' || !entry.text.trim()) return [];
     return [

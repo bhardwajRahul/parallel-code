@@ -8,6 +8,7 @@ import { CANVAS_INSTRUCTIONS } from '../../electron/shared/canvas-view';
 import { store, setStore, cleanupPanelEntries } from './core';
 import { effectiveAgentId } from './agent-select';
 import { saveState } from './persistence';
+import { MAX_PROMPT_HISTORY } from '../lib/prompt-history';
 import { setTaskFocusedPanel, shellPanelId } from './focused-panel';
 import { getProject, getProjectPath, getProjectBranchPrefix, isProjectMissing } from './projects';
 import { setPendingShellCommand } from '../lib/bookmarks';
@@ -815,10 +816,19 @@ export function setLastPrompt(taskId: string, text: string, agentId?: string): v
   if (!task || !text.trim()) return;
   // Preserve the one prompt available in saves made before history was recorded.
   const history = task.promptHistory ?? (task.lastPrompt ? [{ text: task.lastPrompt }] : []);
-  setStore('tasks', taskId, 'promptHistory', [
-    ...history,
-    { text, sentAt: Date.now(), agentName: agentId ? store.agents[agentId]?.def?.name : undefined },
-  ]);
+  setStore(
+    'tasks',
+    taskId,
+    'promptHistory',
+    [
+      ...history,
+      {
+        text,
+        sentAt: Date.now(),
+        agentName: agentId ? store.agents[agentId]?.def?.name : undefined,
+      },
+    ].slice(-MAX_PROMPT_HISTORY),
+  );
   setStore('tasks', taskId, 'lastPrompt', text);
 }
 

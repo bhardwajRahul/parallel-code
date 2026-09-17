@@ -179,6 +179,7 @@ import { getCoordinatorChildren } from './sidebar-order';
 import { recordMergedLines, recordTaskMerged } from './completion';
 import { markAgentSpawned, rescheduleTaskStatusPolling } from './taskStatus';
 import { saveState } from './persistence';
+import { MAX_PROMPT_HISTORY } from '../lib/prompt-history';
 import { getProjectBranchPrefix, getProjectPath, isProjectMissing } from './projects';
 const mockSetStore = expectDefined(core.harness, 'mock store harness').setStore;
 
@@ -1273,6 +1274,14 @@ describe('sendPrompt', () => {
     expect(mockTasks['task-1'].promptHistory).toHaveLength(1);
     expect(mockTasks['task-1'].lastPrompt).toBe('Typed in the terminal');
     expect(mockTasks.missing).toBeUndefined();
+  });
+
+  it('keeps only the most recent prompts so a long session cannot grow the save forever', () => {
+    for (let i = 0; i < MAX_PROMPT_HISTORY + 20; i++) setLastPrompt('task-1', `prompt ${i}`);
+    const history = mockTasks['task-1'].promptHistory as Array<{ text: string }>;
+    expect(history).toHaveLength(MAX_PROMPT_HISTORY);
+    expect(history[0].text).toBe('prompt 20');
+    expect(history.at(-1)?.text).toBe(`prompt ${MAX_PROMPT_HISTORY + 19}`);
   });
 
   it('does not record a prompt when sending fails', async () => {
