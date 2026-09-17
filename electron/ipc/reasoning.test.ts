@@ -13,10 +13,26 @@ import { parseReasoningFeed } from '../shared/reasoning-feed.js';
 import type { ReasoningUpdate } from '../shared/reasoning-state.js';
 import { reasoningFeedPath, REASONING_MAX_BYTES } from '../shared/reasoning.js';
 
-const { appendGitInfoExcludeBlock } = vi.hoisted(() => ({
+const { appendGitInfoExcludeBlock, replayed } = vi.hoisted(() => ({
   appendGitInfoExcludeBlock: vi.fn(() => 'appended' as const),
+  /** Updates each parse had to re-derive, i.e. the history it could not carry over. */
+  replayed: [] as number[],
 }));
 vi.mock('./git-exclude.js', () => ({ appendGitInfoExcludeBlock }));
+vi.mock('../shared/reasoning-feed.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../shared/reasoning-feed.js')>();
+  return {
+    ...actual,
+    parseReasoningFeed: (
+      raw: string,
+      previous?: Parameters<typeof actual.parseReasoningFeed>[1],
+    ) => {
+      const result = actual.parseReasoningFeed(raw, previous);
+      replayed.push(result.history.updates.length - (previous?.updates.length ?? 0));
+      return result;
+    },
+  };
+});
 const roots: string[] = [];
 const root = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reasoning-'));
@@ -300,22 +316,32 @@ function growGraph(dir: string, count: number, from: number): number {
 it('keeps one append cheap however long the history is', async () => {
   const dir = root();
   let revision = appendReasoningUpdate(dir, 'task', 'agent', initial).revision;
-  revision = growGraph(dir, 180, revision);
-  revision = appendRun(dir, 120, revision);
-  const started = performance.now();
-  const last = appendReasoningUpdate(dir, 'task', 'agent', {
+  revision = growGraph(dir, 40, revision);
+  revision = appendRun(dir, 40, revision);
+  // A feed this process never appended to carries no history, so its first append replays
+  // every line — the O(history × graph) cost that each append used to pay. Counting replayed
+  // updates rather than milliseconds keeps the test honest on a loaded machine, and lets the
+  // fixture stay small: the graph size only ever changed how slow the replay was, not whether
+  // it happened.
+  const cold = root();
+  const copy = path.join(cold, reasoningFeedPath('task', 'agent'));
+  fs.mkdirSync(path.dirname(copy), { recursive: true });
+  fs.copyFileSync(path.join(dir, reasoningFeedPath('task', 'agent')), copy);
+  const last: ReasoningUpdate = {
     runId: 'run',
     expectedRevision: revision,
     operations: [{ type: 'update', id: 'goal', changes: { title: 'Last' } }],
-  });
-  const elapsed = performance.now() - started;
-  expect(last.revision).toBe(revision + 1);
-  // Re-deriving the graph from every line costs O(history × graph) on the main process and
-  // blocked it for hundreds of milliseconds per append before the parsed history carried over.
-  expect(elapsed).toBeLessThan(120);
+  };
+  replayed.length = 0;
+  appendReasoningUpdate(cold, 'task', 'agent', last);
+  const appended = appendReasoningUpdate(dir, 'task', 'agent', last);
+  expect(appended.revision).toBe(revision + 1);
+  // The cold append re-derives every stored update; the warm one resumes from them and
+  // replays only the line it just wrote.
+  expect(replayed).toEqual([revision, 0]);
   const parsed = parseReasoningFeed((await read(dir)) ?? '');
   expect(parsed.error).toBeUndefined();
-  expect(parsed.history.updates).toHaveLength(302);
+  expect(parsed.history.updates).toHaveLength(revision + 1);
 });
 
 it('re-reads a feed that changed outside the append path', async () => {
