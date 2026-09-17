@@ -18,6 +18,7 @@ type KeyboardEventStub = Pick<
   | 'shiftKey'
   | 'stopPropagation'
   | 'target'
+  | 'composedPath'
 >;
 
 describe('registerFromRegistry — jump-to-task bindings', () => {
@@ -53,6 +54,7 @@ describe('registerFromRegistry — jump-to-task bindings', () => {
       | 'altKey'
       | 'shiftKey'
       | 'target'
+      | 'composedPath'
       | 'preventDefault'
       | 'stopPropagation'
     > = {
@@ -62,6 +64,7 @@ describe('registerFromRegistry — jump-to-task bindings', () => {
       altKey: false,
       shiftKey: false,
       target: null,
+      composedPath: () => [],
       preventDefault: vi.fn(),
       stopPropagation: vi.fn(),
     };
@@ -87,6 +90,7 @@ describe('registerFromRegistry — jump-to-task bindings', () => {
       | 'altKey'
       | 'shiftKey'
       | 'target'
+      | 'composedPath'
       | 'preventDefault'
       | 'stopPropagation'
     > = {
@@ -96,6 +100,7 @@ describe('registerFromRegistry — jump-to-task bindings', () => {
       altKey: false,
       shiftKey: true,
       target: null,
+      composedPath: () => [],
       preventDefault: vi.fn(),
       stopPropagation: vi.fn(),
     };
@@ -121,6 +126,7 @@ describe('registerFromRegistry — jump-to-task bindings', () => {
       altKey: false,
       shiftKey: false,
       target: null,
+      composedPath: () => [],
       preventDefault: vi.fn(),
       stopPropagation: vi.fn(),
     };
@@ -146,6 +152,7 @@ describe('registerFromRegistry — jump-to-task bindings', () => {
       | 'altKey'
       | 'shiftKey'
       | 'target'
+      | 'composedPath'
       | 'preventDefault'
       | 'stopPropagation'
     > = {
@@ -155,6 +162,7 @@ describe('registerFromRegistry — jump-to-task bindings', () => {
       altKey: false,
       shiftKey: false,
       target: null,
+      composedPath: () => [],
       preventDefault: vi.fn(),
       stopPropagation: vi.fn(),
     };
@@ -204,6 +212,7 @@ describe('registerZoomShortcuts', () => {
       altKey: false,
       shiftKey: true,
       target: null,
+      composedPath: () => [],
       preventDefault: vi.fn(),
       stopPropagation: vi.fn(),
     };

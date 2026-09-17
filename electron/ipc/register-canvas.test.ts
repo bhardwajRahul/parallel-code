@@ -8,6 +8,7 @@ import { registerAllHandlers } from './register.js';
 import { IPC } from './channels.js';
 import { startRemoteServer } from '../remote/server.js';
 import * as remote from '../remote/server.js';
+import * as chats from '../chat/sessions.js';
 import type { ParallelCodeMcpConfig } from '../mcp/agent-args.js';
 
 const { handlers, spawnAgent, onPtyEvent, getAgentMeta } = vi.hoisted(() => ({
@@ -65,6 +66,57 @@ function mockCanvasBundle() {
       ? '// bundle'
       : readFileSync(file, options)) as typeof fs.readFileSync);
 }
+
+it('gives chat a separate canvas token and config and removes both on close', async () => {
+  mockCanvasBundle();
+  getAgentMeta.mockReturnValue(null);
+  const win = {
+    on: vi.fn(),
+    isDestroyed: () => false,
+    webContents: { send: vi.fn() },
+  } as unknown as BrowserWindow;
+  registerAllHandlers(win);
+  const register = vi.fn(() => 'chat-secret');
+  const unregister = vi.fn();
+  const server = {
+    port: 7777,
+    registerCanvasAgent: register,
+    unregisterCanvasAgent: unregister,
+    hasCanvasAgents: () => false,
+    stop: vi.fn(async () => {}),
+  } as unknown as Awaited<ReturnType<typeof startRemoteServer>>;
+  vi.spyOn(remote, 'startRemoteServer').mockResolvedValueOnce(server);
+  let resource: { args: string[]; dispose: () => void } | undefined;
+  vi.spyOn(chats, 'startAgentChat').mockImplementation(async (_opts, _publish, prepare) => {
+    resource = await prepare?.();
+    return { canvasTools: !!resource };
+  });
+  try {
+    const result = await handlers.get(IPC.AgentChat)?.(undefined, {
+      action: 'start',
+      provider: 'claude',
+      command: 'claude',
+      taskId: 'task',
+      agentId: 'terminal-agent',
+      cwd: os.tmpdir(),
+      channelId: '12345678-1234-4234-8234-123456789012',
+    });
+    expect(result).toEqual({ canvasTools: true });
+    expect(register).toHaveBeenCalledWith(
+      'task',
+      expect.not.stringMatching(/^terminal-agent$/),
+      expect.any(Function),
+    );
+    expect(resource?.args[0]).toBe('--mcp-config');
+    const configPath = resource?.args[1] ?? '';
+    expect(fs.readFileSync(configPath, 'utf8')).toContain('chat-secret');
+    resource?.dispose();
+    expect(unregister).toHaveBeenCalledOnce();
+    expect(fs.existsSync(configPath)).toBe(false);
+  } finally {
+    resource?.dispose();
+  }
+});
 
 it.each(['transport', 'configuration'])(
   'starts the normal agent unchanged after a canvas %s failure',

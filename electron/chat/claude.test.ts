@@ -89,6 +89,63 @@ function harness(
 }
 
 describe('Claude chat adapter', () => {
+  it('tracks permission changes reported after initialization', async () => {
+    const h = harness();
+    await h.chat.start();
+    await h.emit({ type: 'system', subtype: 'init', permissionMode: 'plan' });
+    await h.emit({
+      type: 'system',
+      subtype: 'status',
+      status: null,
+      permissionMode: 'acceptEdits',
+    });
+    expect(h.chat.state.permissionMode).toBe('acceptEdits');
+    await h.emit({ type: 'system', subtype: 'status', status: 'compacting' });
+    expect(h.chat.state.permissionMode).toBe('acceptEdits');
+  });
+
+  it('passes the task canvas configuration to the SDK without changing other settings', async () => {
+    const h = harness([], undefined, { mcpArgs: ['--mcp-config', '/tmp/canvas.json'] });
+    await h.chat.start();
+    expect(h.options().extraArgs).toEqual({
+      'replay-user-messages': null,
+      'mcp-config': '/tmp/canvas.json',
+    });
+  });
+
+  it('preserves edit arguments after the result arrives', async () => {
+    const h = harness();
+    await h.chat.start();
+    await h.emit({
+      type: 'assistant',
+      message: {
+        id: 'reply',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'edit',
+            name: 'Edit',
+            input: {
+              file_path: '/worktree/app.ts',
+              old_string: 'return false;',
+              new_string: 'return true;',
+            },
+          },
+        ],
+      },
+    });
+    await h.emit({
+      type: 'user',
+      uuid: 'result',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'edit', content: 'Updated successfully.' }],
+      },
+    });
+    expect(h.chat.state.items[0].text).toContain('return false;');
+    expect(h.chat.state.items[0].text).toContain('return true;');
+    expect(h.chat.state.items[0].text).toContain('Updated successfully.');
+  });
+
   it('starts an explicit local session, preserves normal settings, and loads model capabilities', async () => {
     const h = harness();
     await h.chat.start();

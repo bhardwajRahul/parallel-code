@@ -145,6 +145,23 @@ it('reads and updates the authoritative map through the MCP HTTP client', async 
   expect(map.records).toHaveLength(2);
 });
 
+it('scopes chat canvas credentials to their live session independently of terminals', async () => {
+  let active = true;
+  const chatToken = server.registerCanvasAgent('task-1', 'chat-session', () => active);
+  const headers = { Authorization: `Bearer ${chatToken}` };
+  const request = (task: string) =>
+    fetch(`http://127.0.0.1:${server.port}/api/mindmaps/${task}`, { headers });
+  vi.mocked(getAgentMeta).mockReturnValue(null);
+  expect(server.hasCanvasAgents()).toBe(true);
+  expect((await request('task-1')).status).toBe(200);
+  expect((await request('task-2')).status).toBe(403);
+  active = false;
+  expect(server.hasCanvasAgents()).toBe(false);
+  expect((await request('task-1')).status).toBe(403);
+  server.unregisterCanvasAgent('chat-session');
+  expect((await request('task-1')).status).not.toBe(200);
+});
+
 it('opens canvas views for the owning task only and validates the view', async () => {
   await expect(client.openCanvas('task-1', 'reasoning')).resolves.toEqual({
     ok: true,

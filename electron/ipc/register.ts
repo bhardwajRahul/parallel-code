@@ -463,7 +463,11 @@ export function registerAllHandlers(win: BrowserWindow): void {
       assertString(args.channelId, 'channelId');
       validateUUID(args.channelId, 'channelId');
       const channel = `channel:${args.channelId}`;
-      await startAgentChat(
+      const taskId = args.taskId;
+      const command = args.command;
+      const cwd = args.cwd as string;
+      if (!/^[a-zA-Z0-9_-]{1,128}$/.test(taskId)) throw new Error('Invalid chat task ID.');
+      const result = await startAgentChat(
         {
           provider: args.provider,
           agentId: args.agentId,
@@ -477,6 +481,47 @@ export function registerAllHandlers(win: BrowserWindow): void {
         (state) => {
           if (!win.isDestroyed()) win.webContents.send(channel, state);
         },
+        async () => {
+          // A Claude terminal and chat can coexist: never share their credentials.
+          const canvasId = crypto.randomUUID();
+          let active = true;
+          let unregister: (() => void) | undefined;
+          const dispose = () => {
+            if (!active) return;
+            active = false;
+            unregister?.();
+            try {
+              removeCanvasConfig(canvasId);
+            } catch (error) {
+              console.warn('Could not remove chat canvas credentials:', error);
+            }
+            void stopIdleMcpTransport().catch((error) =>
+              console.warn('[MCP] Could not stop the idle chat transport:', error),
+            );
+          };
+          try {
+            const server = await ensureMcpTransport(false);
+            const token = server.registerCanvasAgent(taskId, canvasId, () => active);
+            unregister = () => server.unregisterCanvasAgent(canvasId);
+            const serverPath = path
+              .join(path.dirname(fileURLToPath(import.meta.url)), '..', 'mcp-server.cjs')
+              .replace('/app.asar/', '/app.asar.unpacked/');
+            const launchArgs = prepareCanvasMcpArgs({
+              command,
+              taskId,
+              agentId: canvasId,
+              cwd,
+              serverPath,
+              port: server.port,
+              token,
+            });
+            return { args: launchArgs, dispose };
+          } catch (error) {
+            dispose();
+            console.warn('Canvas MCP unavailable; starting chat without canvas tools:', error);
+            return undefined;
+          }
+        },
       );
       try {
         ensurePlansDirectory(args.cwd as string);
@@ -485,7 +530,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       } catch (err) {
         console.warn('Failed to start chat plan/steps watchers:', err);
       }
-      return;
+      return result;
     }
     if (args.action === 'stop') {
       // Ending the session is how a new conversation starts: the next start has no

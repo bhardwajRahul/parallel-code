@@ -71,6 +71,7 @@ import {
   triggerAction,
 } from './store/store';
 import { isGitHubUrl } from './lib/github-url';
+import { getDeepActiveElement } from './lib/dom-focus';
 import { HoldToQuit } from './components/HoldToQuit';
 import type { PersistedWindowState } from './store/types';
 import {
@@ -575,7 +576,7 @@ function App() {
 
     const handlePaste = (e: ClipboardEvent) => {
       if (store.showNewTaskPanel || store.showHelpDialog || store.showSettingsDialog) return;
-      const el = document.activeElement;
+      const el = getDeepActiveElement();
       if (
         el instanceof HTMLInputElement ||
         el instanceof HTMLTextAreaElement ||

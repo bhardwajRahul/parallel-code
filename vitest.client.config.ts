@@ -8,6 +8,7 @@ export default defineConfig({
     react({ include: /\.react\.tsx$/ }),
   ],
   test: {
+    server: { deps: { inline: ['@copilotkit/react-core'] } },
     environment: 'happy-dom',
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.client.test.tsx'],

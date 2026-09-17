@@ -116,7 +116,12 @@ export class ClaudeChat implements AgentChat {
         systemPrompt: { type: 'preset', preset: 'claude_code' },
         settingSources: ['user', 'project', 'local'],
         includePartialMessages: true,
-        extraArgs: { 'replay-user-messages': null },
+        extraArgs: {
+          'replay-user-messages': null,
+          ...(this.opts.mcpArgs?.[0] === '--mcp-config'
+            ? { 'mcp-config': this.opts.mcpArgs[1] }
+            : {}),
+        },
         executable: 'node',
         // Send no permission mode unless the task opts out or the user picked one for
         // this chat. The SDK turns this option into --permission-mode, a flag that
@@ -454,10 +459,11 @@ export class ClaudeChat implements AgentChat {
   private receive(value: unknown): void {
     const message = record(value);
     if (message.parent_tool_use_id) return; // Subagents are represented by their parent tool activity.
-    if (message.type === 'system' && message.subtype === 'init') {
-      this.state.model = string(message.model) || this.state.model;
+    if (message.type === 'system' && (message.subtype === 'init' || message.subtype === 'status')) {
+      if (message.subtype === 'init') this.state.model = string(message.model) || this.state.model;
       // What the CLI resolved, which is not always what the settings asked for.
       this.state.permissionMode = string(message.permissionMode) || this.state.permissionMode;
+      if (this.state.permissionMode !== 'default') this.state.permissionNote = undefined;
     } else if (message.type === 'stream_event') {
       this.acceptSend();
       const event = record(message.event);
@@ -509,7 +515,7 @@ export class ClaudeChat implements AgentChat {
           this.upsert({
             id: string(block.id),
             kind: 'tool',
-            text: describeToolCall(tool, input),
+            text: `${describeToolCall(tool, input)}\n\n${JSON.stringify(input, null, 2)}`,
             activity: {
               type,
               label: string(input.command) || string(input.file_path) || tool,

@@ -761,6 +761,8 @@ export async function sendPrompt(
   let effectiveText = injectSteps ? `${text}\n\n---\n${STEPS_INSTRUCTION}` : text;
 
   if (isAgentChat(task, agentId)) {
+    if (!options.appPrompt && !hasPromptedConversation && store.agents[agentId]?.canvasTools)
+      effectiveText += `\n\n---\n${CANVAS_INSTRUCTIONS}`;
     if (options.sendChat) await options.sendChat(effectiveText);
     else await invoke(IPC.AgentChat, { action: 'send', agentId, text: effectiveText });
     setTaskLastInputAt(taskId);

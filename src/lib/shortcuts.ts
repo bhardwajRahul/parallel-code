@@ -144,7 +144,7 @@ export function matchesGlobalShortcut(e: KeyboardEvent): boolean {
 export function initShortcuts(): () => void {
   const handler = (e: KeyboardEvent) => {
     // Don't intercept when typing in input/textarea — unless the shortcut is global
-    const tag = (e.target as HTMLElement)?.tagName;
+    const tag = (e.composedPath()[0] as HTMLElement)?.tagName;
     const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 
     // Suppress non-dialog-safe shortcuts when a dialog overlay is open

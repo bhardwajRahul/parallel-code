@@ -80,7 +80,7 @@ export function AgentChatView(props: {
   let host: HTMLDivElement | undefined;
   let actions: ChatActions | undefined;
   let disposed = false;
-  let connecting = false;
+  const [connecting, setConnecting] = createSignal(false);
   const channel = new Channel<AgentChatState>();
   channel.onmessage = (next) => {
     if (disposed || !store.agents[props.agentId]) return;
@@ -97,14 +97,31 @@ export function AgentChatView(props: {
       }
     });
   };
-  async function connect() {
-    if (connecting) return;
-    connecting = true;
+  async function connect(fresh = false) {
+    if (connecting()) return;
+    if (
+      fresh &&
+      state()?.items.length &&
+      !window.confirm(`Start a new ${agentName()} chat? This conversation is cleared from here.`)
+    )
+      return;
+    setConnecting(true);
     setError('');
     try {
+      if (fresh) {
+        await invoke(IPC.AgentChat, { action: 'stop', agentId: props.agentId });
+        if (disposed) return;
+        setStore('tasks', props.task.id, sessionKey(), undefined);
+        const cleared = { status: 'starting', items: [], requests: [] } satisfies AgentChatState;
+        batch(() => {
+          setState(detach(cleared));
+          setStore('agents', props.agentId, 'chatState', reconcile(cleared));
+        });
+        void saveState();
+      }
       const agent = store.agents[props.agentId];
       if (!agent) return;
-      await invoke(IPC.AgentChat, {
+      const result = await invoke<{ canvasTools?: boolean } | undefined>(IPC.AgentChat, {
         action: 'start',
         provider: provider(),
         agentId: props.agentId,
@@ -118,6 +135,8 @@ export function AgentChatView(props: {
         permissionMode: props.task.chatPermissionMode,
         channelId: channel.id,
       });
+      if (disposed || !store.agents[props.agentId]) return;
+      setStore('agents', props.agentId, 'canvasTools', result?.canvasTools === true);
       const next = await invoke<ChatConnection>(IPC.AgentChat, {
         action: 'connection',
         agentId: props.agentId,
@@ -126,33 +145,8 @@ export function AgentChatView(props: {
     } catch (error) {
       if (!disposed) setError(String(error));
     } finally {
-      connecting = false;
+      setConnecting(false);
     }
-  }
-  /** Drop this conversation and open a new one; the agent keeps no thread to resume. */
-  async function newChat() {
-    if (
-      state()?.items.length &&
-      !window.confirm(`Start a new ${agentName()} chat? This conversation is cleared from here.`)
-    )
-      return;
-    setError('');
-    try {
-      await invoke(IPC.AgentChat, { action: 'stop', agentId: props.agentId });
-    } catch (error) {
-      setError(String(error));
-      return;
-    }
-    setStore('tasks', props.task.id, sessionKey(), undefined);
-    // The view renders from its own mirror, so empty that as well rather than
-    // keep the replaced conversation on screen until the first new frame.
-    const cleared = { status: 'starting', items: [], requests: [] } satisfies AgentChatState;
-    batch(() => {
-      setState(detach(cleared));
-      setStore('agents', props.agentId, 'chatState', reconcile(cleared));
-    });
-    void saveState();
-    await connect();
   }
   async function selectPermissionMode(mode: ChatPermissionMode) {
     setError('');
@@ -282,8 +276,7 @@ export function AgentChatView(props: {
           : state()?.status === 'ready'
             ? 'Ready'
             : 'Connecting…';
-  /** The mode this session is really in: the user's pick, else what the agent reported. */
-  const permissionMode = () => props.task.chatPermissionMode ?? state()?.permissionMode ?? '';
+  const permissionMode = () => state()?.permissionMode ?? props.task.chatPermissionMode ?? '';
   return (
     <div class="codex-chat" role="region" aria-label={`${agentName()} conversation`}>
       <div class="codex-chat-header">
@@ -339,13 +332,22 @@ export function AgentChatView(props: {
             </For>
           </select>
         </Show>
-        <button class="codex-chat-action" onClick={() => void newChat()}>
+        <button
+          class="codex-chat-action"
+          disabled={connecting()}
+          onClick={() => void connect(true)}
+        >
           New chat
         </button>
-        <button class="codex-chat-action" onClick={() => void connect()}>
+        <button class="codex-chat-action" disabled={connecting()} onClick={() => void connect()}>
           Reconnect
         </button>
       </div>
+      <Show when={store.remoteAccess.enabled}>
+        <p class="codex-chat-note">
+          Phone access supports Terminal only; this chat is available on desktop.
+        </p>
+      </Show>
       <Show when={state()?.permissionNote}>
         <p class="codex-chat-note">{state()?.permissionNote}</p>
       </Show>

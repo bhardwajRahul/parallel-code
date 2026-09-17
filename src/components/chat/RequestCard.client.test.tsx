@@ -62,6 +62,63 @@ afterEach(async () => {
 });
 
 describe('approval card keyboard handling', () => {
+  it('leaves focus in an external input, including an empty dialog input', async () => {
+    const outside = document.createElement('input');
+    document.body.append(outside);
+    try {
+      outside.focus();
+      await show(approval());
+      expect(document.activeElement).toBe(outside);
+    } finally {
+      outside.remove();
+    }
+  });
+
+  it('does not focus an approval behind a modal even if its input has not focused yet', async () => {
+    const modal = document.createElement('div');
+    modal.setAttribute('aria-modal', 'true');
+    document.body.append(modal);
+    try {
+      composer.focus();
+      await show(approval());
+      expect(shadow.activeElement).toBe(composer);
+    } finally {
+      modal.remove();
+    }
+  });
+
+  it('restores focus when the state update removes the card before IPC resolves', async () => {
+    let release = () => {};
+    respond.mockImplementationOnce(
+      () =>
+        new Promise<undefined>((resolve) => {
+          release = () => resolve(undefined);
+        }),
+    );
+    await show(approval());
+    await act(async () => button('Allow once')?.click());
+    await act(async () => root.render(null));
+    await act(async () => release());
+    expect(onResolved).toHaveBeenCalledOnce();
+    expect(shadow.activeElement).toBe(composer);
+  });
+
+  it('does not restore focus after removal if the user moved to another input', async () => {
+    let release = () => {};
+    respond.mockImplementationOnce(
+      () =>
+        new Promise<undefined>((resolve) => {
+          release = () => resolve(undefined);
+        }),
+    );
+    await show(approval());
+    await act(async () => button('Allow once')?.click());
+    await act(async () => root.render(null));
+    composer.focus();
+    await act(async () => release());
+    expect(onResolved).not.toHaveBeenCalled();
+  });
+
   it('opens on Allow once so Enter approves, then hands the keyboard back', async () => {
     await show(approval());
     expect(focused()).toBe('Allow once');

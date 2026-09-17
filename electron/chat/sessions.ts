@@ -6,7 +6,11 @@ import { CodexChat } from '../ipc/codex-chat.js';
 import type { AgentChatState } from '../shared/agent-chat-types.js';
 import type { AgentChat, ChatStartOptions } from './types.js';
 
-const chats = new Map<string, { provider: ChatStartOptions['provider']; chat: AgentChat }>();
+const chats = new Map<
+  string,
+  { provider: ChatStartOptions['provider']; chat: AgentChat; canvasTools: boolean }
+>();
+const starts = new Map<string, { cancelled: boolean; promise: Promise<void> }>();
 
 /** Use the user's unmodified executable and its own authentication flow. */
 async function resolveExecutable(opts: ChatStartOptions): Promise<string> {
@@ -30,40 +34,78 @@ async function resolveExecutable(opts: ChatStartOptions): Promise<string> {
 export async function startAgentChat(
   opts: ChatStartOptions,
   publish: (state: AgentChatState) => void,
-): Promise<void> {
+  prepare: () => Promise<{ args: string[]; dispose: () => void } | undefined> = async () =>
+    undefined,
+): Promise<{ canvasTools: boolean }> {
+  const pending = starts.get(opts.agentId);
+  if (pending) {
+    await pending.promise;
+    return startAgentChat(opts, publish, prepare);
+  }
   const existing = chats.get(opts.agentId);
   if (existing?.provider === opts.provider && existing.chat.state.status !== 'closed') {
     existing.chat.subscribe(publish);
-    return;
+    return { canvasTools: existing.canvasTools };
   }
   existing?.chat.stop();
-  let chat: AgentChat;
-  let start: () => Promise<void>;
-  if (opts.provider === 'claude') {
-    const command = await resolveExecutable(opts);
-    const claude = new ClaudeChat(undefined, { ...opts, command }, publish);
-    chat = claude;
-    start = () => claude.start();
-  } else {
-    const proc = spawn(opts.command, ['app-server'], {
-      cwd: opts.cwd,
-      env: opts.env,
-      stdio: 'pipe',
-      detached: true,
-    });
-    const codex = new CodexChat(proc, publish);
-    chat = codex;
-    start = () => codex.start(opts.cwd, opts.threadId, opts.skipPermissions);
-  }
-  chats.set(opts.agentId, { provider: opts.provider, chat });
-  chat.subscribe(publish);
-  try {
-    await start();
-  } catch (error) {
-    chat.stop();
-    if (chats.get(opts.agentId)?.chat === chat) chats.delete(opts.agentId);
-    throw error;
-  }
+  const startup = { cancelled: false, promise: Promise.resolve() };
+  starts.set(opts.agentId, startup);
+  startup.promise = (async () => {
+    let resources: Awaited<ReturnType<typeof prepare>>;
+    let chat: AgentChat | undefined;
+    let unobserve: (() => void) | undefined;
+    const release = () => {
+      unobserve?.();
+      const owned = resources;
+      resources = undefined;
+      owned?.dispose();
+    };
+    const assertStarting = () => {
+      if (startup.cancelled) throw new Error('Chat startup was cancelled.');
+    };
+    try {
+      const command = opts.provider === 'claude' ? await resolveExecutable(opts) : opts.command;
+      assertStarting();
+      resources = await prepare();
+      assertStarting();
+      let start: () => Promise<void>;
+      if (opts.provider === 'claude') {
+        const claude = new ClaudeChat(
+          undefined,
+          { ...opts, command, mcpArgs: resources?.args },
+          publish,
+        );
+        chat = claude;
+        start = () => claude.start();
+      } else {
+        const proc = spawn(command, ['app-server', ...(resources?.args ?? [])], {
+          cwd: opts.cwd,
+          env: opts.env,
+          stdio: 'pipe',
+          detached: true,
+        });
+        const codex = new CodexChat(proc, publish);
+        chat = codex;
+        start = () => codex.start(opts.cwd, opts.threadId, opts.skipPermissions);
+      }
+      chats.set(opts.agentId, { provider: opts.provider, chat, canvasTools: !!resources });
+      unobserve = chat.observe((state) => {
+        if (state.status === 'closed') release();
+      });
+      chat.subscribe(publish);
+      await start();
+      assertStarting();
+    } catch (error) {
+      chat?.stop();
+      release();
+      if (chats.get(opts.agentId)?.chat === chat) chats.delete(opts.agentId);
+      throw error;
+    } finally {
+      starts.delete(opts.agentId);
+    }
+  })();
+  await startup.promise;
+  return { canvasTools: chats.get(opts.agentId)?.canvasTools === true };
 }
 
 export function getAgentChat(agentId: string): AgentChat {
@@ -72,10 +114,13 @@ export function getAgentChat(agentId: string): AgentChat {
   return chat;
 }
 export function stopAgentChat(agentId: string): void {
+  const starting = starts.get(agentId);
+  if (starting) starting.cancelled = true;
   chats.get(agentId)?.chat.stop();
   chats.delete(agentId);
 }
 export function stopAllAgentChats(): void {
+  for (const starting of starts.values()) starting.cancelled = true;
   for (const id of chats.keys()) stopAgentChat(id);
 }
 export function runningAgentChatIds(): string[] {
@@ -84,6 +129,8 @@ export function runningAgentChatIds(): string[] {
 
 /** Stop the app-server before the native CLI can resume its conversation. */
 export async function releaseCodexChat(agentId: string) {
+  if (starts.has(agentId))
+    throw new Error('Wait for chat startup to finish before switching views.');
   const entry = chats.get(agentId);
   if (!entry) return {};
   if (!(entry.chat instanceof CodexChat))

@@ -239,7 +239,7 @@ const MIME: Record<string, string> = {
 interface RemoteServer {
   /** Stop transport; explicit desktop disconnect also revokes remembered phones. */
   stop: (forgetDevices?: boolean) => Promise<void>;
-  registerCanvasAgent: (taskId: string, agentId: string) => string;
+  registerCanvasAgent: (taskId: string, agentId: string, isActive?: () => boolean) => string;
   unregisterCanvasAgent: (agentId: string) => void;
   hasCanvasAgents: () => boolean;
   /** Move the listener to another interface; rejects and keeps the old one when the new
@@ -849,7 +849,14 @@ export function startRemoteServer(opts: {
   const mobileToken = randomBytes(24).toString('base64url');
   const ips = getNetworkIps();
 
-  const canvasAgents = new Map<string, { taskId: string; token: Buffer }>();
+  const canvasAgents = new Map<
+    string,
+    { taskId: string; token: Buffer; isActive?: () => boolean }
+  >();
+  const canvasActive = ([agentId, owner]: [
+    string,
+    { taskId: string; isActive?: () => boolean },
+  ]) => (owner.isActive ? owner.isActive() : getAgentMeta(agentId)?.taskId === owner.taskId);
   // Renderer round-trips wait up to 120 s each; a small per-task cap keeps one agent from pinning memory.
   const canvasInFlight = new Map<string, number>();
   function acquireCanvasSlot(key: string): (() => void) | undefined {
@@ -1033,9 +1040,7 @@ export function startRemoteServer(opts: {
         const rawToken = extractRawToken(req);
         const canvas = canvasOwner(rawToken);
         const authorized =
-          (tokenClass === 'canvas' &&
-            canvas?.[1].taskId === taskId &&
-            getAgentMeta(canvas[0])?.taskId === taskId) ||
+          (tokenClass === 'canvas' && canvas?.[1].taskId === taskId && canvasActive(canvas)) ||
           (tokenClass === 'coordinator' &&
             req.headers['x-coordinator-id'] === taskId &&
             orch?.isRegisteredCoordinator(taskId)) ||
@@ -1682,15 +1687,14 @@ export function startRemoteServer(opts: {
     unregisterCanvasAgent: (agentId) => {
       canvasAgents.delete(agentId);
     },
-    registerCanvasAgent: (taskId, agentId) => {
+    registerCanvasAgent: (taskId, agentId, isActive) => {
       const existing = canvasAgents.get(agentId);
       if (existing?.taskId === taskId) return existing.token.toString();
       const secret = randomBytes(24).toString('base64url');
-      canvasAgents.set(agentId, { taskId, token: Buffer.from(secret) });
+      canvasAgents.set(agentId, { taskId, token: Buffer.from(secret), isActive });
       return secret;
     },
-    hasCanvasAgents: () =>
-      [...canvasAgents].some(([agentId, owner]) => getAgentMeta(agentId)?.taskId === owner.taskId),
+    hasCanvasAgents: () => [...canvasAgents].some(canvasActive),
     token,
     subtaskToken,
     mobileToken,

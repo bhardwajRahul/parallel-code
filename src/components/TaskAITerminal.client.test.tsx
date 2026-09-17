@@ -5,6 +5,7 @@ import { store, setStore } from '../store/core';
 import { clearAgentActivity, markAgentSpawned, markAgentOutput } from '../store/taskStatus';
 import { nextTerminalInputPending } from '../lib/terminalInputPending';
 import { IPC } from '../../electron/ipc/channels';
+import { closeAgentInTask } from '../store/agents';
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(channel: unknown, args?: unknown) => Promise<unknown>>(async () => undefined),
@@ -103,6 +104,27 @@ function clickChat() {
   expect(button).not.toBeNull();
   button?.click();
 }
+
+it('keeps the remaining agent in its own terminal when the main chat agent is closed', async () => {
+  setStore('agents', 'second', { ...store.agents.agent, id: 'second' });
+  setStore('tasks', 'task', 'agentIds', ['agent', 'second']);
+  setStore('tasks', 'task', 'mainAgentView', 'chat');
+  setStore('tasks', 'task', 'codexChatThreadId', 'old-thread');
+  setStore('tasks', 'task', 'claudeChatSessionId', 'old-claude');
+  setStore('tasks', 'task', 'chatPermissionMode', 'plan');
+  mount();
+  mocks.invoke.mockClear();
+  await closeAgentInTask('task', 'agent');
+  expect(store.tasks.task.agentIds).toEqual(['second']);
+  expect(store.tasks.task.mainAgentView).toBeUndefined();
+  expect(store.tasks.task.codexChatThreadId).toBeUndefined();
+  expect(store.tasks.task.claudeChatSessionId).toBeUndefined();
+  expect(store.tasks.task.chatPermissionMode).toBeUndefined();
+  expect(mocks.invoke).not.toHaveBeenCalledWith(
+    IPC.AgentChat,
+    expect.objectContaining({ action: 'start', agentId: 'second' }),
+  );
+});
 
 it('shows both modes and hands off the exact terminal conversation before mounting Chat', async () => {
   mount();

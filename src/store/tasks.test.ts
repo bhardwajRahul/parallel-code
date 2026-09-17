@@ -1179,6 +1179,27 @@ describe('sendPrompt', () => {
     expect(mockTasks['task-1'].lastPrompt).toBe('hello chat');
   });
 
+  it('supplies canvas guidance to a fresh chat and keeps it out of later messages and history', async () => {
+    const items: { kind: 'user'; text: string }[] = [];
+    mockAgents = {
+      'agent-1': {
+        status: 'running',
+        def: { id: 'codex' },
+        canvasTools: true,
+        chatState: { items },
+      },
+    };
+    mockTasks['task-1'].agentIds = ['agent-1'];
+    mockTasks['task-1'].mainAgentView = 'chat';
+    const deliver = vi.fn(async () => undefined);
+    await sendPrompt('task-1', 'agent-1', 'Create a mind map', { sendChat: deliver });
+    expect(deliver).toHaveBeenLastCalledWith(expect.stringContaining('canvas_open'));
+    expect(mockTasks['task-1'].lastPrompt).toBe('Create a mind map');
+    items.push({ kind: 'user', text: 'Create a mind map' });
+    await sendPrompt('task-1', 'agent-1', 'Continue', { sendChat: deliver });
+    expect(deliver).toHaveBeenLastCalledWith('Continue');
+  });
+
   it('delivers through the chat runtime with steps and records only accepted prompts', async () => {
     mockAgents = { 'agent-1': { status: 'running', def: { id: 'codex' } } };
     mockTasks['task-1'].agentIds = ['agent-1'];

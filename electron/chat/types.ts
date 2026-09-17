@@ -28,4 +28,6 @@ export interface ChatStartOptions {
   skipPermissions?: boolean;
   /** The mode the user picked for this task, overriding their settings' defaultMode. */
   permissionMode?: ChatPermissionMode;
+  /** App-owned, task-scoped MCP configuration generated at session startup. */
+  mcpArgs?: string[];
 }

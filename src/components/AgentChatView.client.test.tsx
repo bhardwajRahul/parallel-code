@@ -8,7 +8,7 @@ import type { AgentChatState } from '../../electron/shared/agent-chat-types';
 import type { Task } from '../store/types';
 
 const mocks = vi.hoisted(() => ({
-  invoke: vi.fn(async (): Promise<unknown> => undefined),
+  invoke: vi.fn<(channel: unknown, args?: unknown) => Promise<unknown>>(async () => undefined),
   sendPrompt: vi.fn(async () => undefined),
   saveState: vi.fn(),
   chatProps: undefined as ChatProps | undefined,
@@ -120,6 +120,50 @@ afterEach(() => {
 });
 
 describe('Codex chat view', () => {
+  it('blocks New chat and Reconnect throughout initial startup and replacement', async () => {
+    let release = () => {};
+    mocks.invoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(undefined);
+        }),
+    );
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    const buttons = () => [...container.querySelectorAll<HTMLButtonElement>('.codex-chat-action')];
+    expect(buttons().every((button) => button.disabled)).toBe(true);
+    buttons()[0].click();
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    release();
+    await tick();
+    expect(buttons().every((button) => !button.disabled)).toBe(true);
+    mocks.invoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(undefined);
+        }),
+    );
+    buttons()[0].click();
+    expect(buttons().every((button) => button.disabled)).toBe(true);
+    buttons()[0].click();
+    buttons()[1].click();
+    expect(
+      mocks.invoke.mock.calls.filter((call) => (call[1] as { action: string }).action === 'stop'),
+    ).toHaveLength(1);
+    release();
+    await vi.waitFor(() => expect(buttons().every((button) => !button.disabled)).toBe(true));
+  });
+
+  it('displays the effective permission mode even when the saved preference differs', async () => {
+    setStore('agents', 'agent-1', 'def', 'id', 'claude-code');
+    setStore('tasks', 'task-1', 'chatPermissionMode', 'plan');
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    await tick();
+    mocks.channel?.onmessage?.(state({ permissionMode: 'acceptEdits' }));
+    expect(container.querySelector<HTMLSelectElement>('.codex-chat-mode')?.value).toBe(
+      'acceptEdits',
+    );
+  });
+
   it('reattaches to the saved thread and preserves streamed state and new conversation ids', async () => {
     dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     expect(mocks.invoke).toHaveBeenCalledWith(

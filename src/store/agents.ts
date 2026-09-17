@@ -63,6 +63,13 @@ export async function closeAgentInTask(taskId: string, agentId: string): Promise
       const idx = t.agentIds.indexOf(agentId);
       if (idx === -1 || t.agentIds.length <= 1) return;
 
+      if (idx === 0) {
+        t.mainAgentView = undefined;
+        t.codexChatThreadId = undefined;
+        t.codexChatHandoff = undefined;
+        t.claudeChatSessionId = undefined;
+        t.chatPermissionMode = undefined;
+      }
       t.agentIds.splice(idx, 1);
       const promptedAgentIds = t.promptedAgentIds?.filter((id) => id !== agentId);
       t.promptedAgentIds =

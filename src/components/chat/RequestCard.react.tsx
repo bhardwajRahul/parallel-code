@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useRef, useState } from 'react';
+import { getDeepActiveElement } from '../../lib/dom-focus';
 import type { ChatDecision, ChatRequest } from '../../../electron/shared/agent-chat-types';
 
 export type RespondToRequest = (
@@ -49,24 +50,35 @@ export function RequestCard({
   // Open the card on the choice the user most likely wants so Enter alone answers it.
   // Questions have nothing safe to preselect, so they start on their first control.
   useEffect(() => {
-    if (!autoFocus) return;
-    const active = focusedElement();
+    if (!autoFocus || document.querySelector('[aria-modal="true"]')) return;
+    const active = getDeepActiveElement();
+    if (active && active !== document.body && active.getRootNode() !== card.current?.getRootNode())
+      return;
     // Never pull the caret out of a half-written message — Enter there means "send
     // my message" — and never re-grab focus this card already holds.
     if (card.current?.contains(active) || holdsUnsentText(active)) return;
     (preselected.current ?? card.current?.querySelector<HTMLElement>('button, input'))?.focus();
   }, [autoFocus]);
-  function focusedElement(): Element | null {
-    return (card.current?.getRootNode() as DocumentOrShadowRoot | undefined)?.activeElement ?? null;
-  }
   async function submit(decision: ChatDecision) {
+    if (pending) return;
+    const element = card.current;
+    const root = element?.getRootNode();
+    const heldFocus = !!element?.contains(getDeepActiveElement());
     setPending(true);
     setError('');
     try {
       await respond(request, decision, answers);
-      // Hand the keyboard back before this card unmounts and drops focus on the body
-      // — but the response is an IPC round-trip, so only if the card still holds it.
-      if (card.current?.contains(focusedElement())) onResolved();
+      // The state notification may remove the card before the IPC response arrives.
+      const active = getDeepActiveElement();
+      if (
+        heldFocus &&
+        !document.querySelector('[aria-modal="true"]') &&
+        (element?.contains(active) ||
+          active === document.body ||
+          active === null ||
+          (!element?.isConnected && root instanceof ShadowRoot && active === root.host))
+      )
+        onResolved();
     } catch (error) {
       setError(String(error));
     } finally {
