@@ -72,7 +72,12 @@ export function RequestCard({
     }
   }
   return (
-    <section className="chat-request" aria-label={`${agentName} request`} ref={card}>
+    <section
+      className="chat-request"
+      data-default={request.defaultToNo ? 'decline' : 'allow'}
+      aria-label={`${agentName} request`}
+      ref={card}
+    >
       <strong>
         {request.kind === 'question' ? `${agentName} needs your input` : 'Approval needed'}
       </strong>
@@ -108,6 +113,7 @@ export function RequestCard({
           </div>
           <input
             aria-label={q.question}
+            placeholder={q.options.length ? 'Or type your own answer' : 'Your answer'}
             type={q.isSecret ? 'password' : 'text'}
             value={answers[q.id] ?? ''}
             onChange={(e) => {

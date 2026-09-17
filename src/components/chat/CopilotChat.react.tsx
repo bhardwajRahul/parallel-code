@@ -16,6 +16,7 @@ import type { ChatItem, AgentChatState } from '../../../electron/shared/agent-ch
 import libraryCss from '@copilotkit/react-core/v2/styles.css?inline';
 import chatCss from './chat.css?inline';
 import { useReveal } from './use-reveal.react';
+import { enableCopyOnSelect } from './copy-on-select';
 import { RequestCard, type RespondToRequest } from './RequestCard.react';
 
 export interface ChatActions {
@@ -69,7 +70,8 @@ function ActivityRow({ id, content }: { id: string; content: string }) {
         <span className="chat-tool-label" title={activity?.label}>
           {activity?.label || content.split('\n')[0] || 'Tool activity'}
         </span>
-        {activity && (
+        {/* "Done" on every finished row is noise; the rail already reads as settled. */}
+        {activity && activity.status !== 'completed' && (
           <span className="chat-tool-status">
             {activityLabels[activity.status]}
             {activity.exitCode !== undefined && activity.exitCode !== 0
@@ -125,72 +127,67 @@ function ModelPicker({
   }
   return (
     <div className="chat-model-settings">
+      {/* No visible captions: the selects sit on the composer and name themselves
+          through their own values, so `aria-label` carries the accessible name. */}
       <div className="chat-model-selectors">
-        <label>
-          <span>Model</span>
-          <select
-            aria-label="Model"
-            title="Model for the next message"
-            value={state.model ?? ''}
-            disabled={unavailable || !models.length}
-            onChange={(event) => void change(() => onSelectModel(event.target.value))}
-          >
-            {!selected && (
-              <option value={state.model ?? ''} disabled>
-                {state.model || 'Default model'}
-              </option>
-            )}
-            {models.map((model) => (
-              <option key={model.model} value={model.model}>
-                {model.displayName}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>Reasoning</span>
-          <select
-            aria-label="Reasoning effort"
-            title={
-              !selected
-                ? 'Select a model to see its reasoning levels'
-                : !efforts.length
-                  ? 'This model does not offer adjustable reasoning'
-                  : 'Reasoning level for the next message'
-            }
-            value={state.reasoningEffort ?? selected?.defaultReasoningEffort ?? ''}
-            disabled={unavailable || !efforts.length}
-            onChange={(event) =>
-              void change(() => onSelectModel(selected?.model ?? '', event.target.value))
-            }
-          >
-            {!efforts.length ? (
-              <option value={state.reasoningEffort ?? ''}>
-                {selected ? 'Not supported' : 'Select a model'}
-              </option>
-            ) : (
-              <>
-                {!selected?.defaultReasoningEffort && <option value="">Default</option>}
-                {state.reasoningEffort &&
-                  !efforts.some((option) => option.reasoningEffort === state.reasoningEffort) && (
-                    <option value={state.reasoningEffort} disabled>
-                      {state.reasoningEffort}
-                    </option>
-                  )}
-                {efforts.map((option) => (
-                  <option
-                    key={option.reasoningEffort}
-                    value={option.reasoningEffort}
-                    title={option.description}
-                  >
-                    {option.reasoningEffort.charAt(0).toUpperCase() +
-                      option.reasoningEffort.slice(1)}
+        <select
+          aria-label="Model"
+          title="Model for the next message"
+          value={state.model ?? ''}
+          disabled={unavailable || !models.length}
+          onChange={(event) => void change(() => onSelectModel(event.target.value))}
+        >
+          {!selected && (
+            <option value={state.model ?? ''} disabled>
+              {state.model || 'Default model'}
+            </option>
+          )}
+          {models.map((model) => (
+            <option key={model.model} value={model.model}>
+              {model.displayName}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Reasoning effort"
+          title={
+            !selected
+              ? 'Select a model to see its reasoning levels'
+              : !efforts.length
+                ? 'This model does not offer adjustable reasoning'
+                : 'Reasoning level for the next message'
+          }
+          value={state.reasoningEffort ?? selected?.defaultReasoningEffort ?? ''}
+          disabled={unavailable || !efforts.length}
+          onChange={(event) =>
+            void change(() => onSelectModel(selected?.model ?? '', event.target.value))
+          }
+        >
+          {!efforts.length ? (
+            <option value={state.reasoningEffort ?? ''}>
+              {selected ? 'Not supported' : 'Select a model'}
+            </option>
+          ) : (
+            <>
+              {!selected?.defaultReasoningEffort && <option value="">Default</option>}
+              {state.reasoningEffort &&
+                !efforts.some((option) => option.reasoningEffort === state.reasoningEffort) && (
+                  <option value={state.reasoningEffort} disabled>
+                    {state.reasoningEffort}
                   </option>
-                ))}
-              </>
-            )}
-          </select>
-        </label>
+                )}
+              {efforts.map((option) => (
+                <option
+                  key={option.reasoningEffort}
+                  value={option.reasoningEffort}
+                  title={option.description}
+                >
+                  {option.reasoningEffort.charAt(0).toUpperCase() + option.reasoningEffort.slice(1)}
+                </option>
+              ))}
+            </>
+          )}
+        </select>
       </div>
       {(error || state.modelsError) && (
         <div className="chat-model-error" role="alert">
@@ -340,15 +337,17 @@ function Conversation(props: ChatProps) {
                     </div>
                   )}
                   <div className="chat-composer">
-                    {textArea}
-                    {sendButton}
+                    <div className="chat-composer-row">
+                      {textArea}
+                      {sendButton}
+                    </div>
+                    <ModelPicker
+                      state={props.state}
+                      disabled={props.disabled || sending}
+                      onSelectModel={props.onSelectModel}
+                      onReloadModels={props.onReloadModels}
+                    />
                   </div>
-                  <ModelPicker
-                    state={props.state}
-                    disabled={props.disabled || sending}
-                    onSelectModel={props.onSelectModel}
-                    onReloadModels={props.onReloadModels}
-                  />
                   <div className="chat-composer-hint">
                     Enter to send · Shift+Enter for a new line
                   </div>
@@ -383,6 +382,7 @@ export function mountChat(shadow: ShadowRoot) {
   const target = document.createElement('div');
   target.className = 'chat-root';
   shadow.append(styles, target);
+  const stopCopyOnSelect = enableCopyOnSelect(shadow);
   const root = createRoot(target);
   return {
     update: (props: ChatProps) =>
@@ -398,6 +398,7 @@ export function mountChat(shadow: ShadowRoot) {
         </CopilotKitProvider>,
       ),
     dispose: () => {
+      stopCopyOnSelect();
       root.unmount();
       styles.remove();
       target.remove();

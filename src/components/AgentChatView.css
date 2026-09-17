@@ -1,6 +1,15 @@
 .codex-chat {
   --chat-border: var(--border);
   --chat-accent: var(--accent);
+  /* Every theme gives --bg-elevated the same value as the panel background, so
+     cards painted with it disappeared into the chat. Derive a nested ramp from
+     the actual backdrop instead; it stays right for light and custom themes. */
+  --chat-surface: color-mix(in srgb, var(--fg) 5%, var(--task-panel-bg, var(--bg-elevated)));
+  --chat-surface-strong: color-mix(
+    in srgb,
+    var(--fg) 10%,
+    var(--task-panel-bg, var(--bg-elevated))
+  );
   /* Keep chat overlays below the surrounding panel's focus outline. */
   isolation: isolate;
   display: flex;

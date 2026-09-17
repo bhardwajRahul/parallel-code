@@ -14,15 +14,15 @@
 .chat-ui [data-copilotkit] {
   --background: var(--task-panel-bg, var(--bg-elevated));
   --foreground: var(--fg);
-  --card: var(--bg-elevated);
+  --card: var(--chat-surface);
   --card-foreground: var(--fg);
-  --popover: var(--bg-elevated);
+  --popover: var(--chat-surface);
   --popover-foreground: var(--fg);
   --primary: var(--chat-accent);
   --primary-foreground: var(--accent-text);
-  --secondary: var(--bg-elevated);
+  --secondary: var(--chat-surface);
   --secondary-foreground: var(--fg);
-  --muted: var(--bg-input);
+  --muted: var(--chat-surface);
   --muted-foreground: var(--fg-muted);
   --accent: var(--bg-hover);
   --accent-foreground: var(--fg);
@@ -47,7 +47,7 @@
   flex-direction: column;
   color: var(--fg);
   background: var(--background);
-  font: 13px/1.6 var(--font-ui);
+  font: 13px/1.5 var(--font-ui);
   color-scheme: light;
 }
 .chat-ui.dark {
@@ -57,17 +57,70 @@
   flex: 1;
   min-height: 0;
 }
+
+/* Conversation text carries the meaning, so it reads a step larger and looser
+   than the surrounding chrome, which stays at 11–13px. */
 .chat-ui [class*='prose'] {
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 1.65;
   color: var(--fg);
   --tw-prose-body: var(--fg);
   --tw-prose-headings: var(--fg);
   --tw-prose-bold: var(--fg);
   --tw-prose-links: var(--link);
   --tw-prose-code: var(--fg);
-  --tw-prose-pre-bg: var(--bg-elevated);
+  --tw-prose-pre-bg: var(--chat-surface);
 }
+.chat-ui [class*='prose'] > :is(p, ul, ol, pre, blockquote) {
+  margin-block: 10px;
+}
+.chat-ui [class*='prose'] :is(h1, h2, h3, h4, h5, h6) {
+  margin-block: 18px 6px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.chat-ui [class*='prose'] h1 {
+  font-size: 17px;
+}
+.chat-ui [class*='prose'] h2 {
+  font-size: 15px;
+}
+.chat-ui [class*='prose'] :is(h3, h4, h5, h6) {
+  font-size: 14px;
+}
+.chat-ui [class*='prose'] > :first-child {
+  margin-top: 0;
+}
+.chat-ui [class*='prose'] > :last-child {
+  margin-bottom: 0;
+}
+.chat-ui [class*='prose'] :not(pre) > code {
+  background: var(--chat-surface-strong);
+  border-radius: var(--radius-xs);
+  padding: 1px 4px;
+  font-size: 0.92em;
+}
+/* Tailwind prose wraps inline code in literal backticks; the surface says it. */
+.chat-ui [class*='prose'] :not(pre) > code::before,
+.chat-ui [class*='prose'] :not(pre) > code::after {
+  content: none;
+}
+
+/* A hairline above each user turn: without it a long log has no scannable
+   boundary between "what I asked" and "what the agent did". */
+.chat-ui .copilotKitUserMessage {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+.chat-ui .copilotKitUserMessage:first-child {
+  margin-top: 0;
+  border-top: none;
+}
+.chat-ui .copilotKitUserMessage [class*='prose'] {
+  border-radius: var(--radius-lg);
+}
+
 .chat-ui textarea {
   color: var(--fg);
   font-size: 13px;
@@ -83,7 +136,7 @@
   background: var(--accent-hover);
 }
 .chat-ui [data-testid='copilot-scroll-to-bottom'] {
-  background: var(--bg-elevated);
+  background: var(--chat-surface);
   border-color: var(--chat-border);
   color: var(--fg);
 }
@@ -97,10 +150,12 @@
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }
+
+/* Tool activity reads as one timeline rail rather than a stack of cards — a turn
+   with a dozen reads should not outweigh the prose around it. */
 .chat-tool {
-  border: 1px solid var(--chat-border);
-  border-radius: 8px;
-  margin: 4px 0;
+  border-left: 2px solid var(--chat-border);
+  margin: 0;
   font-size: 12px;
 }
 .chat-tool summary {
@@ -108,11 +163,16 @@
   align-items: baseline;
   gap: 8px;
   cursor: pointer;
-  padding: 7px 10px;
+  padding: 4px 8px 4px 10px;
+}
+.chat-tool summary:hover {
+  background: var(--chat-surface);
 }
 .chat-tool summary::before {
   content: '›';
   flex: none;
+  color: var(--fg-muted);
+  transition: transform 120ms ease;
 }
 .chat-tool[open] summary::before {
   transform: rotate(90deg);
@@ -131,63 +191,89 @@
   white-space: nowrap;
   font-family: var(--font-mono);
 }
+.chat-tool[data-status='running'] {
+  border-left-color: var(--chat-accent);
+}
 .chat-tool[data-status='running'] .chat-tool-status {
   color: var(--chat-accent);
+}
+.chat-tool[data-status='failed'] {
+  border-left-color: var(--error);
 }
 .chat-tool[data-status='failed'] .chat-tool-status {
   color: var(--error);
 }
 .chat-tool pre {
-  padding: 12px;
+  margin: 0 8px 8px 10px;
+  padding: 10px 12px;
   max-height: 320px;
   overflow: auto;
   white-space: pre-wrap;
-  border-top: 1px solid var(--chat-border);
-  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  background: var(--chat-surface);
 }
+
 .chat-requests {
   max-height: min(240px, 40cqh);
   overflow: auto;
-  background: var(--bg-elevated);
+  background: var(--chat-surface);
   border: 1px solid var(--chat-border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   margin-bottom: 8px;
 }
 .chat-request {
-  padding: 10px 12px;
-  border-left: 3px solid var(--warning);
+  padding: 12px;
+  border-left: 2px solid var(--chat-accent);
   font-size: 13px;
+}
+/* A card that opens on Decline is the one worth a warning colour. */
+.chat-request[data-default='decline'] {
+  border-left-color: var(--warning);
 }
 .chat-request pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  margin: 8px 0;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--chat-surface-strong);
+  font-size: 12px;
 }
 .chat-request label {
   display: block;
-  margin: 8px 0;
+  margin: 12px 0 0;
 }
 .chat-request input {
   display: block;
   width: 100%;
-  background: var(--bg-input);
+  margin-top: 8px;
+  background: var(--chat-surface-strong);
   color: var(--fg);
   border: 1px solid var(--chat-border);
-  padding: 6px;
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font: inherit;
+}
+.chat-request input::placeholder {
+  color: var(--fg-muted);
 }
 .chat-options {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 8px 0;
+  margin: 12px 0 0;
 }
 .chat-options button {
-  background: var(--bg-input);
+  background: var(--chat-surface-strong);
   color: var(--fg);
   border: 1px solid var(--chat-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 5px 10px;
   cursor: pointer;
+  font: inherit;
+}
+.chat-options button:enabled:hover {
+  border-color: var(--chat-accent);
 }
 .chat-options button[aria-pressed='true'] {
   border-color: var(--chat-accent);
@@ -201,7 +287,7 @@
    then belongs to whatever does have focus (usually the composer). */
 .chat-request-hint {
   display: none;
-  margin: 0;
+  margin: 8px 0 0;
   color: var(--fg-muted);
   font-size: 11px;
 }
@@ -223,23 +309,28 @@
   width: 100%;
   max-width: 768px;
   margin: 0 auto;
-  padding: 8px 12px;
+  /* The hint row below the composer carries the bottom gap. */
+  padding: 8px 12px 6px;
 }
 .chat-ui [data-testid='copilot-input-overlay'] {
   background: var(--background);
 }
 .chat-composer {
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
   padding: 6px;
-  background: var(--bg-input);
+  background: var(--chat-surface);
   border: 1px solid var(--chat-border);
-  border-radius: 12px;
-  box-shadow: 0 2px 8px #0000000a;
+  border-radius: var(--radius-lg);
 }
 .chat-composer:focus-within {
   border-color: var(--border-focus);
+}
+.chat-composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
 }
 .chat-composer textarea {
   field-sizing: content;
@@ -256,30 +347,48 @@
   margin: 1px;
   flex: none;
 }
+/* Worth reading only while the user is about to type into an empty composer, but
+   its row is reserved either way: toggling `display` here moved the whole dock on
+   focus and again on the first keystroke. Fades instead, and never wraps. */
 .chat-composer-hint {
+  height: 16px;
+  margin-top: 4px;
   color: var(--fg-muted);
   font-size: 11px;
+  line-height: 16px;
   text-align: center;
-  margin-top: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
 }
-.chat-ui .copilotKitUserMessage {
-  padding-top: 20px;
+.chat-composer:focus-within:has(textarea:placeholder-shown) + .chat-composer-hint {
+  opacity: 1;
 }
-.chat-ui [class*='prose'] > :is(p, ul, ol, pre, blockquote) {
-  margin-block: 10px;
+@media (prefers-reduced-motion: reduce) {
+  .chat-composer-hint {
+    transition: none;
+  }
 }
+
 .chat-ui [data-streamdown='code-block'] {
   border: 1px solid var(--chat-border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 .chat-ui [data-streamdown='code-block-header'],
 .chat-ui [data-streamdown='code-block-body'] {
-  background: var(--bg-elevated) !important;
+  background: var(--chat-surface) !important;
+}
+.chat-ui [data-streamdown='code-block-header'] {
+  border-bottom: 1px solid var(--chat-border);
 }
 .chat-ui [data-streamdown='code-block-body'] {
-  padding: 14px;
+  padding: 12px 14px;
   overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.55;
 }
 .chat-ui.dark [data-streamdown='code-block-body'] span[style] {
   color: var(--shiki-dark, var(--fg)) !important;
@@ -290,6 +399,7 @@
 .chat-ui table {
   border-collapse: collapse;
   width: 100%;
+  font-size: 12px;
 }
 .chat-ui th,
 .chat-ui td {
@@ -297,42 +407,49 @@
   padding: 6px 10px;
   text-align: left;
 }
+.chat-ui th {
+  background: var(--chat-surface);
+}
 
+/* The model and reasoning pickers ride the composer's bottom edge as ghost
+   controls: present, legible, and not a form to fill in before typing. */
 .chat-model-settings {
-  margin-top: 6px;
+  padding: 0 2px 2px;
 }
 .chat-model-selectors {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
-}
-.chat-model-selectors label {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-  color: var(--fg-muted);
-  font: 11px/1.5 var(--font-ui);
 }
 .chat-model-selectors select {
   min-width: 0;
-  width: 100%;
-  padding: 3px 6px;
-  border: 1px solid var(--chat-border);
-  border-radius: 6px;
-  background: var(--bg-input);
-  color: var(--fg);
+  max-width: 180px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
   font: 11px/1.5 var(--font-ui);
   text-overflow: ellipsis;
+  cursor: pointer;
+}
+.chat-model-selectors select:enabled:hover {
+  background: var(--chat-surface-strong);
+  color: var(--fg);
 }
 .chat-model-selectors select:disabled {
   opacity: 0.6;
+  cursor: default;
+}
+.chat-model-selectors option {
+  background: var(--bg-elevated);
+  color: var(--fg);
 }
 .chat-model-error {
   color: var(--error);
   font-size: 11px;
   overflow-wrap: anywhere;
+  padding: 2px;
 }
 .chat-model-error button {
   margin-left: 8px;
