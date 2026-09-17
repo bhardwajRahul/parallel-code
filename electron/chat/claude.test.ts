@@ -594,4 +594,20 @@ describe('Claude chat adapter', () => {
     await h.chat.loadModels();
     expect(h.chat.state.modelsError).toBeUndefined();
   });
+
+  it('reports the cause of a successful-subtype turn that ended on an API error', async () => {
+    const h = harness();
+    await h.chat.start();
+    const sending = h.chat.send('Ask');
+    const rejected = expect(sending).rejects.toThrow('Credit balance is too low');
+    // subtype 'success' with is_error carries the cause in `result`, not in `errors`.
+    await h.emit({
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      result: 'Credit balance is too low',
+    });
+    await rejected;
+    expect(h.chat.state).toMatchObject({ status: 'ready', error: 'Credit balance is too low' });
+  });
 });

@@ -548,6 +548,9 @@ export class ClaudeChat implements AgentChat {
         const error =
           contentText(message.errors) ||
           (Array.isArray(message.errors) ? message.errors.join('\n') : '') ||
+          // A 'success' subtype also sets is_error when the turn ended on an API or
+          // billing failure; that cause is in `result`, and `errors` is absent.
+          string(message.result) ||
           'Claude could not complete this turn.';
         this.pendingSend?.reject(new Error(error));
         this.pendingSend = undefined;
