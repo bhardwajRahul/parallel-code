@@ -920,6 +920,14 @@ export function startRemoteServer(opts: {
     rememberedHashes = hashes;
   }
 
+  /** Disconnect every paired phone, session-only ones included. Clearing the credential file
+   *  alone would not revoke anything: `isPairedToken` authenticates against `pairedTokenBufs`,
+   *  and re-enabling the same file is a no-op, so the file is never re-read. */
+  function revokePairedDevices(): void {
+    if (pairedDevicesPath) saveRememberedDevices([]);
+    pairedTokenBufs = [];
+  }
+
   // At most one pending PIN at a time — a fresh mint replaces any prior one.
   let pairing: { pinBuf: Buffer; expiresAt: number; attemptsLeft: number } | null = null;
   let stopping = false;
@@ -1761,11 +1769,9 @@ export function startRemoteServer(opts: {
     connectedClients: () => authenticatedClients.size,
     generatePairingPin,
     enableRememberedDevices,
-    forgetRememberedDevices: () => {
-      if (pairedDevicesPath) saveRememberedDevices([]);
-    },
+    forgetRememberedDevices: revokePairedDevices,
     stop: (forgetDevices = false) => {
-      if (forgetDevices && pairedDevicesPath) saveRememberedDevices([]);
+      if (forgetDevices) revokePairedDevices();
       // server.close() drains pending HTTP bodies. They must not mint new
       // credentials after explicit disconnect has revoked remembered phones.
       stopping = true;

@@ -189,6 +189,20 @@ describe('remembered phones', () => {
     expect((await req('GET', '/api/mobile/projects', paired)).status).toBe(401);
   });
 
+  it('revokes paired phones in the running server, not just the credential file', async () => {
+    await stop();
+    const srv = await startServer();
+    const remembered = await pair(true);
+    const sessionOnly = await pair();
+    srv.forgetRememberedDevices();
+    expect((await req('GET', '/api/mobile/projects', remembered)).status).toBe(401);
+    expect((await req('GET', '/api/mobile/projects', sessionOnly)).status).toBe(401);
+    // Re-enabling the same credential file must not resurrect the revoked phones.
+    srv.enableRememberedDevices(join(credentialsDir, 'phones.json'));
+    expect((await req('GET', '/api/mobile/projects', remembered)).status).toBe(401);
+    expect((await req('GET', '/api/mobile/projects', sessionOnly)).status).toBe(401);
+  });
+
   it('evicts the oldest remembered phone when the credential limit is reached', async () => {
     const oldest = await pair(true);
     for (let i = 0; i < 8; i++) await pair(true);
