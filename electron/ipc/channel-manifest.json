@@ -1,4 +1,5 @@
 {
+  "AgentChat": "agent_chat",
   "SpawnAgent": "spawn_agent",
   "WriteToAgent": "write_to_agent",
   "ResizeAgent": "resize_agent",

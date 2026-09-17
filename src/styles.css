@@ -2200,6 +2200,46 @@ html:is(
   scrollbar-width: none;
 }
 
+.agent-view-error {
+  padding: 6px 10px;
+  color: var(--error);
+  background: var(--bg-input);
+  font-size: 11px;
+}
+
+/* Both destinations stay visible, with the current agent view selected. */
+.agent-view-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+.agent-view-switch button {
+  padding: 1px 7px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.agent-view-switch button[aria-pressed='true'] {
+  background: var(--bg-selected);
+  color: var(--fg);
+  box-shadow: 0 0 0 1px var(--border);
+}
+.agent-view-switch button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.agent-view-switch button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .agent-header-tabs > * {
   flex-shrink: 0;
 }

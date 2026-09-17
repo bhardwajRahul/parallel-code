@@ -1,4 +1,5 @@
 import { produce } from 'solid-js/store';
+import { isAgentChat } from './agent-chat';
 import { invoke, Channel } from '../lib/ipc';
 import { asStoreVerificationRun } from '../lib/verification-run';
 import { IPC } from '../../electron/ipc/channels';
@@ -736,8 +737,12 @@ export async function sendPrompt(
   taskId: string,
   agentId: string,
   text: string,
-  /** App-composed prompts carry their own canvas contract, so none is appended. */
-  options: { appPrompt?: boolean } = {},
+  options: {
+    /** App-composed prompts carry their own canvas contract, so none is appended. */
+    appPrompt?: boolean;
+    /** Chat delivery, so the chat view streams the prompt through its own runtime. */
+    sendChat?: (text: string) => Promise<void>;
+  } = {},
 ): Promise<void> {
   const task = store.tasks[taskId];
   assertTaskCanReceiveInput(taskId, agentId);
@@ -749,8 +754,23 @@ export async function sendPrompt(
   // When steps tracking is enabled but no initial prompt was provided in the dialog,
   // the steps instruction was never injected in createTask. Append it to each
   // agent's first manual prompt so newly added agents also maintain steps.json.
-  const injectSteps = !!(task?.stepsEnabled && !hasPromptedAgent && !isQueuedInitialPrompt);
+  const hasPromptedConversation = isAgentChat(task, agentId)
+    ? !!store.agents[agentId]?.chatState?.items.some((item) => item.kind === 'user')
+    : hasPromptedAgent;
+  const injectSteps = !!(task?.stepsEnabled && !hasPromptedConversation && !isQueuedInitialPrompt);
   let effectiveText = injectSteps ? `${text}\n\n---\n${STEPS_INSTRUCTION}` : text;
+
+  if (isAgentChat(task, agentId)) {
+    if (options.sendChat) await options.sendChat(effectiveText);
+    else await invoke(IPC.AgentChat, { action: 'send', agentId, text: effectiveText });
+    setTaskLastInputAt(taskId);
+    setLastPrompt(taskId, text, agentId);
+    if (task && !hasPromptedAgent)
+      setStore('tasks', taskId, 'promptedAgentIds', [...promptedAgentIds, agentId]);
+    if (isQueuedInitialPrompt) setStore('tasks', taskId, 'initialPrompt', undefined);
+    void saveState();
+    return;
+  }
 
   // Send a Focus In escape sequence before the prompt text.  When the user focuses
   // the PromptInput textarea, the xterm.js terminal loses DOM focus.  For agents

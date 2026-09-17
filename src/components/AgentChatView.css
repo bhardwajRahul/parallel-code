@@ -1,0 +1,54 @@
+.codex-chat {
+  --chat-border: var(--border);
+  --chat-accent: var(--accent);
+  /* Keep chat overlays below the surrounding panel's focus outline. */
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--fg);
+  background: var(--task-panel-bg, var(--bg-elevated));
+  font-size: 13px;
+}
+.codex-chat-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12px;
+}
+.codex-chat-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--fg-muted);
+}
+.codex-chat-status {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--fg-muted);
+}
+.codex-chat-island {
+  flex: 1;
+  min-height: 0;
+}
+.codex-chat-error {
+  padding: 10px 16px;
+  color: var(--error);
+  font-size: 12px;
+}
+.codex-chat-error button {
+  margin-left: 8px;
+  background: var(--bg-elevated);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+}

@@ -1,4 +1,6 @@
 import * as pty from 'node-pty';
+import { codexResumeId } from '../shared/codex-resume.js';
+import { stopAgentChat, stopAllAgentChats, runningAgentChatIds } from '../chat/sessions.js';
 import { execFileSync, execFile, spawn as cpSpawn } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -24,6 +26,7 @@ const __dirname = path.dirname(__filename);
 
 interface PtySession {
   proc: pty.IPty;
+  command: string;
   channelId: string;
   taskId: string;
   agentId: string;
@@ -38,6 +41,54 @@ interface PtySession {
 
 const sessions = new Map<string, PtySession>();
 const pendingSpawns = new Map<string, symbol>();
+const codexExitIds = new Map<string, string>();
+const handingOff = new Set<string>();
+
+/** Ask an idle Codex TUI to exit, then wait for its exact resume footer. */
+export async function handoffCodexTerminal(agentId: string): Promise<string> {
+  if (handingOff.has(agentId)) throw new Error('A view switch is already in progress.');
+  const session = sessions.get(agentId);
+  if (!session) {
+    const id = codexExitIds.get(agentId);
+    if (id) return id;
+    throw new Error(
+      'No Codex resume ID was found. Exit Codex normally with /quit, then try Chat again.',
+    );
+  }
+  if (session.isShell || session.containerName || path.basename(session.command) !== 'codex')
+    throw new Error('This terminal does not support Codex conversation handoff.');
+  handingOff.add(agentId);
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        exit.dispose();
+        reject(
+          new Error(
+            'Codex has not exited. Finish the response, clear the terminal input, then try again.',
+          ),
+        );
+      }, 5000);
+      const exit = session.proc.onExit(({ exitCode, signal }) => {
+        clearTimeout(timer);
+        exit.dispose();
+        const id = codexExitIds.get(agentId);
+        if (exitCode === 0 && !signal && id) resolve(id);
+        else
+          reject(new Error('Codex exited without a resume ID. The terminal output is preserved.'));
+      });
+      // Ctrl+D exits an empty Codex composer without submitting a prompt.
+      try {
+        session.proc.write('\x04');
+      } catch (error) {
+        clearTimeout(timer);
+        exit.dispose();
+        reject(error);
+      }
+    });
+  } finally {
+    handingOff.delete(agentId);
+  }
+}
 
 function sendToChannel(win: BrowserWindow, channelId: string, msg: unknown): void {
   if (!win.isDestroyed()) {
@@ -471,6 +522,10 @@ function attachPtyOutputHandlers(
 
     const tailBuf = Buffer.concat(tailChunks);
     const tailStr = tailBuf.toString('utf8');
+    if (path.basename(command) === 'codex' && exitCode === 0 && !signal) {
+      const id = codexResumeId(tailStr);
+      if (id) codexExitIds.set(args.agentId, id);
+    }
     const lines = tailStr
       .split('\n')
       .map((l) => l.replace(/\r$/, ''))
@@ -522,6 +577,7 @@ export function applyAgentHookLaunch(
 }
 
 export async function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): Promise<void> {
+  if (handingOff.has(args.agentId)) throw new Error('Wait for the view switch to finish.');
   const channelId = args.onOutput.__CHANNEL_ID__;
   const command = args.command || resolveUserShell();
   const cwd = args.cwd || process.env.HOME || '/';
@@ -566,6 +622,7 @@ export async function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): Prom
 
   pendingSpawns.delete(args.agentId);
   cleanupExistingSession(args.agentId, existing);
+  codexExitIds.delete(args.agentId);
 
   const spawnEnv = buildPtySpawnEnv(args.env, fileEnv);
   const launchArgs = applyAgentHookLaunch(args, command, spawnEnv);
@@ -613,6 +670,7 @@ export async function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): Prom
 
   const session: PtySession = {
     proc,
+    command,
     channelId,
     taskId: args.taskId,
     agentId: args.agentId,
@@ -634,6 +692,7 @@ export async function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): Prom
 const INTERRUPT_KEYSTROKES = new Set(['\x1b', '\x03']);
 
 export function writeToAgent(agentId: string, data: string): void {
+  if (handingOff.has(agentId)) throw new Error('Wait for the view switch to finish.');
   const session = sessions.get(agentId);
   if (!session) throw new Error(`Agent not found: ${agentId}`);
   session.proc.write(data);
@@ -662,6 +721,8 @@ export function resumeAgent(agentId: string): void {
 
 export function killAgent(agentId: string): void {
   pendingSpawns.delete(agentId);
+  codexExitIds.delete(agentId);
+  stopAgentChat(agentId);
   const session = sessions.get(agentId);
   if (session) {
     if (session.flushTimer) {
@@ -683,11 +744,13 @@ export function killAgent(agentId: string): void {
 }
 
 export function countRunningAgents(): number {
-  return sessions.size;
+  return new Set([...sessions.keys(), ...runningAgentChatIds()]).size;
 }
 
 export function killAllAgents(): void {
   pendingSpawns.clear();
+  codexExitIds.clear();
+  stopAllAgentChats();
   for (const [, session] of sessions) {
     if (session.flushTimer) clearTimeout(session.flushTimer);
     session.subscribers.clear();

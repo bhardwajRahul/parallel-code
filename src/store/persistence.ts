@@ -49,6 +49,22 @@ import { errMessage, warn as logWarn } from '../lib/log';
 import { canvasTabKey } from '../lib/canvas-tabs';
 import { documentAgentTaskIds } from '../documents/task-id';
 
+function restoredCodexHandoff(value: unknown): Task['codexChatHandoff'] {
+  if (!value || typeof value !== 'object') return;
+  const session = value as Record<string, unknown>;
+  if (
+    typeof session.threadId !== 'string' ||
+    !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(session.threadId)
+  )
+    return;
+  return {
+    threadId: session.threadId,
+    model: typeof session.model === 'string' ? session.model : undefined,
+    reasoningEffort:
+      typeof session.reasoningEffort === 'string' ? session.reasoningEffort : undefined,
+  };
+}
+
 const RESTORED_AGENT_SPAWN_STAGGER_MS = 1_000;
 
 export async function loadCustomThemes(): Promise<boolean> {
@@ -206,6 +222,10 @@ function toPersistedTask(task: Task, agentDefs: AgentDef[], collapsed?: boolean)
     agentIds: task.agentIds.length > 0 ? [...task.agentIds] : undefined,
     selectedAgentId: task.selectedAgentId,
     aiTerminalLayout: task.aiTerminalLayout,
+    mainAgentView: task.mainAgentView,
+    codexChatThreadId: task.codexChatThreadId,
+    codexChatHandoff: task.codexChatHandoff,
+    claudeChatSessionId: task.claudeChatSessionId,
     gitIsolation: task.gitIsolation,
     baseBranch: task.baseBranch,
     externalWorktree: task.externalWorktree,
@@ -800,6 +820,12 @@ export async function loadState(): Promise<void> {
           agentIds,
           selectedAgentId: validAgentId(pt.selectedAgentId, agentIds) ?? agentIds[0],
           aiTerminalLayout: pt.aiTerminalLayout === 'tabs' ? 'tabs' : undefined,
+          mainAgentView: pt.mainAgentView === 'chat' ? 'chat' : undefined,
+          codexChatThreadId:
+            typeof pt.codexChatThreadId === 'string' ? pt.codexChatThreadId : undefined,
+          codexChatHandoff: restoredCodexHandoff(pt.codexChatHandoff),
+          claudeChatSessionId:
+            typeof pt.claudeChatSessionId === 'string' ? pt.claudeChatSessionId : undefined,
           shellAgentIds,
           notes: pt.notes,
           promptDraft: typeof pt.promptDraft === 'string' ? pt.promptDraft : undefined,
@@ -915,6 +941,12 @@ export async function loadState(): Promise<void> {
           agentIds: [],
           selectedAgentId: undefined,
           aiTerminalLayout: pt.aiTerminalLayout === 'tabs' ? 'tabs' : undefined,
+          mainAgentView: pt.mainAgentView === 'chat' ? 'chat' : undefined,
+          codexChatThreadId:
+            typeof pt.codexChatThreadId === 'string' ? pt.codexChatThreadId : undefined,
+          codexChatHandoff: restoredCodexHandoff(pt.codexChatHandoff),
+          claudeChatSessionId:
+            typeof pt.claudeChatSessionId === 'string' ? pt.claudeChatSessionId : undefined,
           shellAgentIds: [],
           notes: pt.notes,
           promptDraft: typeof pt.promptDraft === 'string' ? pt.promptDraft : undefined,

@@ -32,6 +32,7 @@ export default [
   // SolidJS-specific rules for TSX files
   {
     files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.react.tsx'],
     ...solid,
     languageOptions: {
       parser: tsParser,

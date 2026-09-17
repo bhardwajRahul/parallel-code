@@ -4,6 +4,10 @@ import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { IPC } from './channels.js';
+import { startAgentChat, getAgentChat, releaseCodexChat } from '../chat/sessions.js';
+import { getChatConnection } from '../chat/protocol.js';
+import { buildPtySpawnEnv, validateCommand, handoffCodexTerminal } from './pty.js';
+import { loadEnvFile } from './env-file.js';
 import { appendGitInfoExcludeBlock } from './git-exclude.js';
 import {
   spawnAgent,
@@ -429,6 +433,90 @@ function createThrottledForwarder(
  * git-exclude a generated file must not block coordinator startup.
  */
 export function registerAllHandlers(win: BrowserWindow): void {
+  ipcMain.handle(IPC.AgentChat, async (_event, args: Record<string, unknown>) => {
+    assertString(args.agentId, 'agentId');
+    assertString(args.action, 'action');
+    if (args.action === 'handoffToChat') {
+      // Any older separate chat must also be idle before adopting the terminal's ID.
+      await releaseCodexChat(args.agentId);
+      return { threadId: await handoffCodexTerminal(args.agentId) };
+    }
+    if (args.action === 'handoffToTerminal') return releaseCodexChat(args.agentId);
+    if (args.action === 'start') {
+      if (args.provider !== 'codex' && args.provider !== 'claude')
+        throw new Error('Unsupported chat provider.');
+      if (args.provider === 'codex' && getAgentMeta(args.agentId))
+        throw new Error(
+          'Switch from Terminal to Chat after Codex is idle to hand off this conversation.',
+        );
+      assertString(args.taskId, 'taskId');
+      assertOptionalBoolean(args.stepsEnabled, 'stepsEnabled');
+      assertString(args.command, 'command');
+      validateCommand(args.command);
+      validatePath(args.cwd, 'cwd');
+      assertOptionalString(args.envFile, 'envFile');
+      assertOptionalString(args.threadId, 'threadId');
+      assertOptionalBoolean(args.skipPermissions, 'skipPermissions');
+      assertString(args.channelId, 'channelId');
+      validateUUID(args.channelId, 'channelId');
+      const channel = `channel:${args.channelId}`;
+      await startAgentChat(
+        {
+          provider: args.provider,
+          agentId: args.agentId,
+          command: args.command,
+          cwd: args.cwd as string,
+          threadId: args.threadId,
+          skipPermissions: args.skipPermissions,
+          env: buildPtySpawnEnv({}, args.envFile ? loadEnvFile(args.envFile) : {}),
+        },
+        (state) => {
+          if (!win.isDestroyed()) win.webContents.send(channel, state);
+        },
+      );
+      try {
+        ensurePlansDirectory(args.cwd as string);
+        startPlanWatcher(win, args.taskId, args.cwd as string);
+        if (args.stepsEnabled) startStepsWatcher(win, args.taskId, args.cwd as string);
+      } catch (err) {
+        console.warn('Failed to start chat plan/steps watchers:', err);
+      }
+      return;
+    }
+    const chat = getAgentChat(args.agentId);
+    if (args.action === 'connection') return getChatConnection(chat);
+    if (args.action === 'models') return chat.loadModels();
+    if (args.action === 'selectModel') {
+      assertString(args.model, 'model');
+      assertOptionalString(args.reasoningEffort, 'reasoningEffort');
+      return chat.selectModel(args.model, args.reasoningEffort);
+    }
+    if (args.action === 'send') {
+      assertString(args.text, 'text');
+      if (!args.text.trim() || args.text.length > 100_000)
+        throw new Error('Enter a message of at most 100,000 characters.');
+      return chat.send(args.text);
+    }
+    if (args.action === 'interrupt') return chat.interrupt();
+    if (args.action === 'respond') {
+      if (typeof args.requestId !== 'string' && typeof args.requestId !== 'number')
+        throw new Error('Invalid request ID.');
+      if (args.decision !== 'accept' && args.decision !== 'decline')
+        throw new Error('Invalid approval decision.');
+      let answers: Record<string, string> | undefined;
+      if (args.answers !== undefined) {
+        if (!args.answers || typeof args.answers !== 'object' || Array.isArray(args.answers))
+          throw new Error('Invalid answers.');
+        answers = {};
+        for (const [key, value] of Object.entries(args.answers)) {
+          assertString(value, 'answer');
+          answers[key] = value;
+        }
+      }
+      return chat.respond(args.requestId, args.decision, answers);
+    }
+    throw new Error('Unknown agent chat action.');
+  });
   // --- Remote access state ---
   // Keep development phone access and coordinator ports separate from the installed app.
   const defaultRemotePort = app.isPackaged ? 7777 : 8777;

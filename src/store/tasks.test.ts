@@ -1165,6 +1165,49 @@ describe('sendPrompt', () => {
     expect(mockTasks['task-1'].lastPrompt).toBe(prompt);
   });
 
+  it('routes chat prompts through app-server without writing into the hidden terminal', async () => {
+    mockAgents = { 'agent-1': { status: 'running', def: { id: 'codex' } } };
+    mockTasks['task-1'].agentIds = ['agent-1'];
+    mockTasks['task-1'].mainAgentView = 'chat';
+    await sendPrompt('task-1', 'agent-1', 'hello chat');
+    expect(mockInvoke).toHaveBeenCalledWith(IPC.AgentChat, {
+      action: 'send',
+      agentId: 'agent-1',
+      text: 'hello chat',
+    });
+    expect(writePayloads()).toEqual([]);
+    expect(mockTasks['task-1'].lastPrompt).toBe('hello chat');
+  });
+
+  it('delivers through the chat runtime with steps and records only accepted prompts', async () => {
+    mockAgents = { 'agent-1': { status: 'running', def: { id: 'codex' } } };
+    mockTasks['task-1'].agentIds = ['agent-1'];
+    mockTasks['task-1'].mainAgentView = 'chat';
+    mockTasks['task-1'].stepsEnabled = true;
+    const deliver = vi.fn(async () => undefined);
+    deliver.mockRejectedValueOnce(new Error('Disconnected'));
+    await expect(
+      sendPrompt('task-1', 'agent-1', 'hello chat', { sendChat: deliver }),
+    ).rejects.toThrow('Disconnected');
+    expect(mockTasks['task-1'].lastPrompt).toBe('');
+    await sendPrompt('task-1', 'agent-1', 'hello chat', { sendChat: deliver });
+    expect(deliver).toHaveBeenLastCalledWith(expect.stringContaining('hello chat'));
+    expect(deliver).toHaveBeenLastCalledWith(expect.stringContaining('For active statuses'));
+    expect(mockTasks['task-1'].lastPrompt).toBe('hello chat');
+    expect(mockInvoke).not.toHaveBeenCalledWith(IPC.AgentChat, expect.anything());
+    expect(writePayloads()).toEqual([]);
+  });
+
+  it('does not record a prompt rejected by app-server', async () => {
+    mockAgents = { 'agent-1': { status: 'running', def: { id: 'codex' } } };
+    mockTasks['task-1'].agentIds = ['agent-1'];
+    mockTasks['task-1'].mainAgentView = 'chat';
+    mockInvoke.mockRejectedValue(new Error('Disconnected'));
+    await expect(sendPrompt('task-1', 'agent-1', 'not accepted')).rejects.toThrow('Disconnected');
+    expect(mockTasks['task-1'].lastPrompt).toBe('');
+    expect(writePayloads()).toEqual([]);
+  });
+
   it('asks tracked active steps to describe what is happening now', async () => {
     mockTasks['task-1'].stepsEnabled = true;
 

@@ -23,9 +23,9 @@ const { mockExecFileSync, mockExecFile, mockChildProcessSpawn, mockPtySpawn, moc
     const mockPtySpawn = vi.fn(
       (_command: string, _args: string[], options: { cols: number; rows: number }) => {
         let onDataHandler: ((data: string) => void) | undefined;
-        let onExitHandler:
-          | ((event: { exitCode: number; signal: number | undefined }) => void)
-          | undefined;
+        const exitHandlers = new Set<
+          (event: { exitCode: number; signal: number | undefined }) => void
+        >();
 
         const proc = {
           cols: options.cols,
@@ -38,21 +38,22 @@ const { mockExecFileSync, mockExecFile, mockChildProcessSpawn, mockPtySpawn, moc
           pause: vi.fn(),
           resume: vi.fn(),
           kill: vi.fn(() => {
-            onExitHandler?.({ exitCode: 0, signal: 15 });
+            for (const handler of exitHandlers) handler({ exitCode: 0, signal: 15 });
           }),
           onData: vi.fn((handler: (data: string) => void) => {
             onDataHandler = handler;
           }),
           onExit: vi.fn(
             (handler: (event: { exitCode: number; signal: number | undefined }) => void) => {
-              onExitHandler = handler;
+              exitHandlers.add(handler);
+              return { dispose: () => exitHandlers.delete(handler) };
             },
           ),
           emitData(data: string) {
             onDataHandler?.(data);
           },
           emitExit(event: { exitCode: number; signal: number | undefined }) {
-            onExitHandler?.(event);
+            for (const handler of exitHandlers) handler(event);
           },
         };
 
@@ -85,6 +86,7 @@ vi.mock('../log.js', () => ({
 
 import {
   buildPtySpawnEnv,
+  handoffCodexTerminal,
   buildDockerImage,
   DOCKER_CONTAINER_HOME,
   dockerImageExists,
@@ -1371,5 +1373,50 @@ describe('writeToAgent — interrupt keystrokes', () => {
     writeToAgent(agent.agentId, '\x03');
     expect(interrupted).toEqual([agent.agentId, agent.agentId]);
     off();
+  });
+});
+
+describe('Codex terminal handoff', () => {
+  const id = '01999999-1234-4321-9876-0123456789ab';
+  function launch() {
+    const args = buildSpawnArgs({ command: 'codex', args: [], dockerMode: false });
+    spawnAgent(createMockWindow(), args);
+    return {
+      agentId: args.agentId,
+      proc: mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1].value,
+    };
+  }
+  it('waits for a clean terminal exit and reads its exact final resume footer', async () => {
+    const { agentId, proc } = launch();
+    const promise = handoffCodexTerminal(agentId);
+    expect(proc.write).toHaveBeenCalledWith('\x04');
+    expect(() => writeToAgent(agentId, 'new prompt')).toThrow('view switch');
+    await expect(handoffCodexTerminal(agentId)).rejects.toThrow('already in progress');
+    proc.emitData(`\r\nTo continue this session, run codex resume ${id}\r\n`);
+    proc.emitExit({ exitCode: 0, signal: undefined });
+    await expect(promise).resolves.toBe(id);
+    await expect(handoffCodexTerminal(agentId)).resolves.toBe(id);
+    expect(proc.kill).not.toHaveBeenCalled();
+  });
+  it('rejects abnormal exits and leaves the final output available', async () => {
+    const { agentId, proc } = launch();
+    const promise = handoffCodexTerminal(agentId);
+    proc.emitData(`\r\nTo continue this session, run codex resume ${id}\r\n`);
+    proc.emitExit({ exitCode: 1, signal: undefined });
+    await expect(promise).rejects.toThrow('without a resume ID');
+  });
+  it('does not force-kill a terminal which refuses to exit, and restores input after timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const { agentId, proc } = launch();
+      const promise = handoffCodexTerminal(agentId);
+      const rejected = expect(promise).rejects.toThrow('has not exited');
+      await vi.advanceTimersByTimeAsync(5000);
+      await rejected;
+      expect(proc.kill).not.toHaveBeenCalled();
+      expect(() => writeToAgent(agentId, 'still here')).not.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

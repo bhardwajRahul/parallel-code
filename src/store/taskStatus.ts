@@ -1,4 +1,5 @@
 import { createSignal, untrack } from 'solid-js';
+import { isAgentChat } from './agent-chat';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import { store, setStore } from './core';
@@ -455,6 +456,9 @@ const [questionAgents, setQuestionAgents] = createSignal<Set<string>>(new Set())
 
 /** True when the agent's terminal is showing a question or confirmation dialog. */
 export function isAgentAskingQuestion(agentId: string): boolean {
+  const agent = store.agents[agentId];
+  if (agent && isAgentChat(store.tasks[agent.taskId], agentId))
+    return !!agent.chatState?.requests.length;
   return questionAgents().has(agentId);
 }
 
@@ -505,7 +509,9 @@ export function getTaskOpenQuestion(taskId: string): TaskOpenQuestion | null {
   if (!task) return null;
 
   let newest: TaskOpenQuestion | null = null;
-  const runningAgentIds = task.agentIds.filter((id) => store.agents[id]?.status === 'running');
+  const runningAgentIds = task.agentIds.filter(
+    (id) => store.agents[id]?.status === 'running' || isAgentChat(task, id),
+  );
   for (const agentId of [...runningAgentIds, ...task.shellAgentIds]) {
     const since = agentQuestionSince(agentId, asking);
     if (since === undefined) continue;
@@ -515,6 +521,9 @@ export function getTaskOpenQuestion(taskId: string): TaskOpenQuestion | null {
 }
 
 function agentQuestionSince(agentId: string, asking: ReadonlySet<string>): number | undefined {
+  const agent = store.agents[agentId];
+  if (agent && isAgentChat(store.tasks[agent.taskId], agentId))
+    return agent.chatState?.requests.at(-1)?.since;
   const hook = getAgentHookStatus(agentId);
   if (hook?.state === 'waiting') return hook.since;
   if (hook?.state === 'working' || !asking.has(agentId)) return undefined;
@@ -855,6 +864,9 @@ export function getAgentOutputTail(agentId: string): string {
 
 /** True when the agent is NOT producing output (e.g. sitting at a prompt). */
 export function isAgentIdle(agentId: string): boolean {
+  const agent = store.agents[agentId];
+  if (agent && isAgentChat(store.tasks[agent.taskId], agentId))
+    return agent.chatState?.status === 'ready';
   return !activeAgents().has(agentId);
 }
 
@@ -894,6 +906,7 @@ function hasTaskAgentError(taskId: string): boolean {
   if (!task) return false;
   return task.agentIds.some((id) => {
     const agent = store.agents[id];
+    if (agent && isAgentChat(task, id)) return !!agent.chatState?.error;
     if (agent?.status !== 'exited') return false;
     return agent.exitCode !== 0 || agent.signal !== null;
   });
@@ -903,6 +916,9 @@ function hasTaskAgentError(taskId: string): boolean {
  *  however much the screen looks like one. Only once the turn has ended do the
  *  heuristics get a say — login and trust prompts arrive with no hook at all. */
 function isAgentBlockedOnInput(agentId: string): boolean {
+  const agent = store.agents[agentId];
+  if (agent && isAgentChat(store.tasks[agent.taskId], agentId))
+    return !!agent.chatState?.requests.length;
   const hook = getAgentHookStatus(agentId);
   if (hook?.state === 'waiting') return true;
   if (hook?.state === 'working') return false;
@@ -912,6 +928,9 @@ function isAgentBlockedOnInput(agentId: string): boolean {
 /** Same precedence for activity: output still streaming after `Stop` is the
  *  agent redrawing its prompt, not work, and must not hold the task busy. */
 function isAgentWorking(agentId: string, active: ReadonlySet<string>): boolean {
+  const agent = store.agents[agentId];
+  if (agent && isAgentChat(store.tasks[agent.taskId], agentId))
+    return agent.chatState?.status === 'working' || agent.chatState?.status === 'starting';
   const hook = getAgentHookStatus(agentId);
   return hook ? hook.state === 'working' : active.has(agentId);
 }
@@ -923,7 +942,7 @@ function hasRunningTaskActivity(taskId: string, predicate: (id: string) => boole
   return (
     task.agentIds.some((id) => {
       const agent = store.agents[id];
-      return agent?.status === 'running' && predicate(id);
+      return (agent?.status === 'running' || isAgentChat(task, id)) && predicate(id);
     }) || task.shellAgentIds.some((id) => predicate(id))
   );
 }

@@ -39,10 +39,34 @@ function legacyMcpConfigArgs(command: string, mcpConfigPath: string | undefined)
 export function buildTaskAgentArgs(
   agentDef: AgentDef,
   task: Pick<Task, 'skipPermissions' | 'mcpConfigPath' | 'mcpLaunchArgs'> &
-    Partial<Pick<Task, 'id'>>,
+    Partial<
+      Pick<
+        Task,
+        'id' | 'agentIds' | 'codexChatThreadId' | 'codexChatHandoff' | 'claudeChatSessionId'
+      >
+    >,
   resumed: boolean,
+  agentId?: string,
 ): string[] {
   let args = resumed && agentDef.resume_args?.length ? agentDef.resume_args : agentDef.args;
+  // A task's separate app-server chat may now be the newest conversation.
+  // Let the user choose the terminal conversation instead of resuming it by accident.
+  if (
+    resumed &&
+    task.codexChatThreadId &&
+    isCodexCommand(agentDef.command) &&
+    args.join(' ') === 'resume --last'
+  ) {
+    args = ['resume'];
+  }
+  if (
+    resumed &&
+    task.claudeChatSessionId &&
+    agentDef.command.split('/').pop() === 'claude' &&
+    args.join(' ') === '--continue'
+  ) {
+    args = ['--resume'];
+  }
   if (resumed && isDocumentAgentTaskId(task.id ?? null)) {
     // Document terminals share a checkout. "Latest" may belong to another
     // terminal: use a picker, without rewriting explicit IDs or custom flags.
@@ -60,6 +84,23 @@ export function buildTaskAgentArgs(
     ) {
       args = agentDef.args;
     }
+  }
+  const session = task.codexChatHandoff;
+  if (
+    resumed &&
+    agentId &&
+    agentId === task.agentIds?.[0] &&
+    session?.threadId &&
+    isCodexCommand(agentDef.command)
+  ) {
+    args = [
+      'resume',
+      session.threadId,
+      ...(session.model ? ['--model', session.model] : []),
+      ...(session.reasoningEffort
+        ? ['-c', `model_reasoning_effort=${JSON.stringify(session.reasoningEffort)}`]
+        : []),
+    ];
   }
   return [
     ...args,

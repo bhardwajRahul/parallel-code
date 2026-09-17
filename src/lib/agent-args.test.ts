@@ -43,6 +43,24 @@ const copilotAgent = {
 };
 
 describe('buildTaskAgentArgs', () => {
+  it('offers a resume picker when a separate chat could be the latest Codex conversation', () => {
+    expect(buildTaskAgentArgs(codexAgent, { codexChatThreadId: 'chat-thread' }, true)).toEqual([
+      'resume',
+    ]);
+    expect(buildTaskAgentArgs(codexAgent, {}, true)).toEqual(['resume', '--last']);
+  });
+  it('offers a Claude resume picker when chat could be the newest session', () => {
+    const agent = { ...claudeAgent, resume_args: ['--continue'] };
+    expect(buildTaskAgentArgs(agent, { claudeChatSessionId: 'chat' }, true)).toEqual(['--resume']);
+    expect(buildTaskAgentArgs(agent, {}, true)).toEqual(['--continue']);
+    expect(
+      buildTaskAgentArgs(
+        { ...agent, resume_args: ['--resume', 'explicit'] },
+        { claudeChatSessionId: 'chat' },
+        true,
+      ),
+    ).toEqual(['--resume', 'explicit']);
+  });
   it.each([
     [codexAgent, ['resume']],
     [{ ...claudeAgent, resume_args: ['--continue'] }, ['--resume']],
@@ -284,4 +302,31 @@ describe('buildTaskAgentArgs — skip-permissions on a degraded definition', () 
   it('adds nothing for an agent that takes no such flag', () => {
     expect(buildTaskAgentArgs({ ...degradedClaude, command: 'opencode' }, task, false)).toEqual([]);
   });
+});
+
+it('resumes the handed-off Codex session with its selected model and reasoning', () => {
+  const agent = {
+    id: 'codex',
+    name: 'Codex',
+    command: 'codex',
+    args: [],
+    resume_args: ['resume', '--last'],
+    skip_permissions_args: [],
+    description: '',
+  };
+  const task = {
+    agentIds: ['primary', 'secondary'],
+    codexChatThreadId: 'old',
+    codexChatHandoff: { threadId: 'exact', model: 'model-a', reasoningEffort: 'high' },
+  };
+  expect(buildTaskAgentArgs(agent, task, true, 'primary')).toEqual([
+    'resume',
+    'exact',
+    '--model',
+    'model-a',
+    '-c',
+    'model_reasoning_effort="high"',
+  ]);
+  expect(buildTaskAgentArgs(agent, task, false, 'primary')).toEqual([]);
+  expect(buildTaskAgentArgs(agent, task, true, 'secondary')).toEqual(['resume']);
 });

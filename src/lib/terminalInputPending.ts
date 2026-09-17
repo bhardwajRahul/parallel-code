@@ -4,7 +4,17 @@ function isCsiTerminator(ch: string): boolean {
 }
 
 function skipEscapeSequence(data: string, index: number): number {
-  if (data[index + 1] === '[') {
+  const kind = data[index + 1];
+  // xterm sends OSC color replies and DCS capability replies through onData,
+  // just like keystrokes. Their payload is not a composer draft.
+  if (kind === ']' || kind === 'P') {
+    for (let i = index + 2; i < data.length; i++) {
+      if (data[i] === '\x07') return i;
+      if (data[i] === '\x1b' && data[i + 1] === '\\') return i + 1;
+    }
+    return data.length - 1;
+  }
+  if (kind === '[' || kind === 'O') {
     let i = index + 2;
     while (i < data.length) {
       if (isCsiTerminator(data[i])) return i;
@@ -15,9 +25,17 @@ function skipEscapeSequence(data: string, index: number): number {
   return index;
 }
 
-function isFocusEventSequence(data: string, start: number, end: number): boolean {
+function isTerminalReport(data: string, start: number, end: number): boolean {
   const seq = data.slice(start, end + 1);
-  return seq === '\x1b[I' || seq === '\x1b[O';
+  return (
+    seq === '\x1b[I' ||
+    seq === '\x1b[O' ||
+    seq.startsWith('\x1b]') ||
+    seq.startsWith('\x1bP') ||
+    // Device attributes, cursor position, status and keyboard-protocol replies.
+    // eslint-disable-next-line no-control-regex
+    /^\x1b\[(?:[?>]?[\d;]*c|\??\d+;\d+R|\d+n|\?\d+u)$/.test(seq)
+  );
 }
 
 export function hasTerminalUserActivity(data: string): boolean {
@@ -25,7 +43,7 @@ export function hasTerminalUserActivity(data: string): boolean {
     const ch = data[i];
     if (ch === '\x1b') {
       const end = skipEscapeSequence(data, i);
-      if (!isFocusEventSequence(data, i, end)) return true;
+      if (!isTerminalReport(data, i, end)) return true;
       i = end;
     } else if (ch === '\r' || ch === '\n' || ch === '\x03' || ch === '\x15') {
       return true;

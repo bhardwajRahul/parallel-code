@@ -34,6 +34,27 @@ describe('nextTerminalInputPending', () => {
     expect(nextTerminalInputPending(false, '\x1b[O')).toBe(false);
   });
 
+  it.each([
+    '\x1b]10;rgb:ffff/ffff/ffff\x1b\\',
+    '\x1b]11;rgb:0000/0000/0000\x07',
+    '\x1bP>|xterm.js(5.5.0)\x1b\\',
+    '\x1b[?1;2c',
+    '\x1b[>0;276;0c',
+    '\x1b[1;1R',
+    '\x1b[?1u',
+  ])('ignores automatic terminal reply %j without changing a draft', (reply) => {
+    expect(nextTerminalInputPending(false, reply)).toBe(false);
+    expect(nextTerminalInputPending(true, reply)).toBe(true);
+    expect(hasTerminalUserActivity(reply)).toBe(false);
+    expect(nextTerminalInputPending(false, `${reply}hello`)).toBe(true);
+    expect(hasTerminalUserActivity(`${reply}hello`)).toBe(true);
+  });
+
+  it('does not mistake application cursor keys for typed text', () => {
+    expect(nextTerminalInputPending(false, '\x1bOA')).toBe(false);
+    expect(hasTerminalUserActivity('\x1bOA')).toBe(true);
+  });
+
   it('treats non-focus terminal input as user activity', () => {
     expect(hasTerminalUserActivity('hello')).toBe(true);
     expect(hasTerminalUserActivity('\r')).toBe(true);

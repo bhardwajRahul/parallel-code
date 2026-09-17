@@ -1,4 +1,13 @@
-import { Show, For, createSignal, createEffect, onMount, onCleanup, untrack } from 'solid-js';
+import {
+  batch,
+  Show,
+  For,
+  createSignal,
+  createEffect,
+  onMount,
+  onCleanup,
+  untrack,
+} from 'solid-js';
 import type { TranscriptMarks } from '../investigation/transcript';
 
 import {
@@ -21,11 +30,15 @@ import {
   toggleAITerminalLayout,
 } from '../store/store';
 import { markDirty } from '../lib/terminalFitManager';
-import { isAgentAskingQuestion } from '../store/taskStatus';
+import { isAgentAskingQuestion, isAgentIdle } from '../store/taskStatus';
 import { warn as logWarn } from '../lib/log';
 import { InfoBar } from './InfoBar';
 import { PromptHistory } from './PromptHistory';
 import { TerminalView } from './TerminalView';
+import { AgentChatView } from './AgentChatView';
+import { isAgentChat, agentChatProvider, agentChatUnavailableReason } from '../store/agent-chat';
+import { setStore } from '../store/core';
+import { saveState } from '../store/persistence';
 import { Dialog } from './Dialog';
 import { CloseIcon } from './icons';
 import { theme } from '../lib/theme';
@@ -33,6 +46,7 @@ import { sf } from '../lib/fontScale';
 import { invoke } from '../lib/ipc';
 import { getTaskDockerOverlayLabel } from '../lib/docker';
 import { IPC } from '../../electron/ipc/channels';
+import { codexResumeId } from '../../electron/shared/codex-resume';
 import { createHighlightedMarkdown } from '../lib/marked-shiki';
 import type { Task } from '../store/types';
 import type { AgentDef } from '../ipc/types';
@@ -116,6 +130,64 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
   const [mdViewerOpen, setMdViewerOpen] = createSignal(false);
 
   const firstAgentId = () => props.task.agentIds[0] ?? '';
+  const [switchingView, setSwitchingView] = createSignal(false);
+  const [viewError, setViewError] = createSignal('');
+  const currentView = () => (isAgentChat(props.task, firstAgentId()) ? 'chat' : 'terminal');
+  const codexHandoff = () => agentChatProvider(firstAgentId()) === 'codex';
+  const switchBlockedReason = () => {
+    if (switchingView()) return 'Switching conversation…';
+    const unavailable = agentChatUnavailableReason(props.task);
+    if (unavailable) return unavailable;
+    if (currentView() === 'chat') {
+      const state = store.agents[firstAgentId()]?.chatState;
+      if (state?.requests.length) return 'Resolve the pending request before switching views';
+      if (state?.status === 'working' || state?.status === 'starting')
+        return 'Finish or stop the response before switching views';
+    } else if (codexHandoff()) {
+      if (props.task.initialPrompt) return 'Wait for the queued prompt before switching views';
+      if (props.task.terminalInputPending)
+        return 'Send or clear the terminal draft before switching views';
+      if (!isAgentIdle(firstAgentId()) || isAgentAskingQuestion(firstAgentId()))
+        return 'Wait for Codex to finish and resolve pending requests before switching views';
+    }
+    return '';
+  };
+  async function switchView(mode: 'chat' | 'terminal') {
+    if (currentView() === mode || switchBlockedReason()) return;
+    const agentId = firstAgentId();
+    const taskId = props.task.id;
+    setSwitchingView(true);
+    setViewError('');
+    try {
+      if (codexHandoff()) {
+        const session = await invoke<NonNullable<Task['codexChatHandoff']>>(IPC.AgentChat, {
+          action: mode === 'chat' ? 'handoffToChat' : 'handoffToTerminal',
+          agentId,
+        });
+        if (!store.tasks[taskId] || !store.agents[agentId]) return;
+        batch(() => {
+          if (mode === 'chat') {
+            setStore('tasks', taskId, 'codexChatThreadId', session.threadId);
+            setStore('tasks', taskId, 'codexChatHandoff', undefined);
+          } else {
+            setStore('tasks', taskId, 'codexChatHandoff', {
+              threadId: session.threadId ?? props.task.codexChatThreadId,
+              model: session.model,
+              reasoningEffort: session.reasoningEffort,
+            });
+            restartAgent(agentId, true);
+          }
+          setStore('tasks', taskId, 'mainAgentView', mode);
+        });
+      } else setStore('tasks', taskId, 'mainAgentView', mode);
+      selectAgent(agentId);
+      void saveState();
+    } catch (error) {
+      setViewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSwitchingView(false);
+    }
+  }
   const selectedAgent = () =>
     store.agents[props.selectedAgentId] ?? store.agents[firstAgentId()] ?? undefined;
 
@@ -402,9 +474,52 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
                 </button>
               </Show>
               <AddAgentMenu taskId={props.task.id} />
+              <Show when={agentChatProvider(firstAgentId())}>
+                <div
+                  class="agent-view-switch"
+                  role="group"
+                  aria-label="Main agent view"
+                  aria-busy={switchingView()}
+                >
+                  <For each={['chat', 'terminal'] as const}>
+                    {(mode) => {
+                      const selected = () => currentView() === mode;
+                      const blocked = () => !selected() && !!switchBlockedReason();
+                      return (
+                        <button
+                          type="button"
+                          aria-label={`Show main agent ${mode}`}
+                          aria-pressed={selected()}
+                          disabled={blocked()}
+                          title={
+                            blocked()
+                              ? switchBlockedReason()
+                              : mode === 'chat'
+                                ? codexHandoff()
+                                  ? 'Continue this conversation in Chat'
+                                  : 'Open a separate Claude chat in this worktree'
+                                : 'Open the terminal conversation'
+                          }
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void switchView(mode);
+                          }}
+                        >
+                          {mode === 'chat' ? 'Chat' : 'Terminal'}
+                        </button>
+                      );
+                    }}
+                  </For>
+                </div>
+              </Show>
             </div>
           </div>
         </InfoBar>
+        <Show when={viewError()}>
+          <div class="agent-view-error" role="alert">
+            {viewError()}
+          </div>
+        </Show>
         <div
           class="agent-terminal-row"
           classList={{ 'agent-terminal-row-tabs': tabsMode() }}
@@ -584,6 +699,18 @@ function AgentTerminalPane(props: {
 
   const dockerOverlayLabel = () => getTaskDockerOverlayLabel(props.task.dockerSource);
   const agent = () => store.agents[props.agentId];
+  const [terminalOpened, setTerminalOpened] = createSignal(
+    untrack(() => !isAgentChat(props.task, props.agentId)),
+  );
+  let terminalFocus: (() => void) | undefined;
+  let chatFocus: (() => void) | undefined;
+  const focusCurrentView = () => {
+    if (isAgentChat(props.task, props.agentId)) chatFocus?.();
+    else terminalFocus?.();
+  };
+  createEffect(() => {
+    if (!isAgentChat(props.task, props.agentId)) setTerminalOpened(true);
+  });
 
   return (
     <div
@@ -638,7 +765,7 @@ function AgentTerminalPane(props: {
       <Show when={agent()}>
         {(a) => (
           <>
-            <Show when={a().status === 'exited'}>
+            <Show when={a().status === 'exited' && !isAgentChat(props.task, props.agentId)}>
               <div
                 class="exit-badge"
                 title={a().lastOutput.length ? a().lastOutput.join('\n') : undefined}
@@ -685,58 +812,104 @@ function AgentTerminalPane(props: {
                 </Show>
               </div>
             </Show>
-            <Show when={`${a().id}:${a().generation}`} keyed>
-              <TerminalView
-                taskId={props.task.id}
-                agentId={a().id}
-                visible={props.visible}
-                isFocused={isPanelFocused(props.task.id, aiTerminalPanelId(props.agentId))}
-                command={a().def.command}
-                args={buildTaskAgentArgs(a().def, props.task, a().resumed)}
-                cwd={props.task.worktreePath}
-                envFile={store.agentEnvFiles[a().def.id]}
-                stepsEnabled={props.task.stepsEnabled}
-                dockerMode={
-                  props.task.dockerMode ||
-                  Boolean(
-                    props.task.coordinatedBy && store.tasks[props.task.coordinatedBy]?.dockerMode,
-                  )
-                }
-                dockerImage={
-                  props.task.dockerMode
-                    ? props.task.dockerImage
-                    : props.task.coordinatedBy
-                      ? store.tasks[props.task.coordinatedBy]?.dockerImage
-                      : undefined
-                }
-                dockerMountWorktreeParent={
-                  (props.task.coordinatorMode && props.task.dockerMode) ||
-                  Boolean(
-                    props.task.coordinatedBy && store.tasks[props.task.coordinatedBy]?.dockerMode,
-                  )
-                }
-                attachExisting={a().attachExisting}
-                preserveSessionOnCleanup
-                onExit={(code) => {
-                  if (
-                    a().resumed &&
-                    code.exit_code !== 0 &&
-                    isResumeArgsFailure(a().def.command, code.last_output)
-                  ) {
-                    // Resume args failed (e.g. Claude's "No conversation to continue");
-                    // fall back to a fresh start with normal args.
-                    restartAgent(a().id, false);
-                    return;
-                  }
-                  markAgentExited(a().id, code);
+            <Show when={isAgentChat(props.task, props.agentId)}>
+              <AgentChatView
+                task={props.task}
+                agentId={props.agentId}
+                onReady={(focus) => {
+                  chatFocus = focus;
+                  props.onReady(props.agentId, focusCurrentView);
                 }}
-                onData={(data) => markAgentOutput(a().id, data, props.task.id)}
-                onFileLink={props.onFileLink}
-                onPromptDetected={(text) => setLastPrompt(props.task.id, text, props.agentId)}
-                onReady={(focusFn) => props.onReady(a().id, focusFn)}
-                onStepNavReady={props.onStepNavReady}
-                fontSize={13}
               />
+            </Show>
+            <Show when={terminalOpened()}>
+              <div
+                style={{ display: isAgentChat(props.task, props.agentId) ? 'none' : 'contents' }}
+              >
+                <Show when={`${a().id}:${a().generation}`} keyed>
+                  <TerminalView
+                    taskId={props.task.id}
+                    agentId={a().id}
+                    visible={props.visible && !isAgentChat(props.task, props.agentId)}
+                    isFocused={
+                      !isAgentChat(props.task, props.agentId) &&
+                      isPanelFocused(props.task.id, aiTerminalPanelId(props.agentId))
+                    }
+                    command={a().def.command}
+                    args={buildTaskAgentArgs(a().def, props.task, a().resumed, a().id)}
+                    cwd={props.task.worktreePath}
+                    envFile={store.agentEnvFiles[a().def.id]}
+                    stepsEnabled={props.task.stepsEnabled}
+                    dockerMode={
+                      props.task.dockerMode ||
+                      Boolean(
+                        props.task.coordinatedBy &&
+                        store.tasks[props.task.coordinatedBy]?.dockerMode,
+                      )
+                    }
+                    dockerImage={
+                      props.task.dockerMode
+                        ? props.task.dockerImage
+                        : props.task.coordinatedBy
+                          ? store.tasks[props.task.coordinatedBy]?.dockerImage
+                          : undefined
+                    }
+                    dockerMountWorktreeParent={
+                      (props.task.coordinatorMode && props.task.dockerMode) ||
+                      Boolean(
+                        props.task.coordinatedBy &&
+                        store.tasks[props.task.coordinatedBy]?.dockerMode,
+                      )
+                    }
+                    attachExisting={a().attachExisting}
+                    preserveSessionOnCleanup
+                    onExit={(code) => {
+                      if (
+                        a().resumed &&
+                        code.exit_code !== 0 &&
+                        isResumeArgsFailure(a().def.command, code.last_output)
+                      ) {
+                        // Resume args failed (e.g. Claude's "No conversation to continue");
+                        // fall back to a fresh start with normal args.
+                        restartAgent(a().id, false);
+                        return;
+                      }
+                      if (
+                        props.task.mainAgentView !== 'chat' &&
+                        props.task.agentIds[0] === a().id &&
+                        a().def.id === 'codex' &&
+                        props.task.codexChatHandoff
+                      ) {
+                        const threadId =
+                          code.exit_code === 0 && (!code.signal || code.signal === '0')
+                            ? codexResumeId(code.last_output.join('\n'))
+                            : undefined;
+                        // /new and /model in the CLI may change the session or its settings.
+                        // Keep only its confirmed final ID; let Codex restore the native settings.
+                        setStore(
+                          'tasks',
+                          props.task.id,
+                          'codexChatHandoff',
+                          threadId
+                            ? { threadId, model: undefined, reasoningEffort: undefined }
+                            : undefined,
+                        );
+                        void saveState();
+                      }
+                      markAgentExited(a().id, code);
+                    }}
+                    onData={(data) => markAgentOutput(a().id, data, props.task.id)}
+                    onFileLink={props.onFileLink}
+                    onPromptDetected={(text) => setLastPrompt(props.task.id, text, props.agentId)}
+                    onReady={(focusFn) => {
+                      terminalFocus = focusFn;
+                      props.onReady(a().id, focusCurrentView);
+                    }}
+                    onStepNavReady={props.onStepNavReady}
+                    fontSize={13}
+                  />
+                </Show>
+              </div>
             </Show>
           </>
         )}

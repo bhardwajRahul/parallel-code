@@ -24,6 +24,7 @@ describe('renderer Content-Security-Policy', () => {
     expect(RENDERER_CSP).toContain("object-src 'none'");
     expect(RENDERER_CSP).toContain("base-uri 'none'");
     expect(RENDERER_CSP).toContain("frame-src 'none'");
+    expect(RENDERER_CSP).toContain("connect-src 'self' parallel-chat:");
     expect(RENDERER_CSP).not.toContain("'unsafe-eval'");
     expect(RENDERER_CSP).not.toMatch(/script-src[^;]*unsafe-inline/);
   });

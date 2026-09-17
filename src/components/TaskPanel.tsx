@@ -37,6 +37,7 @@ import { TaskCanvasPanel } from './TaskCanvasPanel';
 import { TaskStepsSection } from './TaskStepsSection';
 import { TaskCurrentStateLine } from './TaskCurrentStateLine';
 import { TaskAITerminal } from './TaskAITerminal';
+import { isAgentChat } from '../store/agent-chat';
 import { TaskClosingOverlay } from './TaskClosingOverlay';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
@@ -224,7 +225,7 @@ export function TaskPanel(props: TaskPanelProps) {
       autoFocusTimer = setTimeout(() => {
         autoFocusTimer = undefined;
         if (!store.focusedPanel[id] && !panelRef.contains(document.activeElement)) {
-          if (store.showPromptInput) {
+          if (store.showPromptInput && !isAgentChat(props.task, firstAgentId())) {
             promptRef?.focus();
           } else {
             setTaskFocusedPanel(id, 'ai-terminal');
@@ -577,7 +578,10 @@ export function TaskPanel(props: TaskPanelProps) {
               shellSectionChild,
               aiTerminalChild,
               ...(props.task.stepsEnabled ? [stepsSectionChild] : []),
-              ...(store.showPromptInput || props.task.coordinatorMode ? [promptInputChild] : []),
+              ...(!isAgentChat(props.task, firstAgentId()) &&
+              (store.showPromptInput || props.task.coordinatorMode)
+                ? [promptInputChild]
+                : []),
             ]}
           />
         }
@@ -597,7 +601,8 @@ export function TaskPanel(props: TaskPanelProps) {
                   absorberIds={['ai-terminal']}
                   children={[
                     aiTerminalChild,
-                    ...(store.showPromptInput || props.task.coordinatorMode
+                    ...(!isAgentChat(props.task, firstAgentId()) &&
+                    (store.showPromptInput || props.task.coordinatorMode)
                       ? [promptInputChild]
                       : []),
                   ]}
