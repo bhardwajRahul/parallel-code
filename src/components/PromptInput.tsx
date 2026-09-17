@@ -30,6 +30,7 @@ import {
   showNotification,
 } from '../store/store';
 import { clearStagedNotification, setTaskTerminalInputPendingFromQuestion } from '../store/tasks';
+import { taskUsesAgentChat } from '../store/agent-chat';
 import { isLandedTaskState } from '../store/landing';
 import { processAutoFireTick } from './autofire-tick';
 import {
@@ -695,13 +696,21 @@ export function PromptInput(props: PromptInputProps) {
 
   onMount(() => {
     props.handle?.({ getText: text, setText });
+  });
+
+  // This element is built even in chat mode, where it is never shown. AgentChatView claims
+  // the same keys for the composer the user can actually see, so stand aside while it does.
+  createEffect(() => {
+    if (taskUsesAgentChat(store.tasks[props.taskId])) return;
     const focusKey = `${props.taskId}:prompt`;
     const actionKey = `${props.taskId}:send-prompt`;
-    registerFocusFn(focusKey, () => textareaRef?.focus());
-    registerAction(actionKey, () => handleSend());
+    const focus = () => textareaRef?.focus();
+    const send = () => handleSend();
+    registerFocusFn(focusKey, focus);
+    registerAction(actionKey, send);
     onCleanup(() => {
-      unregisterFocusFn(focusKey);
-      unregisterAction(actionKey);
+      unregisterFocusFn(focusKey, focus);
+      unregisterAction(actionKey, send);
     });
   });
 

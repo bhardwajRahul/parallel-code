@@ -197,11 +197,13 @@ export function AgentChatView(props: {
     props.onReady?.(() => actions?.focus());
     const focusKey = `${props.task.id}:prompt`;
     const actionKey = `${props.task.id}:send-prompt`;
-    registerFocusFn(focusKey, () => actions?.focus());
-    registerAction(actionKey, () => actions?.send());
+    const focus = () => actions?.focus();
+    const send = () => actions?.send();
+    registerFocusFn(focusKey, focus);
+    registerAction(actionKey, send);
     onCleanup(() => {
-      unregisterFocusFn(focusKey);
-      unregisterAction(actionKey);
+      unregisterFocusFn(focusKey, focus);
+      unregisterAction(actionKey, send);
     });
     void import('./chat/CopilotChat.react')
       .then((module) => {

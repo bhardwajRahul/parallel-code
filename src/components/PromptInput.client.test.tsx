@@ -74,17 +74,19 @@ function mount(taskId: string): HTMLTextAreaElement {
 
 describe('PromptInput draft persistence', () => {
   it('shows the draft restored from the store on mount', () => {
-    storeMock.tasks = { 'task-1': { id: 'task-1', promptDraft: 'half-written thought' } };
+    storeMock.tasks = {
+      'task-1': { id: 'task-1', agentIds: ['agent-1'], promptDraft: 'half-written thought' },
+    };
     expect(mount('task-1').value).toBe('half-written thought');
   });
 
   it('starts empty when the task has no saved draft', () => {
-    storeMock.tasks = { 'task-1': { id: 'task-1' } };
+    storeMock.tasks = { 'task-1': { id: 'task-1', agentIds: ['agent-1'] } };
     expect(mount('task-1').value).toBe('');
   });
 
   it('writes typed text back to the store so autosave persists it', () => {
-    storeMock.tasks = { 'task-1': { id: 'task-1' } };
+    storeMock.tasks = { 'task-1': { id: 'task-1', agentIds: ['agent-1'] } };
     const textarea = mount('task-1');
 
     textarea.value = 'remember the migration';
@@ -94,7 +96,7 @@ describe('PromptInput draft persistence', () => {
   });
 
   it('clears the stored draft once the prompt is sent', async () => {
-    storeMock.tasks = { 'task-1': { id: 'task-1', promptDraft: 'send me' } };
+    storeMock.tasks = { 'task-1': { id: 'task-1', agentIds: ['agent-1'], promptDraft: 'send me' } };
     const textarea = mount('task-1');
 
     textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));

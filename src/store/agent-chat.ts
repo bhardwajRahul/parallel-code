@@ -25,3 +25,8 @@ export function isAgentChat(task: Task | undefined, agentId: string): boolean {
     supportsAgentChat(task)
   );
 }
+
+/** The task's composer is the chat view, so the terminal prompt is not the one on screen. */
+export function taskUsesAgentChat(task: Task | undefined): boolean {
+  return !!task && isAgentChat(task, task.agentIds[0]);
+}
