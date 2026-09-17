@@ -396,6 +396,7 @@ export function TaskPanel(props: TaskPanelProps) {
     <TaskCanvasPanel
       task={props.task}
       agentId={firstAgentId()}
+      isActive={props.isActive}
       reasoning={reasoningGraphEl()}
       mindmap={mindMapEl()}
     />

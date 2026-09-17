@@ -1,4 +1,5 @@
 import { render } from 'solid-js/web';
+import { createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EditorView } from '@codemirror/view';
@@ -141,10 +142,13 @@ function baseTask(canvasPath?: string): Task {
 
 function mount(canvasPath?: string) {
   const [task, setTask] = createStore<Task>(baseTask(canvasPath));
+  const [active, setActive] = createSignal(true);
   const container = document.createElement('div');
   document.body.append(container);
-  disposers.push(render(() => <TaskCanvasPanel task={task} agentId="agent-1" />, container));
-  return { container, setTask };
+  disposers.push(
+    render(() => <TaskCanvasPanel task={task} agentId="agent-1" isActive={active()} />, container),
+  );
+  return { container, setTask, setActive };
 }
 
 function closeActiveCanvasTab(): void {
@@ -292,6 +296,28 @@ describe('TaskCanvasPanel', () => {
     expect(canvas?.dataset.fullscreen).toBe('false');
   });
 
+  it('leaves fullscreen when the task stops being the active one', async () => {
+    mockIpc();
+    const { container, setActive } = mount('docs/design.md');
+    await editorLine(container, 'Keep state in one store.');
+    const editor = container.querySelector<HTMLElement>('[data-testid="canvas-editor"]');
+    editor?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const item = await waitFor(() =>
+      [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+        (button) => button.textContent === 'Open in fullscreen editor',
+      ),
+    );
+    item.click();
+    const canvas = container.querySelector<HTMLElement>('[data-testid="task-canvas"]');
+    expect(canvas?.dataset.fullscreen).toBe('true');
+
+    setActive(false);
+
+    // The panel stays mounted per task, so a left-behind fixed overlay would cover the
+    // task the user switched to — and Escape no longer reaches it once focus moves away.
+    expect(canvas?.dataset.fullscreen).toBe('false');
+  });
+
   it('returns focus from the editor to the canvas with Escape without losing edits', async () => {
     mockIpc();
     const { container } = mount('docs/design.md');
@@ -361,6 +387,7 @@ describe('TaskCanvasPanel', () => {
             <TaskCanvasPanel
               task={{ ...baseTask(), canvasTabs: [{ kind }], canvasActiveTab: kind }}
               agentId="agent-1"
+              isActive={true}
               reasoning={kind === 'reasoning' ? content : undefined}
               mindmap={kind === 'mindmap' ? content : undefined}
             />

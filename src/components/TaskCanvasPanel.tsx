@@ -33,6 +33,7 @@ const isDocumentTab = (tab: CanvasTab): tab is DocumentTab => 'path' in tab;
 interface TaskCanvasPanelProps {
   task: Task;
   agentId: string;
+  isActive: boolean;
   reasoning?: JSX.Element;
   mindmap?: JSX.Element;
 }
@@ -60,6 +61,12 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
   // The tab a close was asked for while it had unsaved edits; null for the column.
   const [confirmClose, setConfirmClose] = createSignal<string | null | false>(false);
   const [fullscreen, setFullscreen] = createSignal(false);
+  // Fullscreen is a fixed, viewport-filling overlay, and this panel stays mounted per task.
+  // Left set, a background task's canvas would cover the task the user switched to, and its
+  // Escape handler is scoped to panelRef, so it no longer fires once focus has moved away.
+  createEffect(() => {
+    if (!props.isActive) setFullscreen(false);
+  });
   const [contextMenu, setContextMenu] = createSignal<{
     path: string;
     x: number;
