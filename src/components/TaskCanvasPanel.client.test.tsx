@@ -360,7 +360,9 @@ describe('TaskCanvasPanel', () => {
     expect(document.activeElement).toBe(editor);
 
     disposers.pop()?.();
-    expect(unregisterFocusFn).toHaveBeenCalledWith('task-1:canvas');
+    // Unregisters the function it registered, not just the key: another owner of the same key
+    // must keep its own registration.
+    expect(unregisterFocusFn).toHaveBeenCalledWith('task-1:canvas', focus);
   });
 
   it.each(['reasoning', 'mindmap'] as const)(
