@@ -539,6 +539,35 @@ it('revokes the canvas token and its file when the PTY itself fails to spawn', a
   ).toBe(false);
 });
 
+it('leaves a same-id restart its canvas token when the spawn it replaced is cancelled', async () => {
+  vi.spyOn(fs, 'accessSync').mockImplementation(() => {});
+  registerAllHandlers(testWindow());
+  const server = mockServer();
+  vi.spyOn(remote, 'startRemoteServer').mockResolvedValue(asHandle(server));
+  let cancelFirst!: (error: Error) => void;
+  spawnAgent.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        cancelFirst = reject;
+      }),
+  );
+  const first = handlers.get(IPC.SpawnAgent)?.(undefined, canvasSpawn('cleanup-test-agent'));
+  await tick();
+  const restart = await handlers.get(IPC.SpawnAgent)?.(
+    undefined,
+    canvasSpawn('cleanup-test-agent'),
+  );
+  expect(restart).toEqual({ canvasTools: true });
+  cancelFirst(new Error('Agent startup cancelled'));
+  await expect(first).rejects.toThrow('Agent startup cancelled');
+  // The cancelled spawn owns nothing any more; tearing down would strand the restart
+  // with a revoked token and a deleted --mcp-config file.
+  expect(server.unregisterCanvasAgent).not.toHaveBeenCalled();
+  expect(
+    fs.existsSync(path.join(os.tmpdir(), 'parallel-code-canvas-cleanup-test-agent.json')),
+  ).toBe(true);
+});
+
 it('shares one listener between a manual start and a canvas spawn that overlap', async () => {
   vi.spyOn(fs, 'accessSync').mockImplementationOnce(() => {});
   registerAllHandlers(testWindow());

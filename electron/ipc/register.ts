@@ -718,8 +718,11 @@ export function registerAllHandlers(win: BrowserWindow): void {
         await spawnAgent(win, canvasTools ? { ...args, canvasTools: true } : args);
       } catch (error) {
         // No PTY exit will ever arrive for this agent; revoke the token and its file now.
-        releaseCanvas?.();
-        removeCanvasConfig(args.agentId);
+        // A same-id restart that already took over owns them, so only the current spawn cleans up.
+        if (pendingSpawns.get(args.agentId) === pending) {
+          releaseCanvas?.();
+          removeCanvasConfig(args.agentId);
+        }
         throw error;
       }
       if (!args.isShell && args.cwd) {
