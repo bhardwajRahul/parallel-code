@@ -395,6 +395,26 @@ it('rejects self-loop relations and duplicate (source, target, kind) triples', (
   ).not.toThrow();
 });
 
+it('rejects a changed relation that duplicates one stored after it', () => {
+  const graph = agent(base(), [
+    {
+      type: 'insert_relation',
+      relation: { id: 'other', source: 'hyp', target: 'peer', kind: 'fits' },
+    },
+  ]);
+  // 'link' is stored before 'other', so checking it against only the links seen so far
+  // would wave this through and persist two identical edges.
+  expect(() =>
+    agent(graph, [
+      {
+        type: 'update_relation',
+        id: 'link',
+        changes: { source: 'hyp', target: 'peer', kind: 'fits' },
+      },
+    ]),
+  ).toThrow('Relation link duplicates link (hyp → peer, fits).');
+});
+
 it('keeps persisted relations that predate the strict checks editable and replayable', () => {
   const persisted: GraphDocument = {
     ...base(),

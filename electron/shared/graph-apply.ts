@@ -107,19 +107,20 @@ const linkKey = (link: MapLink) => `${link.id}\0${link.source}\0${link.target}\0
  * Self-loops and duplicate (source, target, kind) triples are rejected only when a batch
  * introduces them: graphs persisted before these checks may hold some, and must stay editable.
  */
+const pairKey = (link: MapLink) => `${link.source}\0${link.target}\0${link.kind ?? ''}`;
 function assertRelationsDistinct(before: MapLink[], after: MapLink[]): void {
   const untouched = new Set(before.map(linkKey));
-  const seen = new Set<string>();
+  // Count the whole batch up front: a changed relation may duplicate one stored after it,
+  // which comparing against only the links seen so far would miss.
+  const counts = new Map<string, number>();
+  for (const link of after) counts.set(pairKey(link), (counts.get(pairKey(link)) ?? 0) + 1);
   for (const link of after) {
-    const key = `${link.source}\0${link.target}\0${link.kind ?? ''}`;
-    if (!untouched.has(linkKey(link))) {
-      assert(link.source !== link.target, `Relation ${link.id} links ${link.source} to itself.`);
-      assert(
-        !seen.has(key),
-        `Relation ${link.id} duplicates link (${link.source} → ${link.target}, ${link.kind ?? 'untyped'}). Update the existing relation instead.`,
-      );
-    }
-    seen.add(key);
+    if (untouched.has(linkKey(link))) continue;
+    assert(link.source !== link.target, `Relation ${link.id} links ${link.source} to itself.`);
+    assert(
+      (counts.get(pairKey(link)) ?? 0) <= 1,
+      `Relation ${link.id} duplicates link (${link.source} → ${link.target}, ${link.kind ?? 'untyped'}). Update the existing relation instead.`,
+    );
   }
 }
 export function applyMapOperations<D extends GraphDocument>(
