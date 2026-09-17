@@ -107,9 +107,23 @@ export function getTaskFocusedPanel(taskId: string): string {
  * focused panel is still recorded in `focusedPanel[taskId]`.
  */
 export function isPanelFocused(taskId: string, panel: string): boolean {
+  return taskOwnsFocus(taskId) && store.focusedPanel[taskId] === panel;
+}
+
+/** Whether focus is inside this task at all, rather than the sidebar or another task. */
+function taskOwnsFocus(taskId: string): boolean {
   if (store.sidebarFocused || store.placeholderFocused || store.newTaskPanelFocused) return false;
-  if (store.activeTaskId !== taskId) return false;
-  return store.focusedPanel[taskId] === panel;
+  return store.activeTaskId === taskId;
+}
+
+/**
+ * Like `isPanelFocused`, but a task whose focused panel was never recorded counts
+ * as focused on its default panel. Use this where an unrecorded panel still has to
+ * be able to claim the keyboard — `focusedPanel` stays unset for a freshly active
+ * task whose prompt input took focus instead.
+ */
+export function isPanelFocusedOrDefault(taskId: string, panel: string): boolean {
+  return taskOwnsFocus(taskId) && getTaskFocusedPanel(taskId) === panel;
 }
 
 export function isPanelFocusedPrefix(taskId: string, prefix: string): boolean {

@@ -12,14 +12,11 @@ import {
 import type { Message } from '@ag-ui/core';
 import { HttpAgent } from '@ag-ui/client';
 import type { ChatConnection } from '../../../electron/shared/chat-messages';
-import type {
-  ChatItem,
-  ChatRequest,
-  AgentChatState,
-} from '../../../electron/shared/agent-chat-types';
+import type { ChatItem, AgentChatState } from '../../../electron/shared/agent-chat-types';
 import libraryCss from '@copilotkit/react-core/v2/styles.css?inline';
 import chatCss from './chat.css?inline';
 import { useReveal } from './use-reveal.react';
+import { RequestCard, type RespondToRequest } from './RequestCard.react';
 
 export interface ChatActions {
   focus: () => void;
@@ -33,16 +30,14 @@ export interface ChatProps {
   draft: string;
   dark: boolean;
   disabled: boolean;
+  /** This chat's panel is the one the user is working in; only it may claim focus. */
+  active: boolean;
   onSelectModel: (model: string, reasoningEffort?: string) => Promise<void>;
   onReloadModels: () => Promise<void>;
   onDraft: (text: string) => void;
   onSend: (text: string, deliver: (text: string) => Promise<void>) => Promise<void>;
   onStop: () => Promise<void>;
-  onRespond: (
-    request: ChatRequest,
-    decision: 'accept' | 'decline',
-    answers: Record<string, string>,
-  ) => Promise<void>;
+  onRespond: RespondToRequest;
   onActions: (actions: ChatActions) => void;
 }
 
@@ -104,94 +99,6 @@ const AssistantMessage = Object.assign(function AssistantMessage(
     );
   return <CopilotChatAssistantMessage {...props} markdownRenderer={{ content: text }} />;
 }, CopilotChatAssistantMessage);
-
-function RequestCard({
-  request,
-  respond,
-  agentName,
-}: {
-  agentName: string;
-  request: ChatRequest;
-  respond: ChatProps['onRespond'];
-}) {
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [selectedOptions, setSelectedOptions] = useState<Record<string, string[]>>({});
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState('');
-  async function submit(decision: 'accept' | 'decline') {
-    setPending(true);
-    setError('');
-    try {
-      await respond(request, decision, answers);
-    } catch (error) {
-      setError(String(error));
-    } finally {
-      setPending(false);
-    }
-  }
-  return (
-    <section className="chat-request" aria-label={`${agentName} request`}>
-      <strong>
-        {request.kind === 'question' ? `${agentName} needs your input` : 'Approval needed'}
-      </strong>
-      {request.kind === 'approval' && <pre>{request.text}</pre>}
-      {request.questions?.map((q) => (
-        <label key={q.id}>
-          {q.question}
-          <div className="chat-options">
-            {q.options.map((option) => (
-              <button
-                key={option.label}
-                title={option.description}
-                disabled={pending}
-                aria-pressed={
-                  q.multiSelect
-                    ? (selectedOptions[q.id]?.includes(option.label) ?? false)
-                    : answers[q.id] === option.label
-                }
-                onClick={() => {
-                  if (q.multiSelect) {
-                    const previous = selectedOptions[q.id] ?? [];
-                    const next = previous.includes(option.label)
-                      ? previous.filter((label) => label !== option.label)
-                      : [...previous, option.label];
-                    setSelectedOptions({ ...selectedOptions, [q.id]: next });
-                    setAnswers({ ...answers, [q.id]: next.join(', ') });
-                  } else setAnswers({ ...answers, [q.id]: option.label });
-                }}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          <input
-            aria-label={q.question}
-            type={q.isSecret ? 'password' : 'text'}
-            value={answers[q.id] ?? ''}
-            onChange={(e) => {
-              setAnswers({ ...answers, [q.id]: e.target.value });
-              setSelectedOptions({ ...selectedOptions, [q.id]: [] });
-            }}
-          />
-        </label>
-      ))}
-      <div className="chat-options">
-        <button
-          disabled={pending || request.questions?.some((q) => !answers[q.id]?.trim())}
-          onClick={() => void submit('accept')}
-        >
-          {request.kind === 'question' ? 'Submit answers' : 'Allow once'}
-        </button>
-        {request.kind === 'approval' && (
-          <button disabled={pending} onClick={() => void submit('decline')}>
-            Decline
-          </button>
-        )}
-      </div>
-      {error && <p role="alert">{error}</p>}
-    </section>
-  );
-}
 
 function ModelPicker({
   state,
@@ -308,16 +215,16 @@ function Conversation(props: ChatProps) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const container = useRef<HTMLDivElement>(null);
-  const active = useRef(true);
+  const mounted = useRef(true);
   const request = useRef<AbortController | undefined>(undefined);
   const cleanupSubmit = useRef(false);
   const current = useRef(props);
   current.current = props;
   const working = props.state.status === 'working';
   useEffect(() => {
-    active.current = true;
+    mounted.current = true;
     return () => {
-      active.current = false;
+      mounted.current = false;
       request.current?.abort();
       void agent.detachActiveRun();
     };
@@ -370,9 +277,9 @@ function Conversation(props: ChatProps) {
     try {
       await current.current.onSend(text.trim(), deliver);
     } catch (error) {
-      if (active.current) setError(String(error));
+      if (mounted.current) setError(String(error));
     } finally {
-      if (active.current) setSending(false);
+      if (mounted.current) setSending(false);
     }
   }
   useEffect(() => {
@@ -415,12 +322,14 @@ function Conversation(props: ChatProps) {
                 <div className="chat-composer-dock">
                   {props.state.requests.length > 0 && (
                     <div className="chat-requests" aria-label="Pending requests">
-                      {props.state.requests.map((request) => (
+                      {props.state.requests.map((request, index) => (
                         <RequestCard
                           key={`${typeof request.id}:${request.id}`}
                           request={request}
                           agentName={props.agentName}
                           respond={props.onRespond}
+                          autoFocus={props.active && index === 0}
+                          onResolved={() => container.current?.querySelector('textarea')?.focus()}
                         />
                       ))}
                     </div>

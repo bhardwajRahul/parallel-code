@@ -21,6 +21,8 @@ import './AgentChatView.css';
 export function AgentChatView(props: {
   task: Task;
   agentId: string;
+  /** Every tiled task keeps its chat mounted, so only the focused pane may take focus. */
+  active: boolean;
   onReady?: (focus: () => void) => void;
 }) {
   const provider = () => agentChatProvider(props.agentId);
@@ -162,6 +164,10 @@ export function AgentChatView(props: {
       draft: props.task.promptDraft ?? '',
       dark,
       disabled: isLandedTaskState(props.task.landingState),
+      // Read the focus state only while a request is pending. Every tiled task keeps
+      // its chat mounted, so subscribing unconditionally would re-render and deep-clone
+      // each one on any focus change elsewhere in the app.
+      active: snapshot.requests.length > 0 && props.active,
     });
   });
   const status = () =>

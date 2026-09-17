@@ -24,6 +24,8 @@ export interface ChatRequest {
   kind: 'approval' | 'question';
   text: string;
   questions?: ChatQuestion[];
+  /** The agent asked that approval not be one keystroke away; open the card on Decline. */
+  defaultToNo?: boolean;
 }
 
 export interface ChatModel {

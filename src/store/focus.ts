@@ -34,7 +34,7 @@ export {
   triggerFocus,
   unregisterFocusFn,
 } from './focused-panel';
-export { isPanelFocused, isPanelFocusedPrefix } from './focused-panel';
+export { isPanelFocused, isPanelFocusedOrDefault, isPanelFocusedPrefix } from './focused-panel';
 
 const actionRegistry = new Map<string, () => void>();
 

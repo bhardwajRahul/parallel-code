@@ -165,6 +165,24 @@ export function CommentIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function TerminalIcon(props: IconProps): JSX.Element {
+  return (
+    <SvgIcon {...props}>
+      <g
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.4"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect x="1.4" y="2.4" width="13.2" height="11.2" rx="1.6" />
+        <path d="M4.5 6.4 6.9 8.5 4.5 10.6" />
+        <path d="M8.9 10.9h2.9" />
+      </g>
+    </SvgIcon>
+  );
+}
+
 export function LinkIcon(props: IconProps): JSX.Element {
   return (
     <SvgIcon {...props}>

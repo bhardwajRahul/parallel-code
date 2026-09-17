@@ -192,6 +192,22 @@
 .chat-options button[aria-pressed='true'] {
   border-color: var(--chat-accent);
 }
+.chat-options button.chat-request-default {
+  background: var(--chat-accent);
+  border-color: var(--chat-accent);
+  color: var(--accent-text);
+}
+/* Only true while the card holds the keyboard — hidden otherwise, because Enter
+   then belongs to whatever does have focus (usually the composer). */
+.chat-request-hint {
+  display: none;
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+.chat-request:focus-within .chat-request-hint {
+  display: block;
+}
 .chat-ui button:disabled {
   opacity: 0.5;
   cursor: not-allowed;

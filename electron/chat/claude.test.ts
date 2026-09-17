@@ -7,13 +7,18 @@ import type {
   SessionMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { ClaudeChat } from './claude.js';
+import type { ChatStartOptions } from './types.js';
 
 const chats: ClaudeChat[] = [];
 afterEach(() => {
   chats.forEach((chat) => chat.stop());
   chats.length = 0;
 });
-function harness(history: SessionMessage[] = [], threadId?: string, env = process.env) {
+function harness(
+  history: SessionMessage[] = [],
+  threadId?: string,
+  overrides: Partial<ChatStartOptions> = {},
+) {
   const output = new PassThrough({ objectMode: true });
   const controls = {
     initializationResult: vi.fn(async () => ({})),
@@ -44,8 +49,9 @@ function harness(history: SessionMessage[] = [], threadId?: string, env = proces
       agentId: 'agent',
       command: '/usr/bin/claude',
       cwd: '/worktree',
-      env: env as Record<string, string>,
+      env: process.env as Record<string, string>,
       threadId,
+      ...overrides,
     },
     publish,
   );
@@ -76,10 +82,12 @@ describe('Claude chat adapter', () => {
       pathToClaudeCodeExecutable: '/usr/bin/claude',
       systemPrompt: { preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],
-      permissionMode: 'default',
-      allowDangerouslySkipPermissions: false,
       extraArgs: { 'replay-user-messages': null },
     });
+    // --permission-mode outranks permissions.defaultMode in the user's own settings,
+    // so sending one would re-ask for everything their settings already auto-approve.
+    expect(h.options().permissionMode).toBeUndefined();
+    expect(h.options().allowDangerouslySkipPermissions).toBeUndefined();
     expect(h.options().sessionId).toBe(h.chat.state.threadId);
     expect(h.chat.state.models?.[0]).toMatchObject({
       model: 'claude-fixture',
@@ -88,6 +96,15 @@ describe('Claude chat adapter', () => {
     expect(h.chat.state.model).toBeUndefined(); // Don't guess before Claude reports its model.
     await h.emit({ type: 'system', subtype: 'init', model: 'claude-fixture' });
     expect(h.chat.state.model).toBe('claude-fixture');
+  });
+
+  it('bypasses permissions only for a task that opted out', async () => {
+    const h = harness([], undefined, { skipPermissions: true });
+    await h.chat.start();
+    expect(h.options()).toMatchObject({
+      permissionMode: 'bypassPermissions',
+      allowDangerouslySkipPermissions: true,
+    });
   });
 
   it('acknowledges prompts and reconciles partial and complete messages without duplicates', async () => {
@@ -169,6 +186,7 @@ describe('Claude chat adapter', () => {
       toolUseID: 'tool',
     });
     expect(h.chat.state.requests).toHaveLength(1);
+    expect(h.chat.state.requests[0].defaultToNo).toBe(false);
     const id = h.chat.state.requests[0].id;
     h.chat.respond(id, 'accept');
     await expect(pending).resolves.toEqual({ behavior: 'allow', updatedInput: input });
@@ -177,7 +195,9 @@ describe('Claude chat adapter', () => {
       signal: signal.signal,
       requestId: 'request',
       toolUseID: 'tool-2',
+      defaultToNo: true,
     });
+    expect(h.chat.state.requests[0].defaultToNo).toBe(true);
     signal.abort();
     await expect(cancelled).resolves.toMatchObject({ behavior: 'deny' });
     expect(h.chat.state.requests).toEqual([]);
@@ -252,7 +272,9 @@ describe('Claude chat adapter', () => {
   });
 
   it('refuses a task-specific config directory before opening a session', async () => {
-    const h = harness([], undefined, { ...process.env, CLAUDE_CONFIG_DIR: '/task/local' });
+    const h = harness([], undefined, {
+      env: { ...process.env, CLAUDE_CONFIG_DIR: '/task/local' } as Record<string, string>,
+    });
     await expect(h.chat.start()).rejects.toThrow('task-specific CLAUDE_CONFIG_DIR');
     expect(h.sdk.query).not.toHaveBeenCalled();
   });

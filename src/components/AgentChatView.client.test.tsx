@@ -118,7 +118,7 @@ afterEach(() => {
 
 describe('Codex chat view', () => {
   it('reattaches to the saved thread and preserves streamed state and new conversation ids', async () => {
-    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" />, container);
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     expect(mocks.invoke).toHaveBeenCalledWith(
       IPC.AgentChat,
       expect.objectContaining({
@@ -146,7 +146,7 @@ describe('Codex chat view', () => {
     setStore('agents', 'agent-1', 'def', 'id', 'claude-code');
     setStore('agents', 'agent-1', 'def', 'command', 'claude');
     setStore('tasks', 'task-1', 'claudeChatSessionId', 'claude-saved');
-    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" />, container);
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     await tick();
     expect(mocks.invoke).toHaveBeenCalledWith(
       IPC.AgentChat,
@@ -170,7 +170,7 @@ describe('Codex chat view', () => {
       'chatState',
       state({ requests: [{ id: 4, since: 1, kind: 'approval', text: 'Run npm test?' }] }),
     );
-    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" />, container);
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     await tick();
     expect(mocks.chatProps?.state.requests[0].text).toBe('Run npm test?');
     expect(mocks.invoke).not.toHaveBeenCalledWith(
@@ -188,8 +188,30 @@ describe('Codex chat view', () => {
     );
   });
 
+  it('lets only a focused panel with a pending request claim the keyboard', async () => {
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    await tick();
+    // Nothing to answer: stay out of the focus business entirely.
+    expect(mocks.chatProps?.active).toBe(false);
+    const request = { id: 4, since: 1, kind: 'approval' as const, text: 'Run npm test?' };
+    mocks.channel?.onmessage?.(state({ requests: [request] }));
+    expect(mocks.chatProps?.active).toBe(true);
+  });
+
+  it('never lets a background task’s request pull focus out of the active one', async () => {
+    const request = { id: 4, since: 1, kind: 'approval' as const, text: 'Run npm test?' };
+    setStore('agents', 'agent-1', 'chatState', state({ requests: [request] }));
+    dispose = render(
+      () => <AgentChatView task={task()} agentId="agent-1" active={false} />,
+      container,
+    );
+    await tick();
+    expect(mocks.chatProps?.state.requests).toHaveLength(1);
+    expect(mocks.chatProps?.active).toBe(false);
+  });
+
   it('keeps drafts on failure and clears only the accepted unchanged draft', async () => {
-    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" />, container);
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     await tick();
     const deliver = vi.fn(async () => undefined);
     mocks.sendPrompt.mockRejectedValueOnce(new Error('Disconnected'));
@@ -206,7 +228,7 @@ describe('Codex chat view', () => {
   });
 
   it('routes model choices and catalog refreshes to the same conversation', async () => {
-    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" />, container);
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     await tick();
     await mocks.chatProps?.onSelectModel('model-b', 'high');
     expect(mocks.invoke).toHaveBeenCalledWith(IPC.AgentChat, {
@@ -228,7 +250,7 @@ describe('Codex chat view', () => {
   it('updates the isolated view with theme changes and interruption', async () => {
     setStore('agents', 'agent-1', 'chatState', state({ status: 'working' }));
     setStore('themePreset', 'obsidian');
-    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" />, container);
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     await tick();
     expect(mocks.chatProps?.dark).toBe(true);
     setStore('themePreset', 'islands-light');

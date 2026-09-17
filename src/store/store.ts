@@ -111,6 +111,7 @@ export {
   aiTerminalPanelId,
   shellPanelId,
   isPanelFocused,
+  isPanelFocusedOrDefault,
   isPanelFocusedPrefix,
   focusSidebar,
   unfocusSidebar,

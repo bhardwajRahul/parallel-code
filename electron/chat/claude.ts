@@ -107,8 +107,15 @@ export class ClaudeChat implements AgentChat {
         includePartialMessages: true,
         extraArgs: { 'replay-user-messages': null },
         executable: 'node',
-        permissionMode: this.opts.skipPermissions ? 'bypassPermissions' : 'default',
-        allowDangerouslySkipPermissions: !!this.opts.skipPermissions,
+        // Send no permission mode unless the task opts out. The SDK turns this option
+        // into --permission-mode, a flag that outranks permissions.defaultMode in the
+        // user's settings, so passing 'default' re-asked for work they already allow.
+        ...(this.opts.skipPermissions
+          ? {
+              permissionMode: 'bypassPermissions' as const,
+              allowDangerouslySkipPermissions: true,
+            }
+          : {}),
         canUseTool: this.canUseTool,
         // Diagnostics can include private tool arguments once a session is running.
         // Keep the launch output only, and never forward the rest to the UI or log.
@@ -370,6 +377,8 @@ export class ClaudeChat implements AgentChat {
         since: Date.now(),
         kind: questions ? 'question' : 'approval',
         questions,
+        // Claude asks that this one never be approvable by a stray keystroke.
+        defaultToNo: options.defaultToNo === true,
         text: [
           options.decisionReason,
           `${tool}\n${JSON.stringify(input, null, 2)}`,

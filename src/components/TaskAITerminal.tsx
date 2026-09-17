@@ -22,6 +22,7 @@ import {
   setTaskFocusedPanel,
   aiTerminalPanelId,
   isPanelFocused,
+  isPanelFocusedOrDefault,
   setActiveAgent,
   setActiveTask,
   addAgentToTask,
@@ -40,7 +41,7 @@ import { isAgentChat, agentChatProvider, agentChatUnavailableReason } from '../s
 import { setStore } from '../store/core';
 import { saveState } from '../store/persistence';
 import { Dialog } from './Dialog';
-import { CloseIcon } from './icons';
+import { CloseIcon, CommentIcon, TerminalIcon } from './icons';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
 import { invoke } from '../lib/ipc';
@@ -505,7 +506,7 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
                             void switchView(mode);
                           }}
                         >
-                          {mode === 'chat' ? 'Chat' : 'Terminal'}
+                          {mode === 'chat' ? <CommentIcon size={12} /> : <TerminalIcon size={12} />}
                         </button>
                       );
                     }}
@@ -816,6 +817,10 @@ function AgentTerminalPane(props: {
               <AgentChatView
                 task={props.task}
                 agentId={props.agentId}
+                active={
+                  props.visible &&
+                  isPanelFocusedOrDefault(props.task.id, aiTerminalPanelId(props.agentId))
+                }
                 onReady={(focus) => {
                   chatFocus = focus;
                   props.onReady(props.agentId, focusCurrentView);

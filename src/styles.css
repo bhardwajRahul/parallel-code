@@ -2212,18 +2212,24 @@ html:is(
   display: inline-flex;
   gap: 2px;
   padding: 2px;
+  /* Sits apart from the agent tabs and layout controls it is unrelated to. */
+  margin-left: 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-input);
 }
 .agent-view-switch button {
-  padding: 1px 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 18px;
+  padding: 0;
   border: 0;
   border-radius: 3px;
   background: transparent;
   color: var(--fg-muted);
   font: inherit;
-  font-size: 11px;
   cursor: pointer;
 }
 .agent-view-switch button[aria-pressed='true'] {
