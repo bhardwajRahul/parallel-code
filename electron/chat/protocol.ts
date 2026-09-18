@@ -63,7 +63,7 @@ export function registerChatProtocol(win: BrowserWindow): void {
           const { value, done } = await reader.read();
           if (done) break;
           size += value.byteLength;
-          if (size > 1024 * 1024) {
+          if (size > 10 * 1024 * 1024) {
             await reader.cancel();
             return new Response('Message too large', { status: 413 });
           }

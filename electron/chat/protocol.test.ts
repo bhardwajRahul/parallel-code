@@ -89,7 +89,7 @@ describe('private chat protocol', () => {
       (
         await h.request('/agent/default/run', {
           threadId: 'thread-1',
-          text: 'x'.repeat(1024 * 1024),
+          text: 'x'.repeat(10 * 1024 * 1024),
         })
       ).status,
     ).toBe(413);

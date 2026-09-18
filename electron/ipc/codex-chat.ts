@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline';
 import type {
   ChatDecision,
   ChatItem,
+  ChatImage,
   ChatModel,
   AgentChatState,
 } from '../shared/agent-chat-types.js';
@@ -19,7 +20,31 @@ function chatItem(value: unknown, completed = true): ChatItem | undefined {
   if (item.type === 'agentMessage') return { id, kind: 'assistant', text: string(item.text) };
   if (item.type === 'userMessage') {
     const content = Array.isArray(item.content) ? item.content : [];
-    return { id, kind: 'user', text: content.map((part) => string(record(part).text)).join('\n') };
+    const images = content.flatMap<ChatImage>((part) => {
+      const input = record(part);
+      if (input.type !== 'image') return [];
+      const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+=*)$/.exec(
+        string(input.url),
+      );
+      return match
+        ? [
+            {
+              name: 'Attached image',
+              mediaType: match[1] as ChatImage['mediaType'],
+              data: match[2],
+            },
+          ]
+        : [];
+    });
+    return {
+      id,
+      kind: 'user',
+      text: content
+        .map((part) => string(record(part).text))
+        .filter(Boolean)
+        .join('\n'),
+      ...(images.length ? { images } : {}),
+    };
   }
   let status: NonNullable<ChatItem['activity']>['status'] =
     item.status === 'inProgress' || !completed ? 'running' : 'completed';
@@ -32,12 +57,19 @@ function chatItem(value: unknown, completed = true): ChatItem | undefined {
     status = 'failed';
   if (item.status === 'declined') status = 'declined';
   if (item.type === 'commandExecution') {
+    const files = (Array.isArray(item.commandActions) ? item.commandActions : []).flatMap(
+      (action) =>
+        record(action).type === 'read' && typeof record(action).path === 'string'
+          ? [string(record(action).path)]
+          : [],
+    );
     return {
       id,
       kind: 'tool',
       text: `${string(item.command)}\n${string(item.aggregatedOutput)}`,
       activity: {
         type: 'command',
+        ...(files.length ? { files } : {}),
         label: string(item.command) || 'Shell command',
         status,
         ...(typeof item.exitCode === 'number' ? { exitCode: item.exitCode } : {}),
@@ -52,6 +84,7 @@ function chatItem(value: unknown, completed = true): ChatItem | undefined {
       text: changes.map((c) => `${string(record(c).path)}\n${string(record(c).diff)}`).join('\n'),
       activity: {
         type: 'files',
+        files: changes.map((change) => string(record(change).path)).filter(Boolean),
         label: changes.length === 1 ? string(record(changes[0]).path) : `${changes.length} files`,
         status,
       },
@@ -236,11 +269,14 @@ export class CodexChat {
     this.publish();
   }
 
-  async send(text: string): Promise<void> {
+  async send(text: string, images: ChatImage[] = []): Promise<void> {
     if (this.state.status !== 'ready')
       throw new Error('Wait for Codex to finish or stop the current response.');
     this.state.status = 'working';
     this.interruptRequested = false;
+    this.state.startedAt = Date.now();
+    this.state.interrupted = false;
+    this.state.plan = undefined;
     this.state.error = undefined;
     this.publish();
     try {
@@ -249,7 +285,13 @@ export class CodexChat {
           threadId: this.state.threadId,
           ...(this.state.model ? { model: this.state.model } : {}),
           ...(this.state.reasoningEffort ? { effort: this.state.reasoningEffort } : {}),
-          input: [{ type: 'text', text }],
+          input: [
+            { type: 'text', text },
+            ...images.map((image) => ({
+              type: 'image',
+              url: `data:${image.mediaType};base64,${image.data}`,
+            })),
+          ],
         }),
       );
       if (this.state.status === 'working') {
@@ -495,10 +537,41 @@ export class CodexChat {
       item.text += string(params.delta);
       if (!this.publishTimer) this.publishTimer = setTimeout(() => this.publish(), 50);
       return;
+    } else if (method === 'thread/tokenUsage/updated') {
+      if (params.threadId !== this.state.threadId) return;
+      const total = record(record(params.tokenUsage).total);
+      const { totalTokens, inputTokens, outputTokens } = total;
+      if (
+        typeof totalTokens !== 'number' ||
+        !Number.isSafeInteger(totalTokens) ||
+        totalTokens < 0 ||
+        typeof inputTokens !== 'number' ||
+        !Number.isSafeInteger(inputTokens) ||
+        inputTokens < 0 ||
+        typeof outputTokens !== 'number' ||
+        !Number.isSafeInteger(outputTokens) ||
+        outputTokens < 0
+      )
+        return;
+      this.state.tokenUsage = { totalTokens, inputTokens, outputTokens, scope: 'conversation' };
+    } else if (method === 'turn/plan/updated') {
+      this.state.plan = (Array.isArray(params.plan) ? params.plan : []).map((value) => {
+        const entry = record(value);
+        return {
+          step: string(entry.step),
+          status:
+            entry.status === 'completed'
+              ? 'completed'
+              : entry.status === 'inProgress' || entry.status === 'in_progress'
+                ? 'in_progress'
+                : 'pending',
+        };
+      });
     } else if (method === 'turn/started') {
       this.turnId = string(record(params.turn).id);
       this.state.status = 'working';
     } else if (method === 'turn/completed') {
+      this.state.interrupted = record(params.turn).status === 'interrupted';
       this.interruptActivities();
       this.turnId = undefined;
       this.state.status = 'ready';

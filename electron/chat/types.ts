@@ -1,6 +1,7 @@
 import type {
   AgentChatState,
   ChatDecision,
+  ChatImage,
   ChatPermissionMode,
 } from '../shared/agent-chat-types.js';
 
@@ -8,7 +9,7 @@ export interface AgentChat {
   readonly state: AgentChatState;
   subscribe(publish: (state: AgentChatState) => void): void;
   observe(listener: (state: AgentChatState) => void): () => void;
-  send(text: string): Promise<void>;
+  send(text: string, images?: ChatImage[]): Promise<void>;
   interrupt(): Promise<void>;
   respond(id: string | number, decision: ChatDecision, answers?: Record<string, string>): void;
   loadModels(): Promise<void>;

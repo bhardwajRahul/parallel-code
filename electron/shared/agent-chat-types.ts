@@ -2,11 +2,13 @@ export interface ChatItem {
   id: string;
   kind: 'user' | 'assistant' | 'tool';
   text: string;
+  images?: ChatImage[];
   activity?: {
     type: 'command' | 'files' | 'tool';
     label: string;
     status: 'running' | 'completed' | 'failed' | 'declined' | 'interrupted';
     exitCode?: number;
+    files?: string[];
   };
 }
 
@@ -73,8 +75,74 @@ export interface AgentChatState {
   items: ChatItem[];
   requests: ChatRequest[];
   error?: string;
+  startedAt?: number;
+  interrupted?: boolean;
+  tokenUsage?: {
+    totalTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+    /** Claude's cumulative SDK accounting restarts when the connection resumes. */
+    scope: 'conversation' | 'connection';
+  };
+  plan?: { step: string; status: 'pending' | 'in_progress' | 'completed' }[];
   /** The mode the agent reports it is actually running in, once it says so. */
   permissionMode?: string;
   /** Why the running mode differs from the one the user configured, if it does. */
   permissionNote?: string;
+}
+
+/** Images are sent directly to the provider; the app writes no attachment files. */
+export interface ChatImage {
+  name: string;
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  data: string;
+}
+
+export interface ChatSession {
+  threadId: string;
+  provider: 'codex' | 'claude';
+  title: string;
+  updatedAt: number;
+}
+
+export function restoreChatSessions(value: unknown): ChatSession[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (entry): entry is ChatSession =>
+      !!entry &&
+      typeof entry === 'object' &&
+      typeof entry.threadId === 'string' &&
+      entry.threadId.length > 0 &&
+      (entry.provider === 'codex' || entry.provider === 'claude') &&
+      typeof entry.title === 'string' &&
+      typeof entry.updatedAt === 'number' &&
+      Number.isFinite(entry.updatedAt),
+  );
+}
+
+export function validateChatImages(value: unknown): ChatImage[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 4) throw new Error('Attach at most four images.');
+  let size = 0;
+  return value.map((image: unknown) => {
+    if (!image || typeof image !== 'object') throw new Error('Invalid image attachment.');
+    const entry = image as Record<string, unknown>;
+    if (
+      typeof entry.name !== 'string' ||
+      entry.name.length > 255 ||
+      !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(String(entry.mediaType)) ||
+      typeof entry.data !== 'string' ||
+      !entry.data.length ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(entry.data) ||
+      entry.data.length % 4 !== 0
+    )
+      throw new Error('Attach a PNG, JPEG, WebP, or GIF image.');
+    size += entry.data.length;
+    if (size > 8 * 1024 * 1024) throw new Error('Images must total less than 6 MB.');
+    return {
+      name: entry.name,
+      mediaType: entry.mediaType as ChatImage['mediaType'],
+      data: entry.data,
+    };
+  });
 }

@@ -10,6 +10,7 @@ import type {
   AgentChatState,
   ChatDecision,
   ChatItem,
+  ChatImage,
   ChatPermissionMode,
 } from '../shared/agent-chat-types.js';
 import { stripAnsi } from '../shared/prompt-detect.js';
@@ -45,6 +46,7 @@ export class ClaudeChat implements AgentChat {
   private pendingSend?: {
     id: string;
     text: string;
+    images: ChatImage[];
     resolve: () => void;
     reject: (error: Error) => void;
   };
@@ -243,20 +245,34 @@ export class ClaudeChat implements AgentChat {
     this.publish();
   }
 
-  send(text: string): Promise<void> {
+  send(text: string, images: ChatImage[] = []): Promise<void> {
     if (this.state.status !== 'ready' || !this.query)
       return Promise.reject(new Error('Wait for Claude to finish or reconnect.'));
     this.state.status = 'working';
+    this.state.startedAt = Date.now();
+    this.state.interrupted = false;
+    this.state.plan = undefined;
     this.state.error = undefined;
     const id = randomUUID();
     const accepted = new Promise<void>((resolve, reject) => {
-      this.pendingSend = { id, text, resolve, reject };
+      this.pendingSend = { id, text, images, resolve, reject };
     });
     this.input = {
       type: 'user',
       uuid: id,
       session_id: this.state.threadId,
-      message: { role: 'user', content: text },
+      message: {
+        role: 'user',
+        content: images.length
+          ? [
+              { type: 'text', text },
+              ...images.map((image) => ({
+                type: 'image' as const,
+                source: { type: 'base64' as const, media_type: image.mediaType, data: image.data },
+              })),
+            ]
+          : text,
+      },
       parent_tool_use_id: null,
     };
     this.publish();
@@ -273,6 +289,8 @@ export class ClaudeChat implements AgentChat {
       return;
     }
     await this.query.interrupt();
+    this.state.interrupted = true;
+    this.publish();
     // The result event marks the turn finished. Keep Send disabled until it arrives.
   }
 
@@ -348,7 +366,12 @@ export class ClaudeChat implements AgentChat {
     const pending = this.pendingSend;
     if (!pending) return;
     this.pendingSend = undefined;
-    this.upsert({ id: pending.id, kind: 'user', text: pending.text });
+    this.upsert({
+      id: pending.id,
+      kind: 'user',
+      text: pending.text,
+      ...(pending.images.length ? { images: pending.images } : {}),
+    });
     pending.resolve();
   }
   private fail(message: string): void {
@@ -501,7 +524,27 @@ export class ClaudeChat implements AgentChat {
         // user who types those tags themselves must still see their own words.
         const shown = this.state.items.some((item) => item.id === id && item.kind === 'user');
         const text = shown ? '' : visibleUserText(contentText(content));
-        if (text) this.upsert({ id, kind: 'user', text });
+        if (text) {
+          const images = content.flatMap<ChatImage>((part) => {
+            const block = record(part),
+              source = record(block.source);
+            return block.type === 'image' &&
+              source.type === 'base64' &&
+              ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(
+                string(source.media_type),
+              ) &&
+              typeof source.data === 'string'
+              ? [
+                  {
+                    name: 'Attached image',
+                    mediaType: source.media_type as ChatImage['mediaType'],
+                    data: source.data,
+                  },
+                ]
+              : [];
+          });
+          this.upsert({ id, kind: 'user', text, ...(images.length ? { images } : {}) });
+        }
       }
       content.forEach((value, index) => {
         const block = record(value);
@@ -516,12 +559,27 @@ export class ClaudeChat implements AgentChat {
               : ['Edit', 'Write', 'MultiEdit'].includes(tool)
                 ? 'files'
                 : 'tool';
+          if (tool === 'TodoWrite' && Array.isArray(input.todos)) {
+            this.state.plan = input.todos.map((value) => {
+              const todo = record(value);
+              return {
+                step: string(todo.content),
+                status:
+                  todo.status === 'completed'
+                    ? 'completed'
+                    : todo.status === 'in_progress'
+                      ? 'in_progress'
+                      : 'pending',
+              };
+            });
+          }
           this.upsert({
             id: string(block.id),
             kind: 'tool',
             text: `${describeToolCall(tool, input)}\n\n${JSON.stringify(input, null, 2)}`,
             activity: {
               type,
+              files: typeof input.file_path === 'string' ? [input.file_path] : undefined,
               label: string(input.command) || string(input.file_path) || tool,
               status: 'running',
             },
@@ -540,6 +598,7 @@ export class ClaudeChat implements AgentChat {
             // failure is the error text the user came to read.
             text: [previous?.text, contentText(block.content)].filter(Boolean).join('\n\n'),
             activity: {
+              ...previous?.activity,
               type: previous?.activity?.type ?? 'tool',
               label: previous?.activity?.label ?? 'Tool activity',
               status: this.toolDecisions.get(toolId) ?? (block.is_error ? 'failed' : 'completed'),
@@ -548,6 +607,41 @@ export class ClaudeChat implements AgentChat {
         }
       });
     } else if (message.type === 'result') {
+      // modelUsage is already cumulative across turns and includes subagents.
+      // Summing result.usage would instead omit those calls and double-count replays.
+      const models = Object.values(record(message.modelUsage));
+      let inputTokens = 0;
+      let outputTokens = 0;
+      const valid =
+        models.length > 0 &&
+        models.every((value) => {
+          const usage = record(value);
+          const counts = [
+            usage.inputTokens,
+            usage.cacheReadInputTokens,
+            usage.cacheCreationInputTokens,
+            usage.outputTokens,
+          ];
+          if (
+            !counts.every(
+              (count) => typeof count === 'number' && Number.isSafeInteger(count) && count >= 0,
+            )
+          )
+            return false;
+          inputTokens +=
+            Number(usage.inputTokens) +
+            Number(usage.cacheReadInputTokens) +
+            Number(usage.cacheCreationInputTokens);
+          outputTokens += Number(usage.outputTokens);
+          return true;
+        });
+      if (valid && Number.isSafeInteger(inputTokens + outputTokens))
+        this.state.tokenUsage = {
+          totalTokens: inputTokens + outputTokens,
+          inputTokens,
+          outputTokens,
+          scope: 'connection',
+        };
       if (message.is_error) {
         const error =
           contentText(message.errors) ||

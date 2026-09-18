@@ -6,7 +6,7 @@ import type {
   VerificationRun,
   WorktreeStatus,
 } from '../ipc/types';
-import type { ChatPermissionMode } from '../../electron/shared/agent-chat-types';
+import type { ChatPermissionMode, ChatSession } from '../../electron/shared/agent-chat-types';
 import type { DockerSource } from '../lib/docker';
 import type { LookPreset, AppearanceMode } from '../lib/look';
 import type { KeyBinding } from '../lib/keybindings';
@@ -165,6 +165,7 @@ export interface Task {
     reasoningEffort?: string;
   };
   claudeChatSessionId?: string;
+  chatSessions?: ChatSession[];
   /** Permission mode chosen in the chat view, overriding the agent's own settings. */
   chatPermissionMode?: ChatPermissionMode;
   id: string;
@@ -295,6 +296,7 @@ export interface PersistedTask {
     reasoningEffort?: string;
   };
   claudeChatSessionId?: string;
+  chatSessions?: ChatSession[];
   chatPermissionMode?: ChatPermissionMode;
   id: string;
   name: string;

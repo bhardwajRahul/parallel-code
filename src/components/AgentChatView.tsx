@@ -13,18 +13,10 @@ import { reconcile, unwrap } from 'solid-js/store';
 import { Channel, invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import {
-  CHAT_PERMISSION_MODES,
-  isChatPermissionMode,
   type AgentChatState,
   type ChatPermissionMode,
 } from '../../electron/shared/agent-chat-types';
-import {
-  chatMessages,
-  effectiveReasoningEffort,
-  reasoningEffortLabel,
-  selectedChatModel,
-  type ChatConnection,
-} from '../../electron/shared/chat-messages';
+import { chatMessages, type ChatConnection } from '../../electron/shared/chat-messages';
 import { store, setStore } from '../store/core';
 import { agentChatProvider } from '../store/agent-chat';
 import { saveState } from '../store/persistence';
@@ -34,16 +26,12 @@ import { registerFocusFn, unregisterFocusFn } from '../store/focused-panel';
 import type { Task } from '../store/types';
 import { isLandedTaskState } from '../store/landing';
 import { detectThemeTone } from '../lib/custom-theme';
+import { openFileInEditor } from '../lib/shell';
+import { openCanvasDocument } from '../store/canvas';
+import { isMarkdownPath } from '../lib/canvas-tabs';
 import { LOOK_PRESETS } from '../lib/look';
 import type { ChatActions, ChatProps, mountChat } from './chat/CopilotChat.react';
 import './AgentChatView.css';
-
-const PERMISSION_MODE_LABELS: Record<ChatPermissionMode, string> = {
-  default: 'Ask each time',
-  auto: 'Auto (ask if risky)',
-  acceptEdits: 'Accept edits',
-  plan: 'Plan only',
-};
 
 /** Detach a frame from the store, which mutates the object it adopted whenever
  *  the next one arrives — including item objects, in place, when their ids
@@ -61,6 +49,7 @@ export function AgentChatView(props: {
   /** Every tiled task keeps its chat mounted, so only the focused pane may take focus. */
   active: boolean;
   onReady?: (focus: () => void) => void;
+  onReview?: (path?: string) => void;
 }) {
   const provider = () => agentChatProvider(props.agentId);
   const agentName = () => (provider() === 'claude' ? 'Claude' : 'Codex');
@@ -87,6 +76,25 @@ export function AgentChatView(props: {
     if (disposed || !store.agents[props.agentId]) return;
     batch(() => {
       setState(detach(next));
+      const firstPrompt = next.items.find((item) => item.kind === 'user');
+      if (
+        next.threadId &&
+        firstPrompt &&
+        !props.task.chatSessions?.some(
+          (session) => session.threadId === next.threadId && session.provider === provider(),
+        )
+      ) {
+        setStore('tasks', props.task.id, 'chatSessions', [
+          ...(props.task.chatSessions ?? []),
+          {
+            threadId: next.threadId,
+            provider: provider() ?? 'codex',
+            title: firstPrompt.text.slice(0, 100) || 'Image conversation',
+            updatedAt: Date.now(),
+          },
+        ]);
+        void saveState();
+      }
       setStore('agents', props.agentId, 'chatState', reconcile(next));
       if (
         next.threadId &&
@@ -98,12 +106,15 @@ export function AgentChatView(props: {
       }
     });
   };
-  async function connect(fresh = false) {
+  async function connect(fresh = false, threadId?: string) {
     if (connecting()) return;
     if (
       fresh &&
       state()?.items.length &&
-      !window.confirm(`Start a new ${agentName()} chat? This conversation is cleared from here.`)
+      !threadId &&
+      !window.confirm(
+        `Start a new ${agentName()} chat? You can reopen this conversation from History.`,
+      )
     )
       return;
     setConnecting(true);
@@ -112,7 +123,7 @@ export function AgentChatView(props: {
       if (fresh) {
         await invoke(IPC.AgentChat, { action: 'stop', agentId: props.agentId });
         if (disposed) return;
-        setStore('tasks', props.task.id, sessionKey(), undefined);
+        setStore('tasks', props.task.id, sessionKey(), threadId);
         const cleared = { status: 'starting', items: [], requests: [] } satisfies AgentChatState;
         batch(() => {
           setState(detach(cleared));
@@ -162,12 +173,44 @@ export function AgentChatView(props: {
       void saveState();
     } catch (error) {
       setError(String(error));
+      throw error;
     }
+  }
+  const relativePath = (path: string) =>
+    path.startsWith(`${props.task.worktreePath}/`)
+      ? path.slice(props.task.worktreePath.length + 1)
+      : path;
+  function reviewFile(path?: string) {
+    props.onReview?.(path ? relativePath(path) : undefined);
   }
   const callbacks: Pick<
     ChatProps,
-    'onDraft' | 'onSend' | 'onStop' | 'onRespond' | 'onActions' | 'onSelectModel' | 'onReloadModels'
+    | 'onDraft'
+    | 'onSend'
+    | 'onStop'
+    | 'onRespond'
+    | 'onActions'
+    | 'onSelectModel'
+    | 'onReloadModels'
+    | 'onOpenFile'
+    | 'onListFiles'
   > = {
+    onListFiles: () =>
+      invoke<string[]>(IPC.ListDocumentFiles, { projectRoot: props.task.worktreePath }),
+    onOpenFile: (path) => {
+      // The shell opens files, so remove agent citation locations before routing.
+      const relative = relativePath(path.replace(/:\d+(?::\d+)?$/, '')).replace(/^\.\//, '');
+      if (
+        isMarkdownPath(relative) &&
+        !relative.startsWith('/') &&
+        !relative.split('/').includes('..')
+      )
+        openCanvasDocument(props.task.id, relative);
+      else
+        void openFileInEditor(props.task.worktreePath, relative).catch((error) =>
+          setError(String(error)),
+        );
+    },
     onSelectModel: (model, reasoningEffort) =>
       invoke(IPC.AgentChat, {
         action: 'selectModel',
@@ -209,7 +252,12 @@ export function AgentChatView(props: {
     void import('./chat/CopilotChat.react')
       .then((module) => {
         if (disposed || !host) return;
-        setView(module.mountChat(host.attachShadow({ mode: 'open' })));
+        setView(
+          module.mountChat(
+            host.attachShadow({ mode: 'open' }),
+            untrack(() => props.task),
+          ),
+        );
       })
       .catch((error) => {
         if (!disposed) setError(String(error));
@@ -247,28 +295,23 @@ export function AgentChatView(props: {
       : LOOK_PRESETS.find((p) => p.id === store.themePreset)?.tone !== 'light';
     renderer.update({
       ...callbacks,
+      onReview: props.onReview ? reviewFile : undefined,
+      permissionMode: state()?.permissionMode ?? props.task.chatPermissionMode,
+      permissionsDisabled: props.task.skipPermissions,
+      onPermissionMode: provider() === 'claude' ? selectPermissionMode : undefined,
       agentName: agentName(),
       connection: connected,
       state: current,
       messages: messages(),
       draft: props.task.promptDraft ?? '',
       dark,
-      disabled: isLandedTaskState(props.task.landingState),
+      disabled: connecting() || isLandedTaskState(props.task.landingState),
       // Read the focus state only while a request is pending. Every tiled task keeps
       // its chat mounted, so subscribing unconditionally would re-render each one on
       // any focus change elsewhere in the app.
       active: current.requests.length > 0 && props.active,
     });
   });
-  const modelLabel = () => {
-    const current = state();
-    return current ? (selectedChatModel(current)?.displayName ?? current.model ?? '') : '';
-  };
-  const reasoningLabel = () => {
-    const current = state();
-    const effort = current && effectiveReasoningEffort(current);
-    return effort ? reasoningEffortLabel(effort) : '';
-  };
   const status = () =>
     state()?.status === 'closed'
       ? 'Disconnected'
@@ -279,7 +322,15 @@ export function AgentChatView(props: {
           : state()?.status === 'ready'
             ? 'Ready'
             : 'Connecting…';
-  const permissionMode = () => state()?.permissionMode ?? props.task.chatPermissionMode ?? '';
+  const compactTokens = new Intl.NumberFormat('en', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  });
+  const tokenTitle = () => {
+    const usage = state()?.tokenUsage;
+    if (!usage) return 'Session token usage has not been reported yet.';
+    return `${usage.totalTokens.toLocaleString()} tokens · ${usage.inputTokens.toLocaleString()} input (including cache) · ${usage.outputTokens.toLocaleString()} output. ${usage.scope === 'connection' ? 'Since this chat connected; updates after each turn.' : 'Total for this conversation.'}`;
+  };
   return (
     <div class="codex-chat" role="region" aria-label={`${agentName()} conversation`}>
       <div class="codex-chat-header">
@@ -291,60 +342,45 @@ export function AgentChatView(props: {
         >
           {agentName()}
         </strong>
-        <Show when={modelLabel()}>
-          <span class="codex-chat-context" title="Model for the next message">
-            {modelLabel()}
-            <Show when={reasoningLabel()}>
-              {' '}
-              <span class="codex-chat-effort" title="Reasoning level for the next message">
-                {reasoningLabel()}
-              </span>
-            </Show>
-          </span>
-        </Show>
         <span class="codex-chat-status" role="status">
           {status()}
         </span>
-        <Show when={provider() === 'claude'}>
+        <span class="codex-chat-tokens" title={tokenTitle()} aria-label={tokenTitle()}>
+          {state()?.tokenUsage ? compactTokens.format(state()?.tokenUsage?.totalTokens ?? 0) : '—'}{' '}
+          tokens
+        </span>
+        <Show when={props.task.chatSessions?.some((session) => session.provider === provider())}>
           <select
-            class="codex-chat-mode"
-            aria-label="Permission mode"
-            title={
-              props.task.skipPermissions
-                ? 'This task skips permissions, so nothing is asked.'
-                : 'How this chat handles permission requests'
-            }
-            value={permissionMode()}
-            disabled={props.task.skipPermissions || state()?.status !== 'ready'}
-            onChange={(event) => {
-              const mode = event.currentTarget.value;
-              if (isChatPermissionMode(mode)) void selectPermissionMode(mode);
-            }}
+            class="codex-chat-action"
+            aria-label="Conversation history"
+            value={state()?.threadId ?? ''}
+            disabled={connecting() || state()?.status === 'working'}
+            onChange={(event) => void connect(true, event.currentTarget.value)}
           >
-            {/* A mode this view cannot switch to, such as the task's own bypass,
-                still has to name itself rather than show someone else's value. */}
-            <Show when={!isChatPermissionMode(permissionMode())}>
-              <option value={permissionMode()} disabled>
-                {permissionMode() === 'bypassPermissions'
-                  ? 'Skipping permissions'
-                  : permissionMode() || 'Permissions'}
-              </option>
-            </Show>
-            <For each={CHAT_PERMISSION_MODES}>
-              {(mode) => <option value={mode}>{PERMISSION_MODE_LABELS[mode]}</option>}
+            <option value="" disabled>
+              History
+            </option>
+            <For
+              each={[...(props.task.chatSessions ?? [])]
+                .filter((session) => session.provider === provider())
+                .reverse()}
+            >
+              {(session) => <option value={session.threadId}>{session.title}</option>}
             </For>
           </select>
         </Show>
         <button
           class="codex-chat-action"
-          disabled={connecting()}
+          disabled={connecting() || state()?.status === 'working'}
           onClick={() => void connect(true)}
         >
           New chat
         </button>
-        <button class="codex-chat-action" disabled={connecting()} onClick={() => void connect()}>
-          Reconnect
-        </button>
+        <Show when={error() || state()?.status === 'closed'}>
+          <button class="codex-chat-action" disabled={connecting()} onClick={() => void connect()}>
+            Reconnect
+          </button>
+        </Show>
       </div>
       <Show when={store.remoteAccess.enabled}>
         <p class="codex-chat-note">

@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   saveState: vi.fn(),
   chatProps: undefined as ChatProps | undefined,
   disposeView: vi.fn(),
+  openFileInEditor: vi.fn(async () => {}),
+  openCanvasDocument: vi.fn(),
   channel: undefined as
     | { onmessage: ((state: AgentChatState) => void) | null; dispose: () => void }
     | undefined,
@@ -29,6 +31,8 @@ vi.mock('../lib/ipc', () => ({
   },
 }));
 vi.mock('../store/persistence', () => ({ saveState: mocks.saveState }));
+vi.mock('../lib/shell', () => ({ openFileInEditor: mocks.openFileInEditor }));
+vi.mock('../store/canvas', () => ({ openCanvasDocument: mocks.openCanvasDocument }));
 vi.mock('../store/tasks', () => ({
   sendPrompt: mocks.sendPrompt,
   clearPrefillPrompt: (taskId: string) => setStore('tasks', taskId, 'prefillPrompt', undefined),
@@ -120,6 +124,54 @@ afterEach(() => {
 });
 
 describe('Codex chat view', () => {
+  it('shows compact session tokens with an exact breakdown and clears them for a new session', async () => {
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    await tick();
+    const counter = () => container.querySelector<HTMLElement>('.codex-chat-tokens');
+    expect(counter()?.textContent).toContain('— tokens');
+    mocks.channel?.onmessage?.(
+      state({
+        tokenUsage: {
+          totalTokens: 12500,
+          inputTokens: 12000,
+          outputTokens: 500,
+          scope: 'conversation',
+        },
+      }),
+    );
+    expect(counter()?.textContent).toContain('12.5K tokens');
+    expect(counter()?.title).toContain('12,500 tokens');
+    expect(counter()?.title).toContain('12,000 input');
+    mocks.channel?.onmessage?.(
+      state({
+        tokenUsage: { totalTokens: 0, inputTokens: 0, outputTokens: 0, scope: 'connection' },
+      }),
+    );
+    expect(counter()?.textContent).toContain('0 tokens');
+    expect(counter()?.title).toContain('Since this chat connected');
+    mocks.channel?.onmessage?.(state({ threadId: 'new-session' }));
+    expect(counter()?.textContent).toContain('— tokens');
+  });
+
+  it('opens the actual file for links containing line and column suffixes', async () => {
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    const chat = await tick();
+    chat.onOpenFile?.('/worktree/src/app.ts:12:3');
+    chat.onOpenFile?.('src/app.ts:12');
+    chat.onOpenFile?.('README.md:12');
+    chat.onOpenFile?.('./README.md:12');
+    chat.onOpenFile?.('/worktree/docs/design.md:10:2');
+    expect(mocks.openFileInEditor.mock.calls).toEqual([
+      ['/worktree', 'src/app.ts'],
+      ['/worktree', 'src/app.ts'],
+    ]);
+    expect(mocks.openCanvasDocument.mock.calls).toEqual([
+      ['task-1', 'README.md'],
+      ['task-1', 'README.md'],
+      ['task-1', 'docs/design.md'],
+    ]);
+  });
+
   it('blocks New chat and Reconnect throughout initial startup and replacement', async () => {
     let release = () => {};
     mocks.invoke.mockImplementationOnce(
@@ -145,7 +197,7 @@ describe('Codex chat view', () => {
     buttons()[0].click();
     expect(buttons().every((button) => button.disabled)).toBe(true);
     buttons()[0].click();
-    buttons()[1].click();
+    expect(buttons()).toHaveLength(1);
     expect(
       mocks.invoke.mock.calls.filter((call) => (call[1] as { action: string }).action === 'stop'),
     ).toHaveLength(1);
@@ -159,9 +211,7 @@ describe('Codex chat view', () => {
     dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     await tick();
     mocks.channel?.onmessage?.(state({ permissionMode: 'acceptEdits' }));
-    expect(container.querySelector<HTMLSelectElement>('.codex-chat-mode')?.value).toBe(
-      'acceptEdits',
-    );
+    expect(mocks.chatProps?.permissionMode).toBe('acceptEdits');
   });
 
   it('reattaches to the saved thread and preserves streamed state and new conversation ids', async () => {
@@ -259,11 +309,8 @@ describe('Codex chat view', () => {
       }),
     );
     expect(container.querySelector('.codex-chat-note')?.textContent).toContain('bypassPermissions');
-    const select = container.querySelector<HTMLSelectElement>('.codex-chat-mode');
-    if (!select) throw new Error('The Claude chat header has no permission mode control.');
-    expect(select.value).toBe('default');
-    select.value = 'auto';
-    select.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(mocks.chatProps?.permissionMode).toBe('default');
+    await mocks.chatProps?.onPermissionMode?.('auto');
     await vi.waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith(IPC.AgentChat, {
         action: 'setPermissionMode',
@@ -277,7 +324,7 @@ describe('Codex chat view', () => {
   it('offers no permission mode for Codex, which has no such control', async () => {
     dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     await tick();
-    expect(container.querySelector('.codex-chat-mode')).toBeNull();
+    expect(mocks.chatProps?.onPermissionMode).toBeUndefined();
   });
 
   it('shows approvals without granting them and sends only the clicked decision', async () => {
@@ -399,44 +446,46 @@ describe('Codex chat view', () => {
     expect(remounted.state.items.map((item) => item.text)).toEqual(['Thinking', 'Go on']);
   });
 
-  it('names the current model and reasoning level in the header', async () => {
+  it('passes model settings to the composer without duplicating them in the header', async () => {
     dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     await tick();
-    const header = () => container.querySelector('.codex-chat-context')?.textContent;
-    // Nothing to claim before the conversation reports its settings.
-    expect(header()).toBeUndefined();
-    mocks.channel?.onmessage?.(state({ model: 'model-b' }));
-    // The raw id stands in until the catalog arrives, rather than showing nothing.
-    expect(header()).toBe('model-b');
+    mocks.channel?.onmessage?.(state({ model: 'model-b', reasoningEffort: 'high' }));
+    expect(mocks.chatProps?.state.model).toBe('model-b');
+    expect(mocks.chatProps?.state.reasoningEffort).toBe('high');
+    expect(container.querySelector('.codex-chat-header')?.textContent).not.toContain('model-b');
+  });
+
+  it('retains a provider-scoped history and resumes the selected session', async () => {
+    setStore('tasks', 'task-1', 'chatSessions', [
+      { provider: 'codex', threadId: 'older-thread', title: 'Older conversation', updatedAt: 1 },
+    ]);
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    await tick();
     mocks.channel?.onmessage?.(
-      state({
-        model: 'model-b',
-        models: [
-          {
-            model: 'model-b',
-            displayName: 'GPT-5 Codex',
-            defaultReasoningEffort: 'medium',
-            supportedReasoningEfforts: [],
-          },
-        ],
-      }),
+      state({ items: [{ id: 'u', kind: 'user', text: 'Current conversation' }] }),
     );
-    expect(header()).toBe('GPT-5 Codex Medium');
-    mocks.channel?.onmessage?.(
-      state({
-        model: 'model-b',
-        reasoningEffort: 'high',
-        models: [
-          {
-            model: 'model-b',
-            displayName: 'GPT-5 Codex',
-            defaultReasoningEffort: 'medium',
-            supportedReasoningEfforts: [],
-          },
-        ],
-      }),
+    expect(task().chatSessions).toHaveLength(2);
+    const history = container.querySelector<HTMLSelectElement>(
+      '[aria-label="Conversation history"]',
     );
-    expect(header()).toBe('GPT-5 Codex High');
+    if (!history) throw new Error('Missing history');
+    history.value = 'older-thread';
+    history.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        IPC.AgentChat,
+        expect.objectContaining({ action: 'start', threadId: 'older-thread' }),
+      ),
+    );
+    expect(task().chatSessions).toHaveLength(2);
+  });
+
+  it('only exposes reconnect when the connection needs attention', async () => {
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    await tick();
+    expect(container.textContent).not.toContain('Reconnect');
+    mocks.channel?.onmessage?.(state({ status: 'closed' }));
+    expect(container.textContent).toContain('Reconnect');
   });
 
   it('updates the isolated view with theme changes and interruption', async () => {

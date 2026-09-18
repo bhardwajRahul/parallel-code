@@ -78,6 +78,7 @@ interface TaskAITerminalProps {
   /** First look at a Markdown path the agent printed; returns true when it
    *  took the link. Otherwise the file opens in the Markdown viewer. */
   onFileLink?: (filePath: string) => boolean;
+  onReview?: (path?: string) => void;
 }
 
 /** Marker key of the step at index `i` in the agent's scrollback. */
@@ -562,6 +563,7 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
                 onFileLink={(filePath) => {
                   if (!props.onFileLink?.(filePath)) handleFileLink(filePath);
                 }}
+                onReview={props.onReview}
                 onReady={registerAgentFocus}
                 onUnmount={unregisterAgentFocus}
                 onStepNavReady={(api) => handleStepNavReady(agentId, api)}
@@ -700,6 +702,7 @@ function AddAgentMenu(props: { taskId: string }) {
 
 function AgentTerminalPane(props: {
   task: Task;
+  onReview?: (path?: string) => void;
   agentId: string;
   canClose: boolean;
   /** When true the pane is one of several stacked tabs (only `visible` shown). */
@@ -838,6 +841,7 @@ function AgentTerminalPane(props: {
             </Show>
             <Show when={isAgentChat(props.task, props.agentId)}>
               <AgentChatView
+                onReview={props.onReview}
                 task={props.task}
                 agentId={props.agentId}
                 active={

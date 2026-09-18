@@ -79,6 +79,35 @@ function harness() {
 afterEach(() => vi.useRealTimers());
 
 describe('Codex chat app-server protocol', () => {
+  it('uses cumulative conversation tokens without adding repeated updates', async () => {
+    const h = harness();
+    await h.start();
+    const usage = (totalTokens: number, threadId = 'thread-1') =>
+      h.receive({
+        method: 'thread/tokenUsage/updated',
+        params: {
+          threadId,
+          tokenUsage: { total: { totalTokens, inputTokens: totalTokens - 100, outputTokens: 100 } },
+        },
+      });
+    usage(1000);
+    usage(1000);
+    expect(h.chat.state.tokenUsage).toEqual({
+      totalTokens: 1000,
+      inputTokens: 900,
+      outputTokens: 100,
+      scope: 'conversation',
+    });
+    usage(2500);
+    usage(9000, 'different-thread');
+    usage(-1);
+    expect(h.chat.state.tokenUsage?.totalTokens).toBe(2500);
+    expect(h.publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tokenUsage: expect.objectContaining({ totalTokens: 2500 }) }),
+    );
+    h.chat.stop();
+  });
+
   it('initializes before starting a thread and streams messages without duplicating completed items', async () => {
     const h = harness();
     await h.start();
@@ -185,7 +214,7 @@ describe('Codex chat app-server protocol', () => {
       },
     ]);
     expect(h.chat.state.items.map((item) => item.activity)).toEqual([
-      { type: 'files', label: 'src/app.ts', status: 'completed' },
+      { type: 'files', files: ['src/app.ts'], label: 'src/app.ts', status: 'completed' },
       { type: 'command', label: 'npm install', status: 'declined' },
       { type: 'tool', label: 'docs / search', status: 'failed' },
       { type: 'command', label: 'npm test', status: 'interrupted' },
@@ -469,6 +498,41 @@ it('refuses handoff while a turn or permission request is pending', async () => 
   expect(h.proc.kill).not.toHaveBeenCalled();
   h.chat.stop();
   h.proc.emit('close');
+});
+
+it('sends images as multimodal input and exposes agent plans and interruption state', async () => {
+  const h = harness();
+  await h.start();
+  const sent = h.chat.send('Inspect this', [
+    { name: 'screen.png', mediaType: 'image/png', data: 'aGVsbG8=' },
+  ]);
+  expect(h.messages[h.messages.length - 1]).toMatchObject({
+    method: 'turn/start',
+    params: {
+      input: [
+        { type: 'text', text: 'Inspect this' },
+        { type: 'image', url: 'data:image/png;base64,aGVsbG8=' },
+      ],
+    },
+  });
+  h.reply({ turn: { id: 'turn' } });
+  await sent;
+  h.receive({
+    method: 'turn/plan/updated',
+    params: {
+      plan: [
+        { step: 'Inspect', status: 'completed' },
+        { step: 'Fix', status: 'inProgress' },
+      ],
+    },
+  });
+  expect(h.chat.state.plan).toEqual([
+    { step: 'Inspect', status: 'completed' },
+    { step: 'Fix', status: 'in_progress' },
+  ]);
+  h.receive({ method: 'turn/completed', params: { turn: { status: 'interrupted' } } });
+  expect(h.chat.state.interrupted).toBe(true);
+  expect(h.chat.state.status).toBe('ready');
 });
 
 describe('stopping the app-server', () => {

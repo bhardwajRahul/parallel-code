@@ -109,6 +109,32 @@ function harness(
 }
 
 describe('Claude chat adapter', () => {
+  it('replaces cumulative model totals, includes cache tokens, and ignores incomplete usage', async () => {
+    const h = harness();
+    await h.chat.start();
+    expect(h.chat.state.tokenUsage).toBeUndefined();
+    const model = {
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadInputTokens: 800,
+      cacheCreationInputTokens: 200,
+    };
+    const result = { type: 'result', is_error: false, modelUsage: { main: model, helper: model } };
+    await h.emit(result);
+    await h.emit(result);
+    expect(h.chat.state.tokenUsage).toEqual({
+      totalTokens: 2300,
+      inputTokens: 2200,
+      outputTokens: 100,
+      scope: 'connection',
+    });
+    await h.emit({ ...result, modelUsage: { main: { ...model, inputTokens: 2000 } } });
+    expect(h.chat.state.tokenUsage?.totalTokens).toBe(3050);
+    await h.emit({ type: 'result', is_error: false });
+    await h.emit({ ...result, modelUsage: { main: { ...model, outputTokens: -1 } } });
+    expect(h.chat.state.tokenUsage?.totalTokens).toBe(3050);
+  });
+
   it('tracks permission changes reported after initialization', async () => {
     const h = harness();
     await h.chat.start();
@@ -639,4 +665,36 @@ describe('Claude chat adapter', () => {
     await rejected;
     expect(h.chat.state).toMatchObject({ status: 'ready', error: 'Credit balance is too low' });
   });
+});
+
+it('delivers images to Claude and keeps them on the acknowledged user message', async () => {
+  const h = harness();
+  await h.chat.start();
+  const images = [{ name: 'screen.png', mediaType: 'image/png' as const, data: 'aGVsbG8=' }];
+  const sent = h.chat.send('Inspect this', images);
+  const prompts = h.sdk.query.mock.calls[0][0].prompt as AsyncIterable<SDKUserMessage>;
+  const { value } = await prompts[Symbol.asyncIterator]().next();
+  expect(value.message.content).toEqual([
+    { type: 'text', text: 'Inspect this' },
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aGVsbG8=' } },
+  ]);
+  await h.emit(value);
+  await sent;
+  expect(h.chat.state.items[0].images).toEqual(images);
+  await h.emit({
+    type: 'assistant',
+    uuid: 'plan-message',
+    message: {
+      id: 'plan-message',
+      content: [
+        {
+          type: 'tool_use',
+          id: 'todo',
+          name: 'TodoWrite',
+          input: { todos: [{ content: 'Inspect the screenshot', status: 'in_progress' }] },
+        },
+      ],
+    },
+  });
+  expect(h.chat.state.plan).toEqual([{ step: 'Inspect the screenshot', status: 'in_progress' }]);
 });

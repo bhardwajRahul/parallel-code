@@ -1621,3 +1621,24 @@ describe('prompt history persistence', () => {
     expect(saved.tasks['task-1'].promptHistory).toEqual(history);
   });
 });
+
+it.each([false, true])('round-trips the chat session index (collapsed: %s)', async (collapsed) => {
+  const sessions = [
+    { threadId: 'saved-chat', provider: 'claude', title: 'Fix search', updatedAt: 1 },
+  ];
+  mockInvoke.mockResolvedValueOnce(
+    JSON.stringify({
+      projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'hsl(0, 70%, 75%)' }],
+      taskOrder: collapsed ? [] : ['task-1'],
+      collapsedTaskOrder: collapsed ? ['task-1'] : [],
+      tasks: { 'task-1': { ...persistedTask(agentDef()), chatSessions: sessions } },
+      activeTaskId: collapsed ? null : 'task-1',
+    }),
+  );
+  await loadState();
+  expect(store.tasks['task-1'].chatSessions).toEqual(sessions);
+  mockInvoke.mockClear();
+  await saveState();
+  const saved = JSON.parse(mockInvoke.mock.calls[0][1].json);
+  expect(saved.tasks['task-1'].chatSessions).toEqual(sessions);
+});

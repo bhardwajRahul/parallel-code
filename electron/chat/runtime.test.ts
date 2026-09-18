@@ -7,6 +7,7 @@ function harness() {
   const state: AgentChatState = { threadId: 'thread-1', status: 'ready', items: [], requests: [] };
   const observers = new Set<(state: AgentChatState) => void>();
   let sends = 0;
+  let receivedImages: unknown;
   const publish = () => {
     for (const observer of observers) observer(state);
   };
@@ -16,7 +17,8 @@ function harness() {
       observers.add(observer);
       return () => observers.delete(observer);
     },
-    send: async () => {
+    send: async (_text: string, images: unknown) => {
+      receivedImages = images;
       sends++;
       state.status = 'working';
       publish();
@@ -45,7 +47,16 @@ function harness() {
     context: [],
     forwardedProps: {},
   };
-  return { state, observers, publish, request, input, handle, sends: () => sends };
+  return {
+    state,
+    observers,
+    publish,
+    request,
+    input,
+    handle,
+    sends: () => sends,
+    receivedImages: () => receivedImages,
+  };
 }
 
 describe('app-owned CopilotKit runtime', () => {
@@ -140,4 +151,26 @@ describe('app-owned CopilotKit runtime', () => {
     expect(await text).toContain('Disconnected');
     expect(h.observers.size).toBe(0);
   });
+});
+
+it('rejects invalid attachments without starting the provider', async () => {
+  const h = harness();
+  const response = await h.request('run', {
+    ...h.input,
+    forwardedProps: { images: [{ name: 'bad.svg', mediaType: 'image/svg+xml', data: 'AAAA' }] },
+  });
+  expect(await response.text()).toContain('RUN_ERROR');
+  expect(h.sends()).toBe(0);
+});
+
+it('passes validated images through the runtime to the provider', async () => {
+  const h = harness();
+  const images = [{ name: 'screen.png', mediaType: 'image/png', data: 'aGVsbG8=' }];
+  const response = await h.request('run', { ...h.input, forwardedProps: { images } });
+  const events = response.text();
+  await Promise.resolve();
+  expect(h.receivedImages()).toEqual(images);
+  h.state.status = 'ready';
+  h.publish();
+  await events;
 });

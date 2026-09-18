@@ -1,5 +1,5 @@
 import { expectDefined } from '../store/test-helpers';
-import { createSignal } from 'solid-js';
+import { createSignal, type ComponentProps } from 'solid-js';
 import { render } from 'solid-js/web';
 import { createStore } from 'solid-js/store';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -11,6 +11,7 @@ import {
   toggleFocusMode,
 } from '../store/store';
 import type { Task } from '../store/types';
+import type { DiffViewerDialog } from './DiffViewerDialog';
 
 vi.mock('../store/store', () => {
   const [store, setStore] = createStore({
@@ -19,6 +20,7 @@ vi.mock('../store/store', () => {
     focusedPanel: { task: 'prompt' },
     showPromptInput: true,
     taskGitStatus: {},
+    taskViewportVisibility: {},
   });
   return {
     store,
@@ -48,7 +50,21 @@ vi.mock('../store/store', () => {
 vi.mock('../lib/theme', () => ({ theme: {} }));
 vi.mock('../lib/ipc', () => ({ invoke: vi.fn() }));
 vi.mock('./TaskAITerminal', () => ({
-  TaskAITerminal: () => <div class="test-terminal">Scrollback</div>,
+  TaskAITerminal: (props: { onReview?: (path?: string) => void }) => (
+    <div class="test-terminal">
+      Scrollback
+      <button
+        class="test-chat-review"
+        disabled={!props.onReview}
+        onClick={() => props.onReview?.()}
+      >
+        Review
+      </button>
+      <button class="test-chat-review-file" onClick={() => props.onReview?.('src/app.ts')}>
+        Review file
+      </button>
+    </div>
+  ),
 }));
 vi.mock('./PromptInput', () => ({
   PromptInput: () => <textarea class="test-prompt" value="Draft" />,
@@ -56,7 +72,23 @@ vi.mock('./PromptInput', () => ({
 vi.mock('./CloseTaskDialog', () => ({ CloseTaskDialog: () => null }));
 vi.mock('./MergeDialog', () => ({ MergeDialog: () => null }));
 vi.mock('./PushDialog', () => ({ PushDialog: () => null }));
-vi.mock('./DiffViewerDialog', () => ({ DiffViewerDialog: () => null }));
+vi.mock('./DiffViewerDialog', () => ({
+  DiffViewerDialog: (props: ComponentProps<typeof DiffViewerDialog>) => (
+    <div
+      class="test-diff"
+      data-open={props.scrollToFile !== null}
+      data-file={props.scrollToFile}
+      data-commit={props.selectedCommit ?? 'all'}
+    >
+      <button class="test-diff-select" onClick={() => props.onCommitNavigate?.('old-commit')}>
+        Select commit
+      </button>
+      <button class="test-diff-close" onClick={() => props.onClose()}>
+        Close
+      </button>
+    </div>
+  ),
+}));
 vi.mock('./PlanViewerDialog', () => ({ PlanViewerDialog: () => null }));
 vi.mock('./EditProjectDialog', () => ({ EditProjectDialog: () => null }));
 vi.mock('./TaskTitleBar', () => ({ TaskTitleBar: () => null }));
@@ -84,6 +116,42 @@ afterEach(() => {
   dispose?.();
   document.body.replaceChildren();
 });
+
+it.each([undefined, 'landed_pending_review'] as const)(
+  'opens chat review for active and landed tasks (%s) and resets stale commit filters',
+  (landingState) => {
+    const task: Task = {
+      id: 'task',
+      name: 'Task',
+      projectId: 'project',
+      agentIds: [],
+      shellAgentIds: [],
+      notes: '',
+      gitIsolation: 'worktree',
+      branchName: 'task-branch',
+      worktreePath: '/tmp/task',
+      lastPrompt: '',
+      landingState,
+    };
+    const container = document.createElement('div');
+    document.body.append(container);
+    dispose = render(() => <TaskPanel task={task} isActive />, container);
+    const click = (selector: string) =>
+      expectDefined(container.querySelector<HTMLButtonElement>(selector)).click();
+    const diff = () => expectDefined(container.querySelector<HTMLElement>('.test-diff'));
+    click('.test-chat-review');
+    expect(diff().dataset.open).toBe('true');
+    expect(diff().dataset.commit).toBe('all');
+    click('.test-diff-select');
+    expect(diff().dataset.commit).toBe('old-commit');
+    click('.test-diff-close');
+    expect(diff().dataset.open).toBe('false');
+    click('.test-chat-review-file');
+    expect(diff().dataset.open).toBe('true');
+    expect(diff().dataset.file).toBe('src/app.ts');
+    expect(diff().dataset.commit).toBe('all');
+  },
+);
 
 it.each(['reasoning', 'mindmap'] as const)(
   'gives the %s canvas the larger share in focus mode and keeps every pane',

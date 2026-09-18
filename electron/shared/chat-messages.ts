@@ -22,20 +22,31 @@ export function reasoningEffortLabel(effort: string): string {
   return effort.charAt(0).toUpperCase() + effort.slice(1);
 }
 
-/** Keep backend IDs stable across streaming updates and reconnects. */
+/** A tool run keeps its first ID as it grows, so open details survive streaming. */
 export function chatMessages(state: AgentChatState): Message[] {
-  return state.items.flatMap<Message>((item) =>
-    item.kind === 'tool'
-      ? [
-          {
-            id: item.id,
-            role: 'assistant',
-            toolCalls: [
-              { id: item.id, type: 'function', function: { name: 'activity', arguments: '{}' } },
-            ],
-          },
-          { id: `${item.id}:result`, role: 'tool', toolCallId: item.id, content: item.text },
-        ]
-      : [{ id: item.id, role: item.kind, content: item.text }],
-  );
+  const messages: Message[] = [];
+  let group: Extract<Message, { role: 'assistant' }> | undefined;
+  for (const item of state.items) {
+    if (item.kind !== 'tool') {
+      group = undefined;
+      messages.push({ id: item.id, role: item.kind, content: item.text });
+      continue;
+    }
+    if (!group) {
+      group = { id: item.id, role: 'assistant', toolCalls: [] };
+      messages.push(group);
+    }
+    group.toolCalls?.push({
+      id: item.id,
+      type: 'function',
+      function: { name: 'activity', arguments: '{}' },
+    });
+    messages.push({
+      id: `${item.id}:result`,
+      role: 'tool',
+      toolCallId: item.id,
+      content: item.text,
+    });
+  }
+  return messages;
 }

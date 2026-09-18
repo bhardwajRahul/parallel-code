@@ -13,7 +13,11 @@ import {
   type AgentRunnerIsRunningRequest,
 } from '@copilotkit/runtime/v2';
 import type { AgentChat } from './types.js';
-import type { AgentChatState } from '../shared/agent-chat-types.js';
+import {
+  validateChatImages,
+  type AgentChatState,
+  type ChatImage,
+} from '../shared/agent-chat-types.js';
 import { chatMessages } from '../shared/chat-messages.js';
 
 /** Each provider owns history and execution. The runtime retains no replay log or second session store. */
@@ -40,7 +44,8 @@ class ChatRunner extends AgentRunner {
       )
         throw new Error('Enter a message of at most 100,000 characters.');
       this.runId = request.input.runId;
-      return this.stream(request.threadId, user.content);
+      const images = validateChatImages(request.input.forwardedProps?.images);
+      return this.stream(request.threadId, user.content, images);
     } catch (error) {
       return of({
         type: EventType.RUN_ERROR,
@@ -62,7 +67,7 @@ class ChatRunner extends AgentRunner {
     await this.chat.interrupt();
     return true;
   }
-  private stream(threadId: string, text?: string): Observable<BaseEvent> {
+  private stream(threadId: string, text?: string, images: ChatImage[] = []): Observable<BaseEvent> {
     return new Observable((subscriber) => {
       const runId = this.runId;
       let started = text === undefined;
@@ -152,7 +157,7 @@ class ChatRunner extends AgentRunner {
       publish(this.chat.state);
       if (text !== undefined)
         void this.chat
-          .send(text)
+          .send(text, images)
           .then(() => {
             subscriber.next({
               type: EventType.CUSTOM,

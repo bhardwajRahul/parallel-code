@@ -2,7 +2,7 @@ import { restoreMindMap } from '../graph/model';
 import { produce } from 'solid-js/store';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
-import { isChatPermissionMode } from '../../electron/shared/agent-chat-types';
+import { isChatPermissionMode, restoreChatSessions } from '../../electron/shared/agent-chat-types';
 import { isSessionId } from '../../electron/shared/session-record';
 import { store, setStore } from './core';
 import { startRemoteAccess } from './remote';
@@ -257,6 +257,7 @@ function toPersistedTask(task: Task, agentDefs: AgentDef[], collapsed?: boolean)
     codexChatThreadId: task.codexChatThreadId,
     codexChatHandoff: task.codexChatHandoff,
     claudeChatSessionId: task.claudeChatSessionId,
+    chatSessions: task.chatSessions,
     chatPermissionMode: task.chatPermissionMode,
     gitIsolation: task.gitIsolation,
     baseBranch: task.baseBranch,
@@ -861,6 +862,7 @@ export async function loadState(): Promise<void> {
           chatPermissionMode: isChatPermissionMode(pt.chatPermissionMode)
             ? pt.chatPermissionMode
             : undefined,
+          chatSessions: restoreChatSessions(pt.chatSessions),
           claudeChatSessionId:
             typeof pt.claudeChatSessionId === 'string' ? pt.claudeChatSessionId : undefined,
           shellAgentIds,
@@ -985,6 +987,7 @@ export async function loadState(): Promise<void> {
           chatPermissionMode: isChatPermissionMode(pt.chatPermissionMode)
             ? pt.chatPermissionMode
             : undefined,
+          chatSessions: restoreChatSessions(pt.chatSessions),
           claudeChatSessionId:
             typeof pt.claudeChatSessionId === 'string' ? pt.claudeChatSessionId : undefined,
           shellAgentIds: [],

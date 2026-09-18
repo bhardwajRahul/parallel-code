@@ -334,6 +334,17 @@ export function TaskPanel(props: TaskPanelProps) {
   const aiTerminalEl = (
     <div style={{ position: 'relative', height: '100%' }}>
       <TaskAITerminal
+        onReview={
+          props.task.gitIsolation === 'none'
+            ? undefined
+            : (path) => {
+                batch(() => {
+                  setSelectedCommit(null);
+                  setStartTour(false);
+                  setDiffScrollTarget(path ?? '');
+                });
+              }
+        }
         task={props.task}
         isActive={props.isActive}
         selectedAgentId={selectedAgentId()}
@@ -824,6 +835,8 @@ export function TaskPanel(props: TaskPanelProps) {
             }
           }}
         />
+      </Show>
+      <Show when={props.task.gitIsolation !== 'none'}>
         <DiffViewerDialog
           tour={tour}
           startTour={startTour()}
