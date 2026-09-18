@@ -717,6 +717,59 @@ describe('Claude chat adapter', () => {
     await rejected;
     expect(h.chat.state).toMatchObject({ status: 'ready', error: 'Credit balance is too low' });
   });
+
+  describe('handing the session to the terminal', () => {
+    it('reports the session id once the CLI stream has ended', async () => {
+      const h = harness([], 'saved-session');
+      await h.chat.start();
+      await expect(h.chat.release()).resolves.toEqual({ threadId: 'saved-session' });
+      expect(h.controls.close).toHaveBeenCalled();
+      expect(h.chat.state.status).toBe('closed');
+    });
+
+    it('refuses to release a session whose turn is still running', async () => {
+      const h = harness([], 'saved-session');
+      await h.chat.start();
+      void h.chat.send('Keep going').catch(() => {});
+      await expect(h.chat.release()).rejects.toThrow('Finish or stop the response');
+      expect(h.controls.close).not.toHaveBeenCalled();
+    });
+
+    it('keeps waiting when the CLI flushes one more message as it closes', async () => {
+      const h = harness([], 'saved-session');
+      await h.chat.start();
+      // The close call is only a request: what says the CLI has let the
+      // transcript go is the stream ending, not the next message arriving.
+      h.controls.close.mockImplementation(() => {
+        h.output.write({ type: 'stream_event', uuid: 'trailing', event: { type: 'ping' } });
+        return h.output;
+      });
+      const released = h.chat.release();
+      const settled = vi.fn();
+      void released.then(settled, settled);
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(settled).not.toHaveBeenCalled();
+      h.output.end();
+      await expect(released).resolves.toEqual({ threadId: 'saved-session' });
+    });
+
+    it('refuses to release while the CLI is still holding the session open', async () => {
+      const h = harness([], 'saved-session');
+      await h.chat.start();
+      // A close the CLI does not act on: the message stream stays open.
+      h.controls.close.mockImplementation(() => h.output);
+      vi.useFakeTimers();
+      try {
+        const rejected = expect(h.chat.release()).rejects.toThrow('has not stopped yet');
+        await vi.advanceTimersByTimeAsync(5000);
+        await rejected;
+      } finally {
+        vi.useRealTimers();
+        h.output.end();
+      }
+    });
+  });
 });
 
 it('delivers images to Claude and keeps them on the acknowledged user message', async () => {

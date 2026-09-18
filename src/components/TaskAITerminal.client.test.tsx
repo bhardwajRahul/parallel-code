@@ -101,10 +101,29 @@ function mount() {
   );
 }
 
+/** The confirmation that a view switch quits the CLI on the other side. */
+function switchConfirm() {
+  return document.querySelector<HTMLElement>('[role="dialog"] h2')?.textContent ?? '';
+}
+
+function confirmSwitch() {
+  document.querySelector<HTMLButtonElement>('[role="dialog"] button.btn-primary')?.click();
+}
+
+function cancelSwitch() {
+  document.querySelector<HTMLButtonElement>('[role="dialog"] button.btn-secondary')?.click();
+}
+
 function clickChat() {
   const button = host.querySelector<HTMLButtonElement>('[aria-label="Show main agent chat"]');
   expect(button).not.toBeNull();
   button?.click();
+  confirmSwitch();
+}
+
+function clickTerminal() {
+  host.querySelector<HTMLButtonElement>('[aria-label="Show main agent terminal"]')?.click();
+  confirmSwitch();
 }
 
 it('keeps the remaining agent in its own terminal when the main chat agent is closed', async () => {
@@ -223,7 +242,7 @@ it('stops Chat before restarting Terminal with the same session and settings', a
     model: 'model-a',
     reasoningEffort: 'high',
   });
-  host.querySelector<HTMLButtonElement>('[aria-label="Show main agent terminal"]')?.click();
+  clickTerminal();
   await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('terminal'));
   expect(mocks.invoke).toHaveBeenCalledWith(IPC.AgentChat, {
     action: 'handoffToTerminal',
@@ -278,24 +297,158 @@ it('does not start a second handoff after rapid clicks', async () => {
   await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('chat'));
 });
 
-it('opens the Claude chat from a Claude Code terminal', () => {
+const claudeSession = 'fb4f2bc6-62d9-4b29-a795-240caf2fc461';
+
+function useClaudeCode() {
   setStore('agents', 'agent', 'def', {
     id: 'claude-code',
     name: 'Claude Code',
     command: 'claude',
+    args: [],
+    resume_args: [],
+    skip_permissions_args: [],
+    description: '',
   });
+}
+
+it('opens the Claude chat from a Claude Code terminal', async () => {
+  useClaudeCode();
   mount();
   clickChat();
-  expect(store.tasks.task.mainAgentView).toBe('chat');
+  await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('chat'));
   expect(host.querySelector('[aria-label="Claude conversation"]')).not.toBeNull();
   expect(mocks.invoke).toHaveBeenCalledWith(
     IPC.AgentChat,
     expect.objectContaining({ action: 'start', provider: 'claude', command: 'claude' }),
   );
-  host.querySelector<HTMLButtonElement>('[aria-label="Show main agent terminal"]')?.click();
-  expect(store.tasks.task.mainAgentView).toBe('terminal');
+  clickTerminal();
+  await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('terminal'));
   clickChat();
+  await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('chat'));
+});
+
+it('carries the Claude conversation from the terminal into the chat and back', async () => {
+  useClaudeCode();
+  setStore('tasks', 'task', 'agentSessionIds', { agent: claudeSession });
+  mount();
+  clickChat();
+  await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('chat'));
+  expect(mocks.invoke).toHaveBeenCalledWith(
+    IPC.AgentChat,
+    expect.objectContaining({ action: 'handoffToChat', provider: 'claude', agentId: 'agent' }),
+  );
+  // The chat resumes the very session the terminal was running.
+  expect(store.tasks.task.claudeChatSessionId).toBe(claudeSession);
+  expect(mocks.invoke).toHaveBeenCalledWith(
+    IPC.AgentChat,
+    expect.objectContaining({ action: 'start', provider: 'claude', threadId: claudeSession }),
+  );
+
+  clickTerminal();
+  await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('terminal'));
+  expect(mocks.invoke).toHaveBeenCalledWith(
+    IPC.AgentChat,
+    expect.objectContaining({ action: 'handoffToTerminal', provider: 'claude' }),
+  );
+  expect(mocks.terminalMounts).toHaveBeenLastCalledWith(
+    expect.objectContaining({ args: ['--resume', claudeSession] }),
+  );
+});
+
+it('opens a separate Claude chat when the pane has no session id to hand over', async () => {
+  useClaudeCode();
+  mount();
+  clickChat();
+  await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('chat'));
+  expect(mocks.invoke).not.toHaveBeenCalledWith(
+    IPC.AgentChat,
+    expect.objectContaining({ action: 'handoffToChat' }),
+  );
+  expect(store.tasks.task.claudeChatSessionId).toBeUndefined();
+});
+
+it('asks before quitting a live terminal, and does nothing until the user agrees', async () => {
+  useClaudeCode();
+  setStore('tasks', 'task', 'agentSessionIds', { agent: claudeSession });
+  mount();
+  host.querySelector<HTMLButtonElement>('[aria-label="Show main agent chat"]')?.click();
+  expect(switchConfirm()).toBe('Quit the Claude terminal?');
+  expect(mocks.invoke).not.toHaveBeenCalled();
+
+  cancelSwitch();
+  expect(switchConfirm()).toBe('');
+  expect(store.tasks.task.mainAgentView).not.toBe('chat');
+  expect(mocks.invoke).not.toHaveBeenCalled();
+
+  clickChat();
+  await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('chat'));
+  expect(mocks.invoke).toHaveBeenCalledWith(
+    IPC.AgentChat,
+    expect.objectContaining({ action: 'handoffToChat', provider: 'claude' }),
+  );
+});
+
+it('asks before closing a live chat to return to the terminal', async () => {
+  useClaudeCode();
+  setStore('tasks', 'task', 'agentSessionIds', { agent: claudeSession });
+  setStore('tasks', 'task', 'mainAgentView', 'chat');
+  setStore('tasks', 'task', 'claudeChatSessionId', claudeSession);
+  setStore('agents', 'agent', 'chatState', { status: 'ready', items: [], requests: [] });
+  mount();
+  host.querySelector<HTMLButtonElement>('[aria-label="Show main agent terminal"]')?.click();
+  expect(switchConfirm()).toBe('Close the Claude chat?');
   expect(store.tasks.task.mainAgentView).toBe('chat');
+  confirmSwitch();
+  await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('terminal'));
+});
+
+it('closes the confirmation and explains itself when the agent got busy meanwhile', () => {
+  useClaudeCode();
+  setStore('tasks', 'task', 'agentSessionIds', { agent: claudeSession });
+  mount();
+  host.querySelector<HTMLButtonElement>('[aria-label="Show main agent chat"]')?.click();
+  expect(switchConfirm()).toBe('Quit the Claude terminal?');
+  markAgentSpawned('agent');
+  confirmSwitch();
+  expect(switchConfirm()).toBe('');
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('Wait for Claude to finish');
+  expect(store.tasks.task.mainAgentView).not.toBe('chat');
+});
+
+it('takes the question away when the terminal exits while the dialog is open', () => {
+  useClaudeCode();
+  setStore('tasks', 'task', 'agentSessionIds', { agent: claudeSession });
+  mount();
+  host.querySelector<HTMLButtonElement>('[aria-label="Show main agent chat"]')?.click();
+  expect(switchConfirm()).toBe('Quit the Claude terminal?');
+  // Nothing left to quit, so nothing left to confirm.
+  setStore('agents', 'agent', 'status', 'exited');
+  expect(switchConfirm()).toBe('');
+  expect(store.tasks.task.mainAgentView).not.toBe('chat');
+});
+
+it('switches straight away when neither side has a CLI left to quit', async () => {
+  useClaudeCode();
+  setStore('tasks', 'task', 'agentSessionIds', { agent: claudeSession });
+  setStore('agents', 'agent', 'status', 'exited');
+  mount();
+  host.querySelector<HTMLButtonElement>('[aria-label="Show main agent chat"]')?.click();
+  expect(switchConfirm()).toBe('');
+  await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('chat'));
+});
+
+it('waits for a busy Claude terminal before handing its conversation over', async () => {
+  useClaudeCode();
+  setStore('tasks', 'task', 'agentSessionIds', { agent: claudeSession });
+  markAgentSpawned('agent');
+  mount();
+  clickChat();
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('Wait for Claude to finish');
+  expect(mocks.invoke).not.toHaveBeenCalledWith(
+    IPC.AgentChat,
+    expect.objectContaining({ action: 'handoffToChat' }),
+  );
+  expect(store.tasks.task.mainAgentView).not.toBe('chat');
 });
 
 it.each(['dockerMode', 'coordinatorMode', 'coordinatedBy'] as const)(
@@ -320,7 +473,7 @@ it('can return to Chat after the resumed terminal sends automatic replies and be
   mount();
   clickChat();
   await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('chat'));
-  host.querySelector<HTMLButtonElement>('[aria-label="Show main agent terminal"]')?.click();
+  clickTerminal();
   await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('terminal'));
   markAgentSpawned('agent');
   setStore(
@@ -355,9 +508,9 @@ it('shows a startup failure after clicking Chat', async () => {
   mocks.invoke.mockRejectedValueOnce(new Error('No handler registered for codex_chat'));
   mount();
   clickChat();
-  await Promise.resolve();
-  await Promise.resolve();
-  expect(host.querySelector('[role="alert"]')?.textContent).toContain('No handler registered');
+  await vi.waitFor(() =>
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('No handler registered'),
+  );
 });
 
 it.each(['working', 'starting', 'approval'] as const)(

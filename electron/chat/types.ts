@@ -18,6 +18,12 @@ export interface AgentChat {
   setPermissionMode?(mode: ChatPermissionMode): Promise<void>;
   /** `immediate` is for app shutdown: no process may outlive Electron waiting on a timer. */
   stop(immediate?: boolean): void;
+  /**
+   * Stop, and resolve only once the CLI has let go of the conversation, so the
+   * terminal can resume the same session without two processes writing it.
+   * Rejects while a turn or a request is still open.
+   */
+  release(): Promise<Pick<AgentChatState, 'threadId' | 'model' | 'reasoningEffort'>>;
 }
 
 export interface ChatStartOptions {

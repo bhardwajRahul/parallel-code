@@ -141,14 +141,12 @@ export function runningAgentChatIds(): string[] {
   return [...chats].filter(([, entry]) => entry.chat.state.status !== 'closed').map(([id]) => id);
 }
 
-/** Stop the app-server before the native CLI can resume its conversation. */
-export async function releaseCodexChat(agentId: string) {
+/** Stop the chat's own process before the native CLI can resume its conversation. */
+export async function releaseChat(agentId: string) {
   if (starts.has(agentId))
     throw new Error('Wait for chat startup to finish before switching views.');
   const entry = chats.get(agentId);
   if (!entry) return {};
-  if (!(entry.chat instanceof CodexChat))
-    throw new Error('Only Codex supports conversation handoff.');
   try {
     return await entry.chat.release();
   } finally {

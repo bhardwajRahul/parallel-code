@@ -38,6 +38,9 @@ const contentText = (value: unknown): string =>
           .join('\n')
       : '';
 
+/** How long a view switch waits for the CLI to finish shutting down. */
+const RELEASE_TIMEOUT_MS = 5000;
+
 /** Owns one local Claude Code session. The SDK and binary own authentication and execution. */
 export class ClaudeChat implements AgentChat {
   readonly state: AgentChatState = { status: 'starting', items: [], requests: [] };
@@ -71,6 +74,9 @@ export class ClaudeChat implements AgentChat {
   private launchDiagnostics: string[] = [];
   private connecting = true;
   private contextRequest = 0;
+  /** Resolves when the SDK's message stream ends — the only end-of-process
+   *  signal available to `release`. */
+  private reading?: Promise<void>;
 
   constructor(
     private sdk: ClaudeSDK | undefined,
@@ -150,7 +156,7 @@ export class ClaudeChat implements AgentChat {
         },
       },
     });
-    void this.read();
+    this.reading = this.read();
     await this.query.initializationResult();
     if (this.isClosed())
       throw new Error(this.state.error ?? 'Claude disconnected while connecting.');
@@ -355,6 +361,39 @@ export class ClaudeChat implements AgentChat {
     this.query?.close();
   }
 
+  /**
+   * Hand the session over to the terminal.
+   *
+   * There is no child handle to wait on (see `stop`), so the end of the SDK's
+   * message stream stands in for "the CLI has finished with the transcript".
+   * A timeout rejects rather than resolving early: resuming a session another
+   * process may still be writing is how a conversation gets mangled.
+   */
+  async release(): Promise<Pick<AgentChatState, 'threadId'>> {
+    if (this.state.requests.length || !['ready', 'closed'].includes(this.state.status))
+      throw new Error(
+        'Finish or stop the response and resolve pending requests before switching views.',
+      );
+    const reading = this.reading;
+    this.stop();
+    if (reading) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const expired = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Claude has not stopped yet. Try switching again.')),
+          RELEASE_TIMEOUT_MS,
+        );
+      });
+      // Clearing the timer keeps the losing promise from rejecting unhandled.
+      try {
+        await Promise.race([reading, expired]);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return { threadId: this.state.threadId };
+  }
+
   private isClosed(): boolean {
     return this.state.status === 'closed';
   }
@@ -375,8 +414,11 @@ export class ClaudeChat implements AgentChat {
     try {
       if (!this.query) return;
       for await (const message of this.query) {
-        if (this.isClosed()) return;
-        this.receive(message);
+        // Drain to the end of the stream even once closed, rather than leaving
+        // the loop: `release` waits on this promise to know the CLI has let go,
+        // and a trailing message would otherwise settle it while it still has
+        // the transcript open. Closed means stop reporting, not stop waiting.
+        if (!this.isClosed()) this.receive(message);
       }
       if (!this.isClosed()) this.fail('Claude chat disconnected. Reopen Chat to reconnect.');
     } catch (error) {

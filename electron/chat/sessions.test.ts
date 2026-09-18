@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { AgentChatState } from '../shared/agent-chat-types.js';
 import {
   getAgentChat,
-  releaseCodexChat,
+  releaseChat,
   startAgentChat,
   stopAgentChat,
   stopAllAgentChats,
@@ -68,7 +68,7 @@ it('shares startup, passes canvas configuration, and releases it on handoff', as
   );
   await startAgentChat(opts, () => {}, prepare);
   expect(prepare).toHaveBeenCalledOnce();
-  await releaseCodexChat('agent');
+  await releaseChat('agent');
   expect(dispose).toHaveBeenCalledOnce();
   stopAgentChat('agent');
   expect(dispose).toHaveBeenCalledOnce();
@@ -113,7 +113,7 @@ it.each([false, true])(
         }),
     );
     try {
-      await expect(releaseCodexChat('agent')).rejects.toThrow(
+      await expect(releaseChat('agent')).rejects.toThrow(
         'Wait for chat startup to finish before switching views.',
       );
       expect(mocks.spawn).not.toHaveBeenCalled();
@@ -123,7 +123,7 @@ it.each([false, true])(
       await starting;
     }
     expect(mocks.spawn).toHaveBeenCalledOnce();
-    await expect(releaseCodexChat('agent')).resolves.toEqual({});
+    await expect(releaseChat('agent')).resolves.toEqual({});
     expect(dispose).toHaveBeenCalledOnce();
   },
 );
