@@ -45,13 +45,11 @@ export interface ChatRequest {
 }
 
 /**
- * Permission modes a chat session can run in. Claude Code's own 'auto' mode is
- * missing on purpose: it exists only in the interactive terminal and the CLI
- * downgrades it to 'default' for a session driven over the SDK. 'bypassPermissions'
- * is missing too — it cannot be switched on mid-session, so it stays the task's
- * own "skip permissions" setting, applied when the session launches.
+ * Permission modes a chat session can run in. 'bypassPermissions' is missing on
+ * purpose: it cannot be switched on mid-session, so it stays the task's own
+ * "skip permissions" setting, applied when the session launches.
  */
-export const CHAT_PERMISSION_MODES = ['default', 'acceptEdits', 'plan'] as const;
+export const CHAT_PERMISSION_MODES = ['default', 'auto', 'acceptEdits', 'plan'] as const;
 export type ChatPermissionMode = (typeof CHAT_PERMISSION_MODES)[number];
 
 export function isChatPermissionMode(value: unknown): value is ChatPermissionMode {

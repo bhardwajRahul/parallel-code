@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   PermissionUpdate,
   Query,
@@ -23,6 +23,11 @@ const askOptions = (overrides: Partial<AskOptions> = {}): AskOptions => ({
 });
 
 const chats: ClaudeChat[] = [];
+beforeEach(() => {
+  // The launch mode now comes from the user's settings, so a test that sets none
+  // must not read the developer's own.
+  vi.stubEnv('CLAUDE_CONFIG_DIR', join(tmpdir(), 'claude-chat-no-settings'));
+});
 afterEach(() => {
   chats.forEach((chat) => chat.stop());
   chats.length = 0;
@@ -156,9 +161,8 @@ describe('Claude chat adapter', () => {
       settingSources: ['user', 'project', 'local'],
       extraArgs: { 'replay-user-messages': null },
     });
-    // --permission-mode outranks permissions.defaultMode in the user's own settings,
-    // so sending one would re-ask for everything their settings already auto-approve.
-    expect(h.options().permissionMode).toBeUndefined();
+    // Settings that ask for nothing leave the session asking for everything.
+    expect(h.options().permissionMode).toBe('default');
     expect(h.options().allowDangerouslySkipPermissions).toBeUndefined();
     expect(h.options().sessionId).toBe(h.chat.state.threadId);
     expect(h.chat.state.models?.[0]).toMatchObject({
@@ -187,7 +191,7 @@ describe('Claude chat adapter', () => {
     expect(h.chat.state.permissionNote).toBeUndefined();
   });
 
-  it('explains an auto mode the CLI silently drops, until the user picks a mode instead', async () => {
+  it('launches in the mode the user configured, because the CLI never gets to read it', async () => {
     const root = mkdtempSync(join(tmpdir(), 'claude-chat-auto-'));
     vi.stubEnv('CLAUDE_CONFIG_DIR', join(root, 'config'));
     mkdirSync(join(root, '.claude'), { recursive: true });
@@ -195,14 +199,33 @@ describe('Claude chat adapter', () => {
     const h = harness([], undefined, { cwd: root });
     try {
       await h.chat.start();
-      // Nothing is sent to the CLI: auto is the user's setting, and the CLI still reads it.
-      expect(h.options().permissionMode).toBeUndefined();
-      expect(h.chat.state.permissionNote).toContain('auto mode');
-      await h.emit({ type: 'system', subtype: 'init', permissionMode: 'default' });
-      expect(h.chat.state.permissionMode).toBe('default');
+      expect(h.options().permissionMode).toBe('auto');
+      expect(h.options().allowDangerouslySkipPermissions).toBeUndefined();
+      expect(h.chat.state.permissionNote).toBeUndefined();
       await h.chat.setPermissionMode('acceptEdits');
       expect(h.controls.setPermissionMode).toHaveBeenCalledWith('acceptEdits');
       expect(h.chat.state.permissionMode).toBe('acceptEdits');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('asks rather than adopt a bypassPermissions setting, and says why', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'claude-chat-bypass-'));
+    vi.stubEnv('CLAUDE_CONFIG_DIR', join(root, 'config'));
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(
+      join(root, '.claude', 'settings.json'),
+      '{"permissions":{"defaultMode":"bypassPermissions"}}',
+    );
+    const h = harness([], undefined, { cwd: root });
+    try {
+      await h.chat.start();
+      expect(h.options().permissionMode).toBe('default');
+      expect(h.options().allowDangerouslySkipPermissions).toBeUndefined();
+      expect(h.chat.state.permissionNote).toContain('bypassPermissions');
+      // The user has now chosen for themselves what the settings could not carry over.
+      await h.chat.setPermissionMode('plan');
       expect(h.chat.state.permissionNote).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });

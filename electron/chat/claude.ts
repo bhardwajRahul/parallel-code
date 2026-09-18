@@ -14,7 +14,7 @@ import type {
 } from '../shared/agent-chat-types.js';
 import { stripAnsi } from '../shared/prompt-detect.js';
 import { describePermissionUpdates, describeToolCall, visibleUserText } from './describe.js';
-import { settingsDefaultMode } from './settings-mode.js';
+import { launchPermissionMode, settingsDefaultMode } from './settings-mode.js';
 import type { AgentChat, ChatStartOptions } from './types.js';
 
 type ClaudeSDK = Pick<
@@ -106,6 +106,15 @@ export class ClaudeChat implements AgentChat {
       this.settleActivities();
     }
     if (this.state.status === 'closed') throw new Error('Claude chat stopped while connecting.');
+    // The SDK sends --permission-mode on every session it starts, defaulting the
+    // option to 'default' when none is given, and that flag outranks the settings
+    // file. So a chat cannot leave the choice to the CLI the way a terminal does:
+    // resolve the same precedence here, or every session re-asks for the work the
+    // user's permissions.defaultMode already handles.
+    const settingsMode =
+      this.opts.skipPermissions || this.opts.permissionMode
+        ? undefined
+        : settingsDefaultMode(this.opts.cwd);
     this.query = sdk.query({
       prompt: this.prompts(),
       options: {
@@ -123,18 +132,10 @@ export class ClaudeChat implements AgentChat {
             : {}),
         },
         executable: 'node',
-        // Send no permission mode unless the task opts out or the user picked one for
-        // this chat. The SDK turns this option into --permission-mode, a flag that
-        // outranks permissions.defaultMode in the user's settings, so passing 'default'
-        // re-asked for work they already allow.
-        ...(this.opts.skipPermissions
-          ? {
-              permissionMode: 'bypassPermissions' as const,
-              allowDangerouslySkipPermissions: true,
-            }
-          : this.opts.permissionMode
-            ? { permissionMode: this.opts.permissionMode }
-            : {}),
+        permissionMode: this.opts.skipPermissions
+          ? ('bypassPermissions' as const)
+          : (this.opts.permissionMode ?? launchPermissionMode(settingsMode) ?? 'default'),
+        ...(this.opts.skipPermissions ? { allowDangerouslySkipPermissions: true } : {}),
         canUseTool: this.canUseTool,
         // Diagnostics can include private tool arguments once a session is running.
         // Keep the launch output only, and never forward the rest to the UI or log.
@@ -151,22 +152,21 @@ export class ClaudeChat implements AgentChat {
     await this.loadModels();
     if (this.isClosed())
       throw new Error(this.state.error ?? 'Claude disconnected while connecting.');
-    this.noteUnavailableSettingsMode();
+    this.noteUnadoptedSettingsMode(settingsMode);
     this.state.status = 'ready';
     this.publish();
   }
 
   /**
-   * Claude Code's auto mode lives in its terminal UI only: a session driven over
-   * the SDK silently runs as 'default' instead, which asks for work auto mode would
-   * have handled. Say so rather than leave the user wondering why their settings
-   * stopped applying.
+   * A chat will not put itself in bypassPermissions because a settings file asks
+   * for it: that belongs to the task's own "skip permissions" switch, which is
+   * what passes the CLI its opt-in flag. Say so rather than leave the user
+   * wondering why their settings stopped applying.
    */
-  private noteUnavailableSettingsMode(): void {
-    if (this.opts.skipPermissions || this.opts.permissionMode) return;
-    if (settingsDefaultMode(this.opts.cwd) !== 'auto') return;
+  private noteUnadoptedSettingsMode(settingsMode: string | undefined): void {
+    if (settingsMode !== 'bypassPermissions') return;
     this.state.permissionNote =
-      'Your settings use auto mode, which works only in a terminal. Chat is running in default mode, so every tool asks. Pick a mode here or add permissions.allow rules.';
+      'Your settings use bypassPermissions, which chat does not turn on by itself. This chat asks instead; switch the task to skip permissions to run without prompts.';
   }
 
   subscribe(publish: (state: AgentChatState) => void): void {

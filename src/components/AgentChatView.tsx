@@ -40,6 +40,7 @@ import './AgentChatView.css';
 
 const PERMISSION_MODE_LABELS: Record<ChatPermissionMode, string> = {
   default: 'Ask each time',
+  auto: 'Auto (ask if risky)',
   acceptEdits: 'Accept edits',
   plan: 'Plan only',
 };

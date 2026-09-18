@@ -1,6 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
+
+/** Where an administrator's managed settings live, which outrank every other file. */
+const MANAGED_SETTINGS =
+  process.platform === 'darwin'
+    ? '/Library/Application Support/ClaudeCode/managed-settings.json'
+    : '/etc/claude-code/managed-settings.json';
 
 /** The settings files Claude Code reads for a working directory, lowest precedence first. */
 function settingsFiles(cwd: string): string[] {
@@ -9,6 +16,7 @@ function settingsFiles(cwd: string): string[] {
     join(userDir, 'settings.json'),
     join(cwd, '.claude', 'settings.json'),
     join(cwd, '.claude', 'settings.local.json'),
+    MANAGED_SETTINGS,
   ];
 }
 
@@ -34,12 +42,33 @@ function defaultModeIn(file: string): string | undefined {
 
 /**
  * The `permissions.defaultMode` Claude Code itself would resolve for `cwd`, with
- * local settings winning over project and project over user. Read only to explain
- * the running mode to the user; the CLI still applies the settings on its own.
+ * managed settings winning over local, local over project, and project over user.
+ *
+ * The chat has to resolve this itself: the SDK sends `--permission-mode` on every
+ * session it starts, and that flag outranks the settings file, so the CLI never
+ * gets to apply `defaultMode` on its own the way it does in a terminal.
  */
 export function settingsDefaultMode(cwd: string): string | undefined {
   return settingsFiles(cwd).reduce<string | undefined>(
     (mode, file) => defaultModeIn(file) ?? mode,
     undefined,
   );
+}
+
+/** The modes a chat session may launch itself in on the strength of a settings file. */
+const LAUNCHABLE = new Set<string>(['default', 'acceptEdits', 'plan', 'auto', 'dontAsk']);
+
+/**
+ * A settings `defaultMode` as a mode the session can launch in, or `undefined`
+ * when the session should not adopt it.
+ *
+ * `bypassPermissions` is the one mode deliberately left behind: running a whole
+ * session unprompted belongs to the task's own "skip permissions" switch, which
+ * is also what passes the CLI's opt-in flag for it.
+ */
+export function launchPermissionMode(mode: string | undefined): PermissionMode | undefined {
+  // 'manual' is what the CLI calls the asking mode on the command line; the SDK
+  // and the session's own reports still call the same mode 'default'.
+  if (mode === 'manual') return 'default';
+  return mode && LAUNCHABLE.has(mode) ? (mode as PermissionMode) : undefined;
 }

@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { settingsDefaultMode } from './settings-mode.js';
+import { launchPermissionMode, settingsDefaultMode } from './settings-mode.js';
 
 let root: string;
 let cwd: string;
@@ -46,5 +46,22 @@ describe('settingsDefaultMode', () => {
     write(project(), 'settings.json', '{ not json');
     expect(settingsDefaultMode(cwd)).toBe('auto');
     expect(warn).toHaveBeenCalled();
+  });
+});
+
+describe('launchPermissionMode', () => {
+  it('passes on the modes a session may launch itself in', () => {
+    expect(launchPermissionMode('auto')).toBe('auto');
+    expect(launchPermissionMode('acceptEdits')).toBe('acceptEdits');
+    expect(launchPermissionMode('plan')).toBe('plan');
+    expect(launchPermissionMode('dontAsk')).toBe('dontAsk');
+    // The command line's name for the asking mode, which the SDK calls 'default'.
+    expect(launchPermissionMode('manual')).toBe('default');
+  });
+
+  it('adopts neither bypassPermissions nor a mode it does not know', () => {
+    expect(launchPermissionMode('bypassPermissions')).toBeUndefined();
+    expect(launchPermissionMode('yolo')).toBeUndefined();
+    expect(launchPermissionMode(undefined)).toBeUndefined();
   });
 });
