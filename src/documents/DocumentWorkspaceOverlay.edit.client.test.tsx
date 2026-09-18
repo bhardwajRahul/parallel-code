@@ -15,6 +15,7 @@ import {
   openDocumentWorkspace,
   openDocumentCompare,
   setDocumentView,
+  commitDocumentEdits,
 } from './store';
 
 vi.mock('../lib/ipc', () => ({
@@ -146,6 +147,21 @@ it('flushes edits before opening comparison or history', async () => {
   setDocumentView('history');
   await vi.waitFor(() => expect(documentStore.view).toBe('history'));
   expect(files['notes.md']).toContain('Another edit');
+});
+
+it('flushes edits before committing them, so the commit includes what is on screen', async () => {
+  await mount();
+  edit('Committed edit\n');
+  expect(await commitDocumentEdits()).toBe(true);
+  // The editor holds the newest text until autosave fires. Committing without flushing first
+  // would commit the file as it was before the user's last keystrokes.
+  expect(files['notes.md']).toContain('Committed edit');
+  const order = vi
+    .mocked(invoke)
+    .mock.calls.map(([channel]) => channel)
+    .filter((channel) => channel === IPC.WriteDocumentBlock || channel === IPC.CommitDocumentEdits);
+  expect(order.at(-1)).toBe(IPC.CommitDocumentEdits);
+  expect(order).toContain(IPC.WriteDocumentBlock);
 });
 
 it('stays in Edit on save conflict and does not open a comparison against stale text', async () => {
