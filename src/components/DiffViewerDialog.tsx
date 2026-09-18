@@ -226,7 +226,9 @@ function DiffViewerContent(props: DiffViewerDialogProps & { tour: ChangeTourCont
     const selection = props.selectedCommit;
     const startTour = props.startTour;
     const tour = props.tour;
-    if (!scrollTarget) return;
+    // Only `null` means closed. An empty target opens the viewer on the whole
+    // diff with no file to focus, which is how chat's "Review changes" enters.
+    if (scrollTarget === null) return;
 
     const worktreePath = props.worktreePath;
     const projectRoot = props.projectRoot;

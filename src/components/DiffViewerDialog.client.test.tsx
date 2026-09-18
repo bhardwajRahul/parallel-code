@@ -267,6 +267,18 @@ it('does not show a duplicate tour control in the ordinary changes overlay', asy
   expect(host.querySelector('[aria-label="Guided change tour"]')).toBeNull();
 });
 
+// The chat's "Review changes" button opens the viewer without a file to focus.
+it('loads the whole diff when opened without a file to scroll to', async () => {
+  const { host, setTarget, setStartTour } = mount(true);
+  setStartTour(false);
+  setTarget('');
+  await vi.waitFor(() =>
+    expect(host.querySelector('[data-testid="diff-target"]')?.getAttribute('data-files')).toBe(
+      JSON.stringify(['first.ts']),
+    ),
+  );
+});
+
 it.each(['cancel', 'reset'] as const)('ignores a pending diff load after %s', async (action) => {
   const { host, tour } = mount(true);
   let resolveDiff!: (value: string) => void;
