@@ -707,8 +707,12 @@ export function registerAllHandlers(win: BrowserWindow): void {
           };
           canvasTools = true;
         } catch (error) {
+          // The token is revoked here, so drop the ownership claim and the config that named it.
+          // The agent still starts, just without canvas tools, and nothing later would clear them.
+          if (canvasOwners.get(args.agentId) === pending) canvasOwners.delete(args.agentId);
           releaseCanvas?.();
           releaseCanvas = undefined;
+          removeCanvasConfig(args.agentId);
           try {
             assertPendingSpawn();
           } catch (cancelled) {
