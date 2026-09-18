@@ -1,3 +1,4 @@
+import { restoreCanvasTaskLinks } from '../lib/canvas-task-links';
 import { restoreMindMap } from '../graph/model';
 import { produce } from 'solid-js/store';
 import { invoke } from '../lib/ipc';
@@ -276,6 +277,7 @@ function toPersistedTask(task: Task, agentDefs: AgentDef[], collapsed?: boolean)
     canvasTabs: task.canvasTabs,
     canvasActiveTab: task.canvasActiveTab,
     browserUrl: task.browserUrl,
+    canvasTaskLinks: task.canvasTaskLinks,
     mindMap: task.mindMap ?? task.mindMapUnreadable,
     reasoningProfile: task.reasoningProfile,
     reasoningWorkspaces: task.reasoningWorkspaces,
@@ -893,6 +895,7 @@ export async function loadState(): Promise<void> {
           ...restoredCanvas(pt),
           ...restoreTaskMindMap(pt, unreadableMindMaps),
           reasoningProfile: normalizeReasoningProfile(pt.reasoningProfile),
+          canvasTaskLinks: restoreCanvasTaskLinks(pt.canvasTaskLinks),
           reasoningWorkspaces: restoreReasoningWorkspaces(pt.reasoningWorkspaces),
           stepsEnabled: pt.stepsEnabled,
           branchAdoptedFrom: validBranch(pt.branchAdoptedFrom, pt.branchName),
@@ -1019,6 +1022,7 @@ export async function loadState(): Promise<void> {
           ...restoredCanvas(pt),
           ...restoreTaskMindMap(pt, unreadableMindMaps),
           reasoningProfile: normalizeReasoningProfile(pt.reasoningProfile),
+          canvasTaskLinks: restoreCanvasTaskLinks(pt.canvasTaskLinks),
           reasoningWorkspaces: restoreReasoningWorkspaces(pt.reasoningWorkspaces),
           stepsEnabled: pt.stepsEnabled,
           branchAdoptedFrom: validBranch(pt.branchAdoptedFrom, pt.branchName),

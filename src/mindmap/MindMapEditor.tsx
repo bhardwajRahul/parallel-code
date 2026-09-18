@@ -1,3 +1,5 @@
+import type { JSX } from 'solid-js';
+import type { MapData } from '../graph/model';
 import {
   batch,
   createEffect,
@@ -49,6 +51,8 @@ interface Props {
   onOrientationChange?: (orientation: MapOrientation) => void;
   onReference?: (node: MapNode) => void;
   onBranchRequest?: (request: BranchRequest) => void;
+  taskActions?: (id: string, map: MapData & { revision: number }) => NodeAction[];
+  renderTaskBadge?: (id: string) => JSX.Element;
   /** Marks ideas the user edited and offers to release them to the agent. */
   showOwnership?: boolean;
   sendChanges?: ChangeDelivery;
@@ -419,14 +423,16 @@ export function MindMapEditor(props: Props) {
       reference: props.onReference && (() => reference(id)),
     };
   }
-  const actionsFor = (id: string) =>
-    nodeActions({
+  const actionsFor = (id: string) => [
+    ...nodeActions({
       document: props.document,
       id,
       collapsed: collapsed().has(id),
       showOwnership: !!props.showOwnership,
       commands: commands(id),
-    });
+    }),
+    ...(props.taskActions?.(id, props.document) ?? []),
+  ];
   const exportActions = (): NodeAction[] =>
     exportFormats.map((entry) => ({
       label: entry.label,
@@ -593,6 +599,7 @@ export function MindMapEditor(props: Props) {
           onEdit={edit}
           onNodeKeyDown={keydown}
           nodeActions={actionsFor}
+          renderNodeExtra={props.renderTaskBadge}
           onToggle={toggle}
           editingId={editing()?.id}
           renderEditor={inline.renderEditor}

@@ -1642,3 +1642,43 @@ it.each([false, true])('round-trips the chat session index (collapsed: %s)', asy
   const saved = JSON.parse(mockInvoke.mock.calls[0][1].json);
   expect(saved.tasks['task-1'].chatSessions).toEqual(sessions);
 });
+
+it('round-trips canvas task links for active and collapsed tasks without reviving closed targets', async () => {
+  const links = [
+    { canvas: 'mindmap', nodeId: 'node', taskId: 'closed-task', taskName: 'Original task' },
+    {
+      canvas: 'reasoning',
+      agentId: 'owner-agent',
+      runId: 'run',
+      nodeId: 'node',
+      taskId: 'target',
+      taskName: 'Work',
+    },
+  ];
+  mockInvoke.mockResolvedValueOnce(
+    JSON.stringify({
+      projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'blue' }],
+      taskOrder: ['task-1'],
+      collapsedTaskOrder: ['task-2'],
+      activeTaskId: 'task-1',
+      tasks: {
+        'task-1': { ...persistedTask(agentDef()), canvasTaskLinks: [...links, { broken: true }] },
+        'task-2': {
+          ...persistedTask(agentDef()),
+          id: 'task-2',
+          collapsed: true,
+          canvasTaskLinks: links,
+        },
+      },
+    }),
+  );
+  await loadState();
+  for (const id of ['task-1', 'task-2']) expect(store.tasks[id].canvasTaskLinks).toEqual(links);
+  expect(store.tasks['closed-task']).toBeUndefined();
+  mockInvoke.mockClear();
+  mockInvoke.mockResolvedValueOnce(undefined);
+  await saveState();
+  const call = mockInvoke.mock.calls.find(([channel]) => channel === IPC.SaveAppState);
+  const saved = JSON.parse(call?.[1].json);
+  for (const id of ['task-1', 'task-2']) expect(saved.tasks[id].canvasTaskLinks).toEqual(links);
+});

@@ -84,3 +84,73 @@ it('dims only the form, keeps status clear, and restores editing after creation 
   expect(submit?.disabled).toBe(false);
   expect(store.showNewTaskPanel).toBe(true);
 });
+
+it('creates a linked task from the editable canvas assignment with the source branch and selected agent', async () => {
+  dispose();
+  host.replaceChildren();
+  setStore('tasks', 'parent', {
+    id: 'parent',
+    name: 'Parent',
+    projectId: 'project',
+    branchName: 'task/parent',
+    worktreePath: '/project/parent',
+    gitIsolation: 'worktree',
+    agentIds: [],
+    shellAgentIds: [],
+    notes: '',
+    lastPrompt: '',
+  });
+  setStore('newTaskPrefillPrompt', {
+    name: 'Canvas assignment',
+    prompt: 'Saved branch requirements',
+    projectId: 'project',
+    baseBranch: 'task/parent',
+    canvasSource: {
+      taskId: 'parent',
+      canvas: 'reasoning',
+      agentId: 'owner-agent',
+      runId: 'run-1',
+      nodeId: 'work',
+    },
+  });
+  const originalInvoke = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation((channel, args) => {
+    if (channel === IPC.GetBranches) return Promise.resolve(['main', 'task/parent']);
+    if (channel === IPC.CreateTask)
+      return Promise.resolve({
+        id: 'child',
+        branch_name: 'task/child',
+        worktree_path: '/project/child',
+      });
+    return Promise.resolve(originalInvoke?.(channel, args));
+  });
+  dispose = render(() => <NewTaskPanel open={true} onClose={vi.fn()} />, host);
+  const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]');
+  await vi.waitFor(() => expect(submit?.disabled).toBe(false));
+  const prompt = host.querySelector('textarea');
+  expect(prompt?.value).toBe('Saved branch requirements');
+  if (!prompt) throw new Error('Missing prompt editor');
+  prompt.value = 'User revised assignment';
+  prompt.dispatchEvent(new Event('input', { bubbles: true }));
+  host
+    .querySelector('form')
+    ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  await vi.waitFor(() => expect(store.tasks.child).toBeDefined());
+  expect(invoke).toHaveBeenCalledWith(
+    IPC.CreateTask,
+    expect.objectContaining({ name: 'Canvas assignment', baseBranch: 'task/parent' }),
+  );
+  expect(store.tasks.child.savedInitialPrompt).toBe('User revised assignment');
+  expect(store.agents[store.tasks.child.agentIds[0]].def.id).toBe('agent');
+  expect(store.tasks.parent.canvasTaskLinks).toEqual([
+    expect.objectContaining({
+      canvas: 'reasoning',
+      agentId: 'owner-agent',
+      runId: 'run-1',
+      nodeId: 'work',
+      taskId: 'child',
+    }),
+  ]);
+  expect(store.showNewTaskPanel).toBe(false);
+  expect(store.newTaskPrefillPrompt).toBeNull();
+});

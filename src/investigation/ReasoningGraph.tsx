@@ -1,3 +1,4 @@
+import type { MapData } from '../graph/model';
 import {
   children,
   createEffect,
@@ -82,6 +83,8 @@ interface Props {
   drafting?: boolean;
   onReference?: (node: InvestigationRecord, revision: number) => void;
   onBranchRequest?: (request: BranchRequest) => void;
+  taskActions?: (id: string, map: MapData & { revision: number }) => NodeAction[];
+  renderTaskBadge?: (id: string) => JSX.Element;
   workspace?: ReasoningWorkspace;
   onWorkspace?: (workspace: ReasoningWorkspace) => void;
   onCommit?: (base: Snapshot, operations: MapOperation[]) => Promise<Snapshot>;
@@ -906,6 +909,7 @@ export function ReasoningGraph(props: Props) {
         run: () => (focusRoot() === id ? setFocusRoot(undefined) : focusBranch(id)),
       },
       ...agentNodeActions(id, record),
+      ...(props.taskActions?.(id, snapshot) ?? []),
       {
         label: 'Delete node',
         shortcut: 'Del',
@@ -1081,6 +1085,7 @@ export function ReasoningGraph(props: Props) {
                       renderEditor={inline.renderEditor}
                       renderNodeExtra={(id) => (
                         <>
+                          {props.renderTaskBadge?.(id)}
                           {/* Counts stay off resting cards; the selected note shows them. */}
                           <Show when={selected() === id && recordOf(id)}>
                             {(record) => (

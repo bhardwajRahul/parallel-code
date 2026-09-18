@@ -627,3 +627,24 @@
   cursor: pointer;
   font: 16px var(--font-ui);
 }
+
+.graph-task-badge {
+  display: block;
+  max-width: 100%;
+  margin-top: 6px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.graph-task-badge:disabled {
+  color: var(--fg-muted);
+  cursor: default;
+}

@@ -96,6 +96,23 @@ remain available in **Canvas → + → Reasoning**. Its semantic records extend 
 base node/link interfaces, and its editing, runs, storage and agent tools are
 documented in [the reasoning graph page](reasoning-graph.md).
 
+## Tasks from either canvas
+
+Right-click a node in a mind map or reasoning graph and choose **Create task from
+branch…**. The normal New Task form opens with an editable assignment containing
+the saved branch and ancestor notes. Choose the agent and isolation settings before
+creating it. The project stays the same, and the base branch defaults to the source
+task's branch. The assignment is a snapshot; later canvas edits do not change an
+agent's instructions. **Link existing task** connects another task in the same project.
+
+Linked nodes show a live task badge. Click it, or choose **Open linked task**, to
+open the task and use its normal agent and review controls. Idle, review, and ready
+to merge are distinct states; the badge does not change a reasoning node's assessment.
+Links survive app restarts and are scoped to the reasoning run. Closed tasks retain
+a disabled badge; **Unlink task** removes the reference. Unlinking or deleting a node
+does not stop or close its task. Tree relationships do not schedule work or establish
+execution dependencies.
+
 ## Agent access
 
 Both graph views offer a **Vertical / Horizontal** layout switch beside the zoom

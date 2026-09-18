@@ -17,6 +17,7 @@ vi.mock('../store/store', () => ({
 }));
 vi.mock('../store/core', () => {
   const [store, setStore] = createStore({
+    tasks: {} as Record<string, Task>,
     agents: {} as Record<string, { status: 'running' | 'exited'; canvasTools?: boolean }>,
   });
   return { store, setStore };

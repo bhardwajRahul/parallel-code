@@ -1,3 +1,4 @@
+import type { CanvasTaskLink, CanvasTaskSource } from '../lib/canvas-task-links';
 import type {
   AgentDef,
   StepEntry,
@@ -233,6 +234,8 @@ export interface Task {
   /** Key (see canvasTabKey) of the tab in front. */
   canvasActiveTab?: string;
   browserUrl?: string;
+  /** Task references are independent of authored graph content and execution state. */
+  canvasTaskLinks?: CanvasTaskLink[];
   mindMap?: MindMapDocument;
   /** Runtime-only: a saved map that failed validation, written back as is so nothing is lost. */
   mindMapUnreadable?: unknown;
@@ -337,6 +340,7 @@ export interface PersistedTask {
   canvasTabs?: CanvasTab[];
   canvasActiveTab?: string;
   browserUrl?: string;
+  canvasTaskLinks?: CanvasTaskLink[];
   /** Validated on load; an unreadable value is kept and written back unchanged. */
   mindMap?: unknown;
   reasoningProfile?: ReasoningProfile;
@@ -536,7 +540,13 @@ export interface AppStore {
   shareDockerAgentAuth: boolean;
   askCodeProvider: 'claude' | 'minimax';
   newTaskDropUrl: string | null;
-  newTaskPrefillPrompt: { prompt: string; projectId: string | null } | null;
+  newTaskPrefillPrompt: {
+    prompt: string;
+    projectId: string | null;
+    name?: string;
+    baseBranch?: string;
+    canvasSource?: CanvasTaskSource;
+  } | null;
   missingProjectIds: Record<string, true>;
   remoteAccess: RemoteAccess;
   /** Persisted: start the remote (Connect Phone) server automatically on launch. */

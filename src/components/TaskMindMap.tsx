@@ -1,3 +1,4 @@
+import { createCanvasTaskControls } from './canvasTaskControls';
 import { createEffect, createMemo, createSignal, Show, untrack } from 'solid-js';
 import { createMindMap } from '../graph/model';
 import { MindMapEditor, type ChangeDelivery } from '../mindmap/MindMapEditor';
@@ -29,6 +30,10 @@ const orientations = new Map<string, MapOrientation>();
 const sentChanges = new Map<string, string>();
 
 export function TaskMindMap(props: { task: Task; visible: boolean; wide?: boolean }) {
+  const taskControls = createCanvasTaskControls(() => ({
+    taskId: props.task.id,
+    canvas: 'mindmap',
+  }));
   const initial = createMindMap();
   // The task ID is fixed for a mounted panel; read the cache once.
   const [orientation, setOrientation] = createSignal(
@@ -79,6 +84,8 @@ export function TaskMindMap(props: { task: Task; visible: boolean; wide?: boolea
     >
       <MindMapEditor
         document={props.task.mindMap ?? initial}
+        taskActions={taskControls.actions}
+        renderTaskBadge={taskControls.renderBadge}
         visible={props.visible}
         defaultZoom={canvasDefaultZoom(props.wide)}
         showOwnership={store.canvasOwnershipBadges}

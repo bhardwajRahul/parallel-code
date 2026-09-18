@@ -1,3 +1,4 @@
+import { createCanvasTaskControls } from './canvasTaskControls';
 import { createEffect, createMemo, createSignal, on, onCleanup, Show, untrack } from 'solid-js';
 import { ReasoningGraph } from '../investigation/ReasoningGraph';
 import { createReasoningFeed } from '../investigation/live-feed';
@@ -89,6 +90,12 @@ export function TaskReasoningGraphHost(props: Props) {
     () => source(),
     () => props.visible,
   );
+  const taskControls = createCanvasTaskControls(() => ({
+    taskId: props.taskId,
+    canvas: 'reasoning',
+    runId: live.runId(),
+    agentId: source()?.agentId,
+  }));
   const agent = () => store.agents[source()?.agentId ?? ''];
   // Restarts keep the agent ID, so track the session generation and status explicitly.
   const agentSession = () => `${agent()?.status ?? ''}:${agent()?.generation ?? ''}`;
@@ -444,6 +451,8 @@ export function TaskReasoningGraphHost(props: Props) {
   return (
     <div class="task-reasoning-graph-host">
       <ReasoningGraph
+        taskActions={taskControls.actions}
+        renderTaskBadge={taskControls.renderBadge}
         controls={
           // The live region wraps the pill so label changes announce even while closed.
           <span role="status">
