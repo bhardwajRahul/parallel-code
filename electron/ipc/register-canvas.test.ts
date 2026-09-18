@@ -38,6 +38,8 @@ vi.mock('./pty.js', async (original) => ({
   spawnAgent,
   getAgentMeta,
   onPtyEvent,
+  // Chat startup resolves its command in PATH; CI has no agent CLI installed.
+  validateCommand: vi.fn(),
 }));
 vi.mock('./plans.js', async (original) => ({
   ...(await original<typeof import('./plans.js')>()),
