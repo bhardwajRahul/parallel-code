@@ -174,6 +174,11 @@ export interface Task {
   branchName: string;
   worktreePath: string;
   agentIds: string[];
+  /** Session id each agent pane owns, for CLIs that accept one (see
+   *  electron/shared/session-resume.ts). Persisted, because its whole purpose
+   *  is to reattach the right conversation after a restart instead of taking
+   *  whichever session in the worktree happens to be newest. */
+  agentSessionIds?: Record<string, string>;
   selectedAgentId?: string;
   /** Layout for a task's AI terminals when it has more than one agent.
    *  'split' (default) tiles them side by side; 'tabs' shows only the selected
@@ -211,6 +216,8 @@ export interface Task {
   collapsed?: boolean;
   savedAgentDef?: AgentDef;
   savedAgentDefs?: AgentDef[];
+  /** Session ownership in savedAgentDefs order while pane IDs are absent. */
+  savedAgentSessionIds?: (string | null)[];
   savedSelectedAgentIndex?: number;
   savedPromptedAgentIndexes?: number[];
   planContent?: string;
@@ -305,6 +312,7 @@ export interface PersistedTask {
   agentDef: AgentDef | null;
   agentDefs?: AgentDef[];
   agentIds?: string[];
+  agentSessionIds?: Record<string, string>;
   selectedAgentId?: string;
   aiTerminalLayout?: 'split' | 'tabs';
   gitIsolation: GitIsolationMode;
@@ -318,6 +326,7 @@ export interface PersistedTask {
   prUrl?: string;
   savedInitialPrompt?: string;
   collapsed?: boolean;
+  savedAgentSessionIds?: (string | null)[];
   savedSelectedAgentIndex?: number;
   savedPromptedAgentIndexes?: number[];
   planFileName?: string;

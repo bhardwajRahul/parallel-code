@@ -6,6 +6,7 @@ import { clearAgentActivity, markAgentSpawned, markAgentOutput } from '../store/
 import { nextTerminalInputPending } from '../lib/terminalInputPending';
 import { IPC } from '../../electron/ipc/channels';
 import { closeAgentInTask } from '../store/agents';
+import { resumeAgentSession } from '../store/sessions';
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(channel: unknown, args?: unknown) => Promise<unknown>>(async () => undefined),
@@ -210,6 +211,9 @@ it('explains itself while a handoff is in flight', async () => {
 });
 
 it('stops Chat before restarting Terminal with the same session and settings', async () => {
+  setStore('tasks', 'task', 'agentSessionIds', {
+    agent: 'fb4f2bc6-62d9-4b29-a795-240caf2fc459',
+  });
   mount();
   clickChat();
   await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('chat'));
@@ -231,6 +235,19 @@ it('stops Chat before restarting Terminal with the same session and settings', a
   });
   expect(store.agents.agent.resumed).toBe(true);
   expect(mocks.terminalMounts).toHaveBeenCalledTimes(2);
+  expect(mocks.terminalMounts).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      args: ['resume', 'exact-thread', '--model', 'model-a', '-c', 'model_reasoning_effort="high"'],
+    }),
+  );
+
+  const pickedSession = 'fb4f2bc6-62d9-4b29-a795-240caf2fc460';
+  resumeAgentSession('task', 'agent', pickedSession);
+  expect(mocks.terminalMounts).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      args: ['resume', pickedSession],
+    }),
+  );
 });
 
 it('keeps the terminal visible when handoff fails and allows retry', async () => {

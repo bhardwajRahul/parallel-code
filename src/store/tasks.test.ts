@@ -29,6 +29,7 @@ type MockTask = {
   coordinatedBy?: string;
   agentIds: string[];
   shellAgentIds: string[];
+  agentSessionIds?: Record<string, string>;
   [key: string]: unknown;
 };
 
@@ -153,6 +154,7 @@ import {
   initMCPListeners,
   setTaskControl,
   collapseTask,
+  uncollapseTask,
   closeTask,
   mergeTask,
   pushTask,
@@ -601,6 +603,43 @@ describe('terminalInputPendingFromQuestion — real typing survives self-resolvi
 });
 
 describe('collapseTask — coordinated child guard (TODO #23)', () => {
+  it('keeps each pane on its own session across repeated collapse and reopen', async () => {
+    const def = {
+      id: 'claude',
+      name: 'Claude',
+      command: 'claude',
+      args: [],
+      resume_args: ['--continue'],
+      skip_permissions_args: [],
+      description: '',
+    };
+    const sessions = [
+      'fb4f2bc6-62d9-4b29-a795-240caf2fc459',
+      null,
+      'fb4f2bc6-62d9-4b29-a795-240caf2fc460',
+    ] as const;
+    mockTasks.task = {
+      id: 'task',
+      agentIds: ['a', 'b', 'c'],
+      shellAgentIds: [],
+      agentSessionIds: { a: sessions[0], c: sessions[2] },
+    };
+    for (const id of ['a', 'b', 'c']) {
+      mockAgents[id] = createAgentRecord({ id, taskId: 'task', def });
+    }
+    mockTaskOrder.push('task');
+    for (let round = 0; round < 2; round++) {
+      await collapseTask('task');
+      expect(mockTasks.task.savedAgentSessionIds).toEqual(sessions);
+      expect(mockTasks.task.agentSessionIds).toBeUndefined();
+      uncollapseTask('task');
+      const task = mockTasks.task;
+      expect(task.agentIds.map((id) => task.agentSessionIds?.[id] ?? null)).toEqual(sessions);
+      expect(task.savedAgentSessionIds).toBeUndefined();
+      for (const id of task.agentIds) expect(mockAgents[id]).toMatchObject({ resumed: true });
+    }
+  });
+
   it('is a no-op when task has coordinatedBy set', async () => {
     mockTasks['sub-task-1'] = {
       agentIds: ['agent-1'],
@@ -1020,6 +1059,81 @@ describe('createTask does not mutate defaultStepsEnabled', () => {
       (args) => args[0] === 'defaultStepsEnabled',
     );
     expect(defaultsMutated).toBe(false);
+  });
+});
+
+// A task's own first pane is created by a different path from the panes added
+// to it later, and only the latter used to get a session id. Without one the
+// pane launches on the positional default, which means "the newest session in
+// this worktree" — so as soon as a second pane exists, pane one resumes pane
+// two's conversation. That silent swap is the whole reason ids exist.
+describe('createTask assigns the first pane a session id', () => {
+  function agentDef(command: string) {
+    return {
+      id: 'agent-def',
+      name: command,
+      command,
+      args: [],
+      resume_args: [],
+      skip_permissions_args: [],
+      description: command,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const harness = expectDefined(core.harness, 'mock store harness');
+    harness.reset(harness.state());
+    mockTasks = {};
+    mockAgents = {};
+    mockTaskOrder = [];
+    vi.mocked(getProjectPath).mockReturnValue('/repo');
+    vi.mocked(getProjectBranchPrefix).mockReturnValue('task');
+    vi.mocked(isProjectMissing).mockReturnValue(false);
+    mockInvoke.mockImplementation((channel: string) => {
+      if (channel === IPC.CreateTask) {
+        return Promise.resolve({
+          id: 'task-1',
+          branch_name: 'task/my-task',
+          worktree_path: '/repo/.worktrees/my-task',
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+  });
+
+  async function createWith(command: string) {
+    await createTask({
+      name: 'My Task',
+      agentDef: agentDef(command),
+      projectId: 'proj-1',
+      gitIsolation: 'worktree',
+      baseBranch: 'main',
+    });
+    return mockTasks['task-1'];
+  }
+
+  it('gives the first Claude pane an id of its own', async () => {
+    const task = await createWith('claude');
+    const agentId = expectDefined(task?.agentIds[0], 'first pane id');
+    expect(task?.agentSessionIds?.[agentId]).toEqual(expect.any(String));
+  });
+
+  // Claude rejects `--session-id` for a session that already exists, so the id
+  // has to be new rather than reused from anywhere.
+  it('gives two tasks different ids', async () => {
+    const first = (await createWith('claude'))?.agentSessionIds;
+    mockTasks = {};
+    mockAgents = {};
+    const second = (await createWith('claude'))?.agentSessionIds;
+    expect(Object.values(first ?? {})[0]).not.toBe(Object.values(second ?? {})[0]);
+  });
+
+  // Codex assigns its own ids, so one invented here would name a session that
+  // never existed and break the resume it was meant to fix.
+  it('leaves a Codex pane without one', async () => {
+    const task = await createWith('codex');
+    expect(task?.agentSessionIds ?? {}).toEqual({});
   });
 });
 

@@ -1,6 +1,7 @@
 import type { AgentDef } from '../ipc/types';
 import type { Task } from '../store/types';
 import { resolveSkipPermissionsArgs } from '../../electron/shared/skip-permissions';
+import { newSessionArgs, resumeSessionArgs } from '../../electron/shared/session-resume';
 import { isDocumentAgentTaskId } from '../documents/task-id';
 
 function isCodexCommand(command: string): boolean {
@@ -15,8 +16,23 @@ function isCopilotCommand(command: string): boolean {
   return command.split('/').pop() === 'copilot';
 }
 
+/**
+ * Output that means "the session I was told to resume is not there", which the
+ * exit handler turns into one silent retry from a fresh session.
+ *
+ * Both Claude strings are quoted from the installed CLI: the first is what
+ * `--continue` says when the directory has no history, the second what
+ * `--resume <id>` says for an id that is gone. The second matters now that
+ * panes carry an explicit id — a pruned `~/.claude/projects`, a changed
+ * `CLAUDE_CONFIG_DIR` or a session the agent never got round to writing would
+ * otherwise wedge the pane at "Process exited" on every single launch.
+ *
+ * No Codex entry: its stale-id message is not verified here, and a wrong
+ * pattern either never fires or fires on healthy output and discards a live
+ * session. A missing pattern only costs the automatic retry.
+ */
 const RESUME_FAILURE_PATTERNS: Record<string, string[]> = {
-  claude: ['No conversation found to continue'],
+  claude: ['No conversation found to continue', 'No conversation found with session ID'],
 };
 
 export function isResumeArgsFailure(command: string, lastOutput: string[]): boolean {
@@ -36,17 +52,61 @@ function legacyMcpConfigArgs(command: string, mcpConfigPath: string | undefined)
   return ['--mcp-config', mcpConfigPath];
 }
 
-export function buildTaskAgentArgs(
+/** The session-id flags for this launch, or null when the CLI has none or this
+ *  pane has no id yet. Naming the session supersedes every positional rule
+ *  below it, including the document-workspace picker — both exist only because
+ *  "the latest session here" can belong to another terminal. */
+function explicitSessionArgs(
   agentDef: AgentDef,
-  task: Pick<Task, 'skipPermissions' | 'mcpConfigPath' | 'mcpLaunchArgs'> &
-    Partial<
-      Pick<
-        Task,
-        'id' | 'agentIds' | 'codexChatThreadId' | 'codexChatHandoff' | 'claudeChatSessionId'
-      >
-    >,
   resumed: boolean,
-  agentId?: string,
+  sessionId: string | undefined,
+): string[] | null {
+  if (!sessionId) return null;
+  const sessionArgs = resumed
+    ? resumeSessionArgs(agentDef.command, sessionId)
+    : newSessionArgs(agentDef.command, sessionId);
+  if (!sessionArgs) return null;
+
+  const configured = resumed && agentDef.resume_args?.length ? agentDef.resume_args : agentDef.args;
+  // Keep the configured model, permissions and other options. Only the
+  // selectors that would compete with this pane's session are replaced.
+  const remaining: string[] = [];
+  const codex = isCodexCommand(agentDef.command);
+  const resumeIndex = codex ? configured.indexOf('resume') : -1;
+  for (let i = 0; i < configured.length; i++) {
+    const arg = configured[i];
+    if (arg === '--') {
+      remaining.push(...configured.slice(i));
+      break;
+    }
+    if (codex) {
+      if (arg === '--last') continue;
+      if (i === resumeIndex) {
+        if (configured[i + 1] && !configured[i + 1].startsWith('-')) i++;
+        continue;
+      }
+    } else {
+      if (arg === '--continue' || arg === '-c') continue;
+      if (/^--(?:resume|session-id)=/.test(arg)) continue;
+      if (arg === '--resume' || arg === '-r' || arg === '--session-id') {
+        if (configured[i + 1] && !configured[i + 1].startsWith('-')) i++;
+        continue;
+      }
+    }
+    remaining.push(arg);
+  }
+  return [...sessionArgs, ...remaining];
+}
+
+type AgentLaunchTask = Pick<Task, 'skipPermissions' | 'mcpConfigPath' | 'mcpLaunchArgs'> &
+  Partial<
+    Pick<Task, 'id' | 'agentIds' | 'codexChatThreadId' | 'codexChatHandoff' | 'claudeChatSessionId'>
+  >;
+
+function positionalAgentArgs(
+  agentDef: AgentDef,
+  task: AgentLaunchTask,
+  resumed: boolean,
 ): string[] {
   let args = resumed && agentDef.resume_args?.length ? agentDef.resume_args : agentDef.args;
   // A task's separate app-server chat may now be the newest conversation.
@@ -85,6 +145,27 @@ export function buildTaskAgentArgs(
       args = agentDef.args;
     }
   }
+  return args;
+}
+
+/**
+ * Full argument list for a task's agent launch.
+ *
+ * `sessionId` names the conversation this pane owns, when the CLI supports it
+ * (see session-resume.ts). Without one, resume stays positional — "the most
+ * recent session in this directory" — which is what PC did before session ids
+ * and remains the fallback for CLIs that cannot do better.
+ */
+export function buildTaskAgentArgs(
+  agentDef: AgentDef,
+  task: AgentLaunchTask,
+  resumed: boolean,
+  agentId?: string,
+  sessionId?: string,
+): string[] {
+  let args =
+    explicitSessionArgs(agentDef, resumed, sessionId) ??
+    positionalAgentArgs(agentDef, task, resumed);
   const session = task.codexChatHandoff;
   if (
     resumed &&

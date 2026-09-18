@@ -6,7 +6,9 @@ import { createRoot } from 'solid-js';
 import { produce } from 'solid-js/store';
 import { store, setStore } from './core';
 import { setupAutosave, AUTOSAVE_DEBOUNCE_MS, AUTOSAVE_MAX_WAIT_MS } from './autosave';
-import { setTaskPromptDraft } from './tasks';
+import { createAgentRecord, setTaskPromptDraft } from './tasks';
+import { restartAgent } from './agents';
+import { clearAgentActivity } from './taskStatus';
 import { setTaskReasoningWorkspace } from './canvas';
 import { emptyWorkspace, updateDraft } from '../investigation/editing';
 
@@ -83,6 +85,59 @@ describe('setupAutosave scheduling', () => {
       vi.advanceTimersByTime(AUTOSAVE_MAX_WAIT_MS * 2);
       expect(mockSaveState).not.toHaveBeenCalled();
     });
+  });
+
+  it('autosaves a fresh session after restarting an exited pane', () => {
+    const id = 'session-autosave';
+    const previousOrder = [...store.taskOrder];
+    const previousSession = 'fb4f2bc6-62d9-4b29-a795-240caf2fc459';
+    setStore('tasks', id, {
+      id,
+      name: 'Session',
+      projectId: 'p1',
+      worktreePath: '/session',
+      branchName: '',
+      agentIds: [id],
+      shellAgentIds: [],
+      notes: '',
+      lastPrompt: '',
+      gitIsolation: 'worktree',
+      agentSessionIds: { [id]: previousSession },
+    });
+    setStore('agents', id, {
+      ...createAgentRecord({
+        id,
+        taskId: id,
+        def: {
+          id: 'claude',
+          name: 'Claude',
+          command: 'claude',
+          args: [],
+          resume_args: ['--continue'],
+          skip_permissions_args: [],
+          description: '',
+        },
+      }),
+      status: 'exited',
+    });
+    setStore('taskOrder', [...previousOrder, id]);
+    try {
+      withAutosave(() => {
+        restartAgent(id, false);
+        expect(store.tasks[id].agentSessionIds?.[id]).not.toBe(previousSession);
+        vi.advanceTimersByTime(AUTOSAVE_DEBOUNCE_MS);
+        expect(mockSaveState).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      clearAgentActivity(id);
+      setStore('taskOrder', previousOrder);
+      setStore(
+        produce((state) => {
+          delete state.tasks['session-autosave'];
+          delete state.agents['session-autosave'];
+        }),
+      );
+    }
   });
 
   it('autosaves reasoning drafts and retains their deletion for active and collapsed tasks', () => {

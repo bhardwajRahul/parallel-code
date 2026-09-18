@@ -193,6 +193,7 @@ const ALLOWED_CHANNELS = new Set([
   'document_annotation_event',
   'list_document_files',
   'read_document_candidate_log',
+  'list_sessions',
 ]);
 
 function isAllowedChannel(channel) {

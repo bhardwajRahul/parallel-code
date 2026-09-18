@@ -6,6 +6,7 @@ import { IPC } from '../../electron/ipc/channels';
 import { getSkipPermissionsArgs } from '../../electron/shared/skip-permissions';
 import { CANVAS_INSTRUCTIONS } from '../../electron/shared/canvas-view';
 import { store, setStore, cleanupPanelEntries } from './core';
+import { assignFreshSessionId } from './session-ids';
 import { effectiveAgentId } from './agent-select';
 import { saveState } from './persistence';
 import { MAX_PROMPT_HISTORY } from '../lib/prompt-history';
@@ -140,6 +141,11 @@ function initTaskInStore(
     produce((s) => {
       s.tasks[taskId] = task;
       s.agents[agent.id] = agent;
+      // The task's own first pane needs an id as much as any pane added later.
+      // Without this it launches with the positional default, and once a second
+      // pane exists that default means "the newest session in this worktree" —
+      // the second pane's — so pane one comes back with the wrong conversation.
+      assignFreshSessionId(s, taskId, agent.id, agent.def.command);
       s.taskOrder.push(taskId);
       s.activeTaskId = taskId;
       s.activeAgentId = agent.id;
@@ -1035,7 +1041,8 @@ export async function collapseTask(taskId: string): Promise<void> {
   // so agents must be killed explicitly to avoid orphaned PTY processes.
   const agentIds = [...task.agentIds];
   const shellAgentIds = [...task.shellAgentIds];
-  const agentDefs = agentIds
+  const savedAgentIds = agentIds.filter((id) => store.agents[id]);
+  const agentDefs = savedAgentIds
     .map((id) => store.agents[id]?.def)
     .filter((def): def is AgentDef => Boolean(def));
   const promptedAgentIds = new Set(task.promptedAgentIds ?? []);
@@ -1055,6 +1062,10 @@ export async function collapseTask(taskId: string): Promise<void> {
       s.tasks[taskId].collapsed = true;
       s.tasks[taskId].savedAgentDef = agentDefs[0];
       s.tasks[taskId].savedAgentDefs = agentDefs.length > 0 ? agentDefs : undefined;
+      s.tasks[taskId].savedAgentSessionIds = savedAgentIds.map(
+        (id) => task.agentSessionIds?.[id] ?? null,
+      );
+      s.tasks[taskId].agentSessionIds = undefined;
       s.tasks[taskId].savedSelectedAgentIndex =
         selectedAgentIndex >= 0 ? selectedAgentIndex : undefined;
       s.tasks[taskId].savedPromptedAgentIndexes =
@@ -1122,6 +1133,12 @@ export function uncollapseTask(taskId: string): void {
       }
 
       t.agentIds = restoredAgents.map((agent) => agent.id);
+      const sessions: Record<string, string> = {};
+      restoredAgents.forEach((agent, index) => {
+        const sessionId = t.savedAgentSessionIds?.[index];
+        if (sessionId) sessions[agent.id] = sessionId;
+      });
+      t.agentSessionIds = Object.keys(sessions).length > 0 ? sessions : undefined;
       const promptedAgentIds = promptedAgentIndexes
         .map((index) => t.agentIds[index])
         .filter((id): id is string => Boolean(id));
@@ -1129,6 +1146,7 @@ export function uncollapseTask(taskId: string): void {
       t.selectedAgentId = t.agentIds[selectedAgentIndex] ?? t.agentIds[0];
       t.savedAgentDef = undefined;
       t.savedAgentDefs = undefined;
+      t.savedAgentSessionIds = undefined;
       t.savedSelectedAgentIndex = undefined;
       t.savedPromptedAgentIndexes = undefined;
       s.activeAgentId = t.selectedAgentId ?? null;

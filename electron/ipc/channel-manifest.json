@@ -186,6 +186,7 @@
   "DocumentAnnotationEvent": "document_annotation_event",
   "ListDocumentFiles": "list_document_files",
   "ReadDocumentCandidateLog": "read_document_candidate_log",
+  "ListSessions": "list_sessions",
   "BrowserCommand": "browser_command",
   "BrowserBounds": "browser_bounds",
   "BrowserState": "browser_state"

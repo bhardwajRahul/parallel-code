@@ -7,6 +7,7 @@ import type { Agent } from './types';
 import { refreshTaskStatus, clearAgentActivity, markAgentSpawned } from './taskStatus';
 import { saveState } from './persistence';
 import { refreshUsage, usageProviderForAgent } from './usage';
+import { assignFreshSessionId } from './session-ids';
 
 export async function loadAgents(): Promise<void> {
   const defaults = await invoke<AgentDef[]>(IPC.ListAgents);
@@ -35,6 +36,7 @@ export async function addAgentToTask(taskId: string, agentDef: AgentDef): Promis
   setStore(
     produce((s) => {
       s.agents[agentId] = agent;
+      assignFreshSessionId(s, taskId, agentId, agentDef.command);
       s.tasks[taskId].agentIds.push(agentId);
       s.tasks[taskId].selectedAgentId = agentId;
       s.activeAgentId = agentId;
@@ -128,6 +130,12 @@ export function restartAgent(agentId: string, useResumeArgs: boolean): void {
         s.agents[agentId].spawnDelayMs = undefined;
         s.agents[agentId].attachExisting = false;
         s.agents[agentId].generation += 1;
+        // A resume continues the pane's existing session, so its id stands.
+        // A restart without resume is a new conversation and needs a new one.
+        if (!useResumeArgs) {
+          const agent = s.agents[agentId];
+          assignFreshSessionId(s, agent.taskId, agentId, agent.def.command);
+        }
       }
     }),
   );
@@ -138,6 +146,9 @@ export function switchAgent(agentId: string, newDef: AgentDef): void {
   setStore(
     produce((s) => {
       if (s.agents[agentId]) {
+        // Switching CLI starts a fresh conversation, and the new CLI may not
+        // take an assigned id at all — so re-decide rather than carry over.
+        assignFreshSessionId(s, s.agents[agentId].taskId, agentId, newDef.command);
         s.agents[agentId].def = newDef;
         s.agents[agentId].status = 'running';
         s.agents[agentId].canvasTools = undefined;

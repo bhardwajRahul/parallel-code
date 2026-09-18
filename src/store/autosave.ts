@@ -76,6 +76,8 @@ export function persistedSnapshot(): string {
               externalWorktree: t.externalWorktree,
               savedInitialPrompt: t.savedInitialPrompt,
               collapsed: t.collapsed,
+              agentSessionIds: t.agentSessionIds,
+              savedAgentSessionIds: t.savedAgentSessionIds,
               coordinatedBy: t.coordinatedBy,
               coordinatorMode: t.coordinatorMode,
               mcpConfigPath: t.mcpConfigPath,

@@ -7,6 +7,7 @@ import type { Project } from './types';
 import { sanitizeBranchPrefix } from '../lib/branch-name';
 import { documentAgentTaskId } from '../documents/task-id';
 import { clearAgentActivity } from './taskStatus';
+import { assignFreshSessionId } from './session-ids';
 
 export const PASTEL_HUES = [0, 30, 60, 120, 180, 210, 260, 300, 330];
 
@@ -245,6 +246,11 @@ export async function relinkProject(projectId: string): Promise<boolean> {
         for (const id of task.agentIds) {
           const agent = s.agents[id];
           if (!agent) continue;
+          // A fresh conversation needs a fresh id: `resumed = false` below means
+          // the relaunch passes `--session-id`, which Claude rejects for a
+          // session that already exists, so reusing this pane's old id would
+          // stop it launching at all after the project moves.
+          assignFreshSessionId(s, task.id, id, agent.def.command);
           agent.resumed = false;
           agent.attachExisting = false;
           agent.status = 'running';

@@ -42,6 +42,148 @@ const copilotAgent = {
   skip_permissions_args: ['--yolo'],
 };
 
+describe('buildTaskAgentArgs with a session id', () => {
+  const SESSION = 'fb4f2bc6-62d9-4b29-a795-240caf2fc459';
+  const claudeWithContinue = { ...claudeAgent, resume_args: ['--continue'] };
+
+  it('names a new Claude session', () => {
+    expect(buildTaskAgentArgs(claudeAgent, {}, false, undefined, SESSION)).toEqual([
+      '--session-id',
+      SESSION,
+    ]);
+  });
+
+  it('resumes that Claude session by id instead of --continue', () => {
+    expect(buildTaskAgentArgs(claudeWithContinue, {}, true, undefined, SESSION)).toEqual([
+      '--resume',
+      SESSION,
+    ]);
+  });
+
+  it('resumes the owned Claude terminal session even when a separate chat exists', () => {
+    expect(
+      buildTaskAgentArgs(
+        claudeWithContinue,
+        { claudeChatSessionId: 'other-chat' },
+        true,
+        'primary',
+        SESSION,
+      ),
+    ).toEqual(['--resume', SESSION]);
+  });
+
+  it('resumes that Codex session by id instead of resume --last', () => {
+    expect(buildTaskAgentArgs(codexAgent, {}, true, undefined, SESSION)).toEqual([
+      'resume',
+      SESSION,
+    ]);
+  });
+
+  // Codex takes no id for a fresh session, so it keeps its normal launch args.
+  it('starts Codex normally when it cannot be handed an id', () => {
+    expect(buildTaskAgentArgs(codexAgent, {}, false, undefined, SESSION)).toEqual([]);
+  });
+
+  it.each([
+    ['antigravity', antigravityAgent, ['-c']],
+    ['copilot', copilotAgent, ['--continue']],
+  ])('leaves %s on its positional resume', (_label, agent, expected) => {
+    expect(buildTaskAgentArgs(agent, {}, true, undefined, SESSION)).toEqual(expected);
+  });
+
+  // An explicit id is exactly what the document-workspace picker works around,
+  // so it must win over that rewrite rather than be overridden by it.
+  it('overrides the shared-checkout picker for a document agent', () => {
+    expect(
+      buildTaskAgentArgs(claudeWithContinue, { id: 'doc-agent-docs' }, true, undefined, SESSION),
+    ).toEqual(['--resume', SESSION]);
+  });
+
+  it('still appends skip-permissions and MCP args', () => {
+    expect(
+      buildTaskAgentArgs(
+        claudeAgent,
+        { skipPermissions: true, mcpLaunchArgs: ['--mcp-config', '/tmp/c.json'] },
+        false,
+        undefined,
+        SESSION,
+      ),
+    ).toEqual([
+      '--session-id',
+      SESSION,
+      '--dangerously-skip-permissions',
+      '--mcp-config',
+      '/tmp/c.json',
+    ]);
+  });
+
+  it('falls back to positional resume when no id is known', () => {
+    expect(buildTaskAgentArgs(codexAgent, {}, true, undefined)).toEqual(['resume', '--last']);
+  });
+
+  it('preserves custom launch options when naming a new Claude session', () => {
+    const def = { ...claudeAgent, args: ['--model', 'sonnet', '--permission-mode', 'plan'] };
+    expect(buildTaskAgentArgs(def, {}, false, undefined, SESSION)).toEqual([
+      '--session-id',
+      SESSION,
+      ...def.args,
+    ]);
+  });
+
+  it.each([
+    ['--continue'],
+    ['-c'],
+    ['--resume'],
+    ['--resume', 'old-session'],
+    ['-r', 'old-session'],
+    ['--resume=old-session'],
+    ['--session-id', SESSION],
+    [`--session-id=${SESSION}`],
+  ])('replaces Claude selectors %j without dropping resume options', (...selector) => {
+    const options = ['--model', 'sonnet', '--permission-mode', 'plan'];
+    const def = { ...claudeAgent, resume_args: [...selector, ...options] };
+    expect(buildTaskAgentArgs(def, {}, true, undefined, SESSION)).toEqual([
+      '--resume',
+      SESSION,
+      ...options,
+    ]);
+    expect(def.resume_args).toEqual([...selector, ...options]);
+  });
+
+  it.each([['resume', '--last'], ['resume', 'old-session'], ['resume']])(
+    'preserves Codex resume options with selector %j',
+    (...selector) => {
+      const options = ['--model', 'custom-model', '--config', 'approval_policy="never"'];
+      const def = { ...codexAgent, resume_args: [...selector, ...options] };
+      expect(buildTaskAgentArgs(def, {}, true, undefined, SESSION)).toEqual([
+        'resume',
+        SESSION,
+        ...options,
+      ]);
+    },
+  );
+
+  it('preserves prompt arguments after the option terminator', () => {
+    const def = { ...claudeAgent, args: ['--', '--continue'] };
+    expect(buildTaskAgentArgs(def, {}, false, undefined, SESSION)).toEqual([
+      '--session-id',
+      SESSION,
+      '--',
+      '--continue',
+    ]);
+  });
+
+  it('keeps Codex options that precede the resume subcommand', () => {
+    const def = { ...codexAgent, resume_args: ['--model', 'custom-model', 'resume', '--last'] };
+    expect(buildTaskAgentArgs(def, {}, true, undefined, SESSION)).toEqual([
+      'resume',
+      SESSION,
+      '--model',
+      'custom-model',
+    ]);
+  });
+});
+
 describe('buildTaskAgentArgs', () => {
   it('offers a resume picker when a separate chat could be the latest Codex conversation', () => {
     expect(buildTaskAgentArgs(codexAgent, { codexChatThreadId: 'chat-thread' }, true)).toEqual([
@@ -214,6 +356,18 @@ describe('isResumeArgsFailure', () => {
   describe('Claude resume failure patterns', () => {
     it('returns true when Claude reports no conversation to continue', () => {
       expect(isResumeArgsFailure('claude', ['No conversation found to continue'])).toBe(true);
+    });
+
+    // What `--resume <id>` actually says, quoted from claude 2.1.274. It is a
+    // different string from the `--continue` one above, and now that panes
+    // carry an explicit id it is the one they hit — a pane whose session has
+    // been pruned would otherwise fail to launch on every restart forever.
+    it('returns true when Claude cannot find the session id it was given', () => {
+      expect(
+        isResumeArgsFailure('claude', [
+          'No conversation found with session ID: 00000000-0000-4000-8000-000000000000',
+        ]),
+      ).toBe(true);
     });
 
     it('returns true for a Claude command with a full path', () => {

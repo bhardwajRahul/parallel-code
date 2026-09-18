@@ -3,6 +3,7 @@ import { produce } from 'solid-js/store';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import { isChatPermissionMode } from '../../electron/shared/agent-chat-types';
+import { isSessionId } from '../../electron/shared/session-record';
 import { store, setStore } from './core';
 import { startRemoteAccess } from './remote';
 import { effectiveAgentId } from './agent-select';
@@ -136,6 +137,30 @@ function restoredPromptedAgentIds(pt: PersistedTask, agentIds: string[]): string
   return valid.length > 0 ? valid : undefined;
 }
 
+/**
+ * Session ids for the panes that actually came back.
+ *
+ * `restoredAgentIds` mints a replacement when a persisted agent id is missing
+ * or already taken, and an entry left keyed to the old id would attach that
+ * session to whichever pane later reused it. Dropping those costs the pane its
+ * exact resume and returns it to the positional default — the safe direction.
+ */
+function restoredAgentSessionIds(
+  pt: PersistedTask,
+  agentIds: string[],
+): Record<string, string> | undefined {
+  const raw: unknown = pt.agentSessionIds;
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const restored: Record<string, string> = {};
+  for (const agentId of agentIds) {
+    // Shape-checked, not merely non-empty: the profile is a file on disk and
+    // these ids end up as arguments to a spawned CLI.
+    const sessionId = (raw as Record<string, unknown>)[agentId];
+    if (isSessionId(sessionId)) restored[agentId] = sessionId;
+  }
+  return Object.keys(restored).length > 0 ? restored : undefined;
+}
+
 function validPromptedAgentIndexes(value: unknown): number[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const valid = value.filter(
@@ -225,6 +250,7 @@ function toPersistedTask(task: Task, agentDefs: AgentDef[], collapsed?: boolean)
     agentDef: agentDefs[0] ?? null,
     agentDefs: agentDefs.length > 1 ? agentDefs : undefined,
     agentIds: task.agentIds.length > 0 ? [...task.agentIds] : undefined,
+    agentSessionIds: task.agentSessionIds,
     selectedAgentId: task.selectedAgentId,
     aiTerminalLayout: task.aiTerminalLayout,
     mainAgentView: task.mainAgentView,
@@ -243,6 +269,7 @@ function toPersistedTask(task: Task, agentDefs: AgentDef[], collapsed?: boolean)
     prUrl: task.prUrl,
     savedInitialPrompt: task.savedInitialPrompt,
     savedSelectedAgentIndex: task.savedSelectedAgentIndex,
+    savedAgentSessionIds: task.savedAgentSessionIds,
     savedPromptedAgentIndexes: task.savedPromptedAgentIndexes,
     planFileName: task.planFileName,
     canvasTabs: task.canvasTabs,
@@ -824,6 +851,7 @@ export async function loadState(): Promise<void> {
             ? (projects.find((project) => project.id === pt.projectId)?.path ?? pt.worktreePath)
             : pt.worktreePath,
           agentIds,
+          agentSessionIds: restoredAgentSessionIds(pt, agentIds),
           selectedAgentId: validAgentId(pt.selectedAgentId, agentIds) ?? agentIds[0],
           aiTerminalLayout: pt.aiTerminalLayout === 'tabs' ? 'tabs' : undefined,
           mainAgentView: pt.mainAgentView === 'chat' ? 'chat' : undefined,
@@ -993,6 +1021,12 @@ export async function loadState(): Promise<void> {
           branchAdoptedFrom: validBranch(pt.branchAdoptedFrom, pt.branchName),
           branchOfferDismissed: validBranch(pt.branchOfferDismissed),
           collapsed: true,
+          savedAgentSessionIds: Array.isArray(pt.savedAgentSessionIds)
+            ? agentDefs.map((_, index) => {
+                const id = pt.savedAgentSessionIds?.[index];
+                return isSessionId(id) ? id : null;
+              })
+            : undefined,
           savedAgentDef: agentDefs[0],
           savedAgentDefs: agentDefs.length > 0 ? agentDefs : undefined,
           coordinatorMode: pt.coordinatorMode,

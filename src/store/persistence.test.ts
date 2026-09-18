@@ -333,6 +333,41 @@ describe('coordinator concurrency limit persistence', () => {
   });
 });
 
+describe('collapsed session ownership persistence', () => {
+  const session = 'fb4f2bc6-62d9-4b29-a795-240caf2fc459';
+  it.each([
+    { saved: [session, null, session], expected: [session, null, session] },
+    { saved: [session, '--unsafe-flag', 42, session], expected: [session, null, null] },
+    { saved: { 0: session }, expected: undefined },
+    { saved: undefined, expected: undefined },
+  ])('validates and round-trips saved sessions: $saved', async ({ saved, expected }) => {
+    const def = agentDef();
+    mockInvoke.mockResolvedValueOnce(
+      JSON.stringify({
+        projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'blue' }],
+        taskOrder: [],
+        collapsedTaskOrder: ['task-1'],
+        tasks: {
+          'task-1': {
+            ...persistedTask(def),
+            collapsed: true,
+            agentDefs: [def, def, def],
+            savedAgentSessionIds: saved,
+          },
+        },
+      }),
+    );
+    await loadState();
+    expect(store.tasks['task-1'].savedAgentSessionIds).toEqual(expected);
+    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValue(undefined);
+    await saveState();
+    const call = mockInvoke.mock.calls.find(([channel]) => channel === IPC.SaveAppState);
+    const persisted = JSON.parse(call?.[1].json);
+    expect(persisted.tasks['task-1'].savedAgentSessionIds).toEqual(expected);
+  });
+});
+
 describe('reasoning profile persistence', () => {
   it.each(['architecture', 'research', 'explanation', undefined, 'unknown'])(
     'restores and saves %s for active and collapsed tasks',

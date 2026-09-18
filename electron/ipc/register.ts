@@ -131,6 +131,7 @@ import {
   validatePath,
 } from './validate.js';
 import { registerDocumentHandlers } from '../documents/register.js';
+import { listSessionsForCwd } from '../sessions/scan.js';
 import { validateBranchName as sharedValidateBranchName, validateUUID } from '../mcp/validation.js';
 import { debug as logDebug, warn as logWarn, errMessage } from '../log.js';
 import { getMCPRemoteServerUrl, detectStaleDockerMCPUrl } from '../mcp/config.js';
@@ -970,6 +971,10 @@ export function registerAllHandlers(win: BrowserWindow): void {
     const reportPath = args.reportPath?.trim() || undefined;
     if (reportPath) validateRelativePath(reportPath, 'reportPath');
     return readCoverageSummary(args.repoRoot, reportPath);
+  });
+  ipcMain.handle(IPC.ListSessions, (_e, args) => {
+    validatePath(args.cwd, 'cwd');
+    return listSessionsForCwd(args.cwd);
   });
   ipcMain.handle(IPC.PushTask, (_e, args) => {
     const projectRoot = projectRootArg(args);

@@ -36,6 +36,7 @@ import { warn as logWarn } from '../lib/log';
 import { InfoBar } from './InfoBar';
 import { PromptHistory } from './PromptHistory';
 import { TerminalView } from './TerminalView';
+import { SessionPicker } from './SessionPicker';
 import { AgentChatView } from './AgentChatView';
 import { isAgentChat, agentChatProvider, agentChatUnavailableReason } from '../store/agent-chat';
 import { setStore } from '../store/core';
@@ -827,6 +828,12 @@ function AgentTerminalPane(props: {
                     Resume
                   </button>
                 </Show>
+                <SessionPicker
+                  taskId={props.task.id}
+                  agentId={a().id}
+                  command={a().def.command}
+                  currentSessionId={props.task.agentSessionIds?.[a().id]}
+                />
               </div>
             </Show>
             <Show when={isAgentChat(props.task, props.agentId)}>
@@ -857,7 +864,13 @@ function AgentTerminalPane(props: {
                       isPanelFocused(props.task.id, aiTerminalPanelId(props.agentId))
                     }
                     command={a().def.command}
-                    args={buildTaskAgentArgs(a().def, props.task, a().resumed, a().id)}
+                    args={buildTaskAgentArgs(
+                      a().def,
+                      props.task,
+                      a().resumed,
+                      a().id,
+                      props.task.agentSessionIds?.[a().id],
+                    )}
                     cwd={props.task.worktreePath}
                     envFile={store.agentEnvFiles[a().def.id]}
                     stepsEnabled={props.task.stepsEnabled}
