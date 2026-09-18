@@ -277,6 +277,7 @@ it('loads the whole diff when opened without a file to scroll to', async () => {
       JSON.stringify(['first.ts']),
     ),
   );
+  expect(host.querySelector('h2')?.textContent).toContain('all changes');
 });
 
 it.each(['cancel', 'reset'] as const)('ignores a pending diff load after %s', async (action) => {

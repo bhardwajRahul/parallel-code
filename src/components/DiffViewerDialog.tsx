@@ -42,7 +42,10 @@ import { createChangeTour, type ChangeTourController } from '../lib/create-chang
 interface DiffViewerDialogProps {
   tour?: ChangeTourController;
   startTour?: boolean;
-  /** Which file to auto-scroll to (the one the user clicked). Null = closed. */
+  /**
+   * Which file to auto-scroll to (the one the user clicked). Null = closed;
+   * '' = open on all changes with no file focused.
+   */
   scrollToFile: string | null;
   /** Visible task title shown while reviewing changes. */
   taskName?: string;
@@ -121,7 +124,7 @@ export function DiffViewerDialog(props: DiffViewerDialogProps) {
         }}
       >
         <h2 id={titleId} class="dialog-sr-only">
-          Diff viewer for {props.taskName ?? 'task'}: {props.scrollToFile ?? 'all changes'}
+          Diff viewer for {props.taskName ?? 'task'}: {props.scrollToFile || 'all changes'}
         </h2>
         <Show when={props.scrollToFile !== null}>
           <DiffViewerContent
