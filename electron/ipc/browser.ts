@@ -17,6 +17,9 @@ import {
   type BrowserState,
 } from '../shared/browser.js';
 
+// Sessions live for the app process, including across window recreation.
+const taskSessions = new Map<string, { session: Electron.Session; clearing: Promise<void> }>();
+
 export function isBrowserCloseShortcut(
   input: Pick<Input, 'type' | 'key' | 'control' | 'meta' | 'alt' | 'shift'>,
   platform: NodeJS.Platform = process.platform,
@@ -37,7 +40,14 @@ export function isBrowserCloseShortcut(
 export function registerBrowserHandlers(win: BrowserWindow): void {
   const previews = new Map<
     string,
-    { view: WebContentsView; state: BrowserState; visible: boolean }
+    {
+      view: WebContentsView;
+      state: BrowserState;
+      taskId: string;
+      visible: boolean;
+      ready: Promise<BrowserState>;
+      initializing: boolean;
+    }
   >();
   const owner = win.webContents;
   const trusted = (event: IpcMainInvokeEvent): void => {
@@ -70,12 +80,26 @@ export function registerBrowserHandlers(win: BrowserWindow): void {
       return;
     }
     if (args.action === 'create') {
-      if (previews.has(args.id)) return previews.get(args.id)?.state;
-      // In-memory, separate from the app and every other preview. No inherited clipboard/mic grants.
-      const previewSession = session.fromPartition(`preview-${randomUUID()}`);
-      previewSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
-      previewSession.setPermissionCheckHandler(() => false);
-      previewSession.on('will-download', (e) => e.preventDefault());
+      if (typeof args.taskId !== 'string' || !/^[\w-]{1,80}$/.test(args.taskId))
+        throw new Error('Invalid browser task ID.');
+      const existing = previews.get(args.id);
+      if (existing) {
+        if (existing.taskId !== args.taskId) throw new Error('Preview belongs to another task.');
+        return existing.ready;
+      }
+      if ([...previews.values()].some((entry) => entry.taskId === args.taskId))
+        throw new Error('Task already has a preview.');
+      let taskSession = taskSessions.get(args.taskId);
+      if (!taskSession) {
+        // Only the trusted app supplies task IDs; partition names stay main-process owned.
+        const previewSession = session.fromPartition(`preview-${randomUUID()}`);
+        previewSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+        previewSession.setPermissionCheckHandler(() => false);
+        previewSession.on('will-download', (e) => e.preventDefault());
+        taskSession = { session: previewSession, clearing: Promise.resolve() };
+        taskSessions.set(args.taskId, taskSession);
+      }
+      const previewSession = taskSession.session;
       const view = new WebContentsView({
         webPreferences: {
           preload: fileURLToPath(new URL('../../electron/browser-preload.cjs', import.meta.url)),
@@ -97,7 +121,33 @@ export function registerBrowserHandlers(win: BrowserWindow): void {
         picking: false,
         error: null,
       };
-      const entry = { view, state, visible: false };
+      // Serialize cleanup across rapid close/reopen, before the new page can navigate.
+      taskSession.clearing = taskSession.clearing
+        .catch(() => undefined)
+        .then(async () => {
+          await previewSession.clearStorageData();
+          await previewSession.clearCache();
+          await previewSession.clearAuthCache();
+          await previewSession.closeAllConnections();
+        });
+      const entry = {
+        view,
+        state,
+        taskId: args.taskId,
+        visible: false,
+        initializing: true,
+        ready: taskSession.clearing.then(
+          () => {
+            if (previews.get(args.id) !== entry) throw new Error('Preview is closed.');
+            entry.initializing = false;
+            return state;
+          },
+          (error: unknown) => {
+            if (previews.get(args.id) === entry) close(args.id);
+            throw error;
+          },
+        ),
+      };
       previews.set(args.id, entry);
       view.setVisible(false);
       win.contentView.addChildView(view);
@@ -182,10 +232,11 @@ export function registerBrowserHandlers(win: BrowserWindow): void {
           publish();
         }
       });
-      return state;
+      return entry.ready;
     }
     const entry = previews.get(args.id);
     if (!entry) throw new Error('Preview is closed.');
+    if (entry.initializing) throw new Error('Preview is still starting.');
     const { view, state } = entry;
     const wc = view.webContents;
     switch (args.action) {

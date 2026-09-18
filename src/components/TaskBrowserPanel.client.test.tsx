@@ -43,6 +43,20 @@ function mount(onClose = vi.fn()) {
   return { container, listeners, onClose };
 }
 
+it('keeps task identity across remounts while assigning a fresh view ID', () => {
+  mount();
+  disposers.pop()?.();
+  mount();
+  const creates = vi
+    .mocked(invoke)
+    .mock.calls.filter(([, args]) => args?.action === 'create')
+    .map(([, args]) => args);
+  expect(creates).toHaveLength(2);
+  expect(creates[0]?.taskId).toBe('task-1');
+  expect(creates[1]?.taskId).toBe('task-1');
+  expect(creates[0]?.id).not.toBe(creates[1]?.id);
+});
+
 it('opens a URL and routes only this preview’s picked reference to its task', async () => {
   const { container, listeners } = mount();
   await Promise.resolve();
