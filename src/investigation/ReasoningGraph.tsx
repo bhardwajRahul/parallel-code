@@ -726,11 +726,8 @@ export function ReasoningGraph(props: Props) {
     // An agent update may remove the node being renamed. onSave then fails forever, and
     // inlineEditing refuses every other action while a draft will not save, so the whole
     // canvas — rename, add, delete, Export — would stay wedged on the lost draft.
-    // Track the draft too, not just the snapshot: the node can also already be gone when the
-    // rename starts, because the user is reading an older snapshot that still shows it.
-    // A just-added node is safe — commit() publishes it before it hands us the id to edit.
     const live = latest()?.records;
-    const draftId = inline.editing()?.id;
+    const draftId = untrack(inline.editing)?.id;
     if (draftId && live && !live.some((record) => record.id === draftId)) inline.reset();
   });
   createEffect(() => {
