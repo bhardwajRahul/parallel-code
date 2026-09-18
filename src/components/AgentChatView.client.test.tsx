@@ -253,22 +253,25 @@ describe('Codex chat view', () => {
     dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     await tick();
     mocks.channel?.onmessage?.(
-      state({ permissionMode: 'default', permissionNote: 'Your settings use auto mode, which…' }),
+      state({
+        permissionMode: 'default',
+        permissionNote: 'Your settings use bypassPermissions, which…',
+      }),
     );
-    expect(container.querySelector('.codex-chat-note')?.textContent).toContain('auto mode');
+    expect(container.querySelector('.codex-chat-note')?.textContent).toContain('bypassPermissions');
     const select = container.querySelector<HTMLSelectElement>('.codex-chat-mode');
     if (!select) throw new Error('The Claude chat header has no permission mode control.');
     expect(select.value).toBe('default');
-    select.value = 'acceptEdits';
+    select.value = 'auto';
     select.dispatchEvent(new Event('change', { bubbles: true }));
     await vi.waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith(IPC.AgentChat, {
         action: 'setPermissionMode',
         agentId: 'agent-1',
-        permissionMode: 'acceptEdits',
+        permissionMode: 'auto',
       }),
     );
-    expect(task().chatPermissionMode).toBe('acceptEdits');
+    expect(task().chatPermissionMode).toBe('auto');
   });
 
   it('offers no permission mode for Codex, which has no such control', async () => {

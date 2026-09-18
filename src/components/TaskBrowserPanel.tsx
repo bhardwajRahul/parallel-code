@@ -111,7 +111,7 @@ export function TaskBrowserPanel(props: TaskBrowserPanelProps) {
         });
       }
     });
-    void invoke(IPC.BrowserCommand, { id, action: 'create' })
+    void invoke(IPC.BrowserCommand, { id, taskId, action: 'create' })
       .then(() => {
         if (disposed) return;
         setReady(true);
