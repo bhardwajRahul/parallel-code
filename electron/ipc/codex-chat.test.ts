@@ -470,3 +470,21 @@ it('refuses handoff while a turn or permission request is pending', async () => 
   h.chat.stop();
   h.proc.emit('close');
 });
+
+describe('stopping the app-server', () => {
+  it('gives the process group a grace period on an ordinary stop', async () => {
+    const h = harness();
+    await h.start();
+    h.chat.stop();
+    expect(h.proc.kill.mock.calls.map(([signal]) => signal)).toEqual(['SIGTERM']);
+  });
+
+  it('kills the group outright when the app is quitting', async () => {
+    const h = harness();
+    await h.start();
+    // On quit the grace timer is unref'd and Electron exits long before 2 s, so a group that
+    // ignores SIGTERM would outlive the app with nobody left to kill it.
+    h.chat.stop(true);
+    expect(h.proc.kill.mock.calls.map(([signal]) => signal)).toEqual(['SIGTERM', 'SIGKILL']);
+  });
+});
