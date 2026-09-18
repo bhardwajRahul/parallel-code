@@ -14,7 +14,7 @@ import type {
 } from '../shared/agent-chat-types.js';
 import { stripAnsi } from '../shared/prompt-detect.js';
 import { describePermissionUpdates, describeToolCall, visibleUserText } from './describe.js';
-import { launchPermissionMode, settingsDefaultMode } from './settings-mode.js';
+import { chatSettingSources, launchPermissionMode, settingsDefaultMode } from './settings-mode.js';
 import type { AgentChat, ChatStartOptions } from './types.js';
 
 type ClaudeSDK = Pick<
@@ -114,7 +114,8 @@ export class ClaudeChat implements AgentChat {
     const settingsMode =
       this.opts.skipPermissions || this.opts.permissionMode
         ? undefined
-        : settingsDefaultMode(this.opts.cwd);
+        : await settingsDefaultMode(this.opts.cwd);
+    if (this.isClosed()) throw new Error('Claude chat stopped while connecting.');
     this.query = sdk.query({
       prompt: this.prompts(),
       options: {
@@ -123,7 +124,7 @@ export class ClaudeChat implements AgentChat {
         pathToClaudeCodeExecutable: this.opts.command,
         ...(this.opts.threadId ? { resume: sessionId } : { sessionId }),
         systemPrompt: { type: 'preset', preset: 'claude_code' },
-        settingSources: ['user', 'project', 'local'],
+        settingSources: chatSettingSources(),
         includePartialMessages: true,
         extraArgs: {
           'replay-user-messages': null,

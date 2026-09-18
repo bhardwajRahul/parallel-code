@@ -1,62 +1,76 @@
-import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  PermissionMode,
+  ResolvedSettings,
+  SettingSource,
+} from '@anthropic-ai/claude-agent-sdk';
 
-/** Where an administrator's managed settings live, which outrank every other file. */
-const MANAGED_SETTINGS =
-  process.platform === 'darwin'
-    ? '/Library/Application Support/ClaudeCode/managed-settings.json'
-    : '/etc/claude-code/managed-settings.json';
+/** The settings tiers a chat session reads, which is what its `query()` is given too. */
+const SETTING_SOURCES: readonly SettingSource[] = ['user', 'project', 'local'];
 
-/** The settings files Claude Code reads for a working directory, lowest precedence first. */
-function settingsFiles(cwd: string): string[] {
-  const userDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
-  return [
-    join(userDir, 'settings.json'),
-    join(cwd, '.claude', 'settings.json'),
-    join(cwd, '.claude', 'settings.local.json'),
-    MANAGED_SETTINGS,
-  ];
-}
+export const chatSettingSources = (): SettingSource[] => [...SETTING_SOURCES];
 
-function defaultModeIn(file: string): string | undefined {
-  let contents: string;
-  try {
-    contents = readFileSync(file, 'utf8');
-  } catch {
-    return undefined; // No settings at this level is the normal case.
-  }
-  try {
-    const settings: unknown = JSON.parse(contents);
-    const permissions = (settings as { permissions?: unknown })?.permissions;
-    const mode = (permissions as { defaultMode?: unknown })?.defaultMode;
-    return typeof mode === 'string' ? mode : undefined;
-  } catch (error) {
-    // Malformed settings are the user's to fix; Claude Code reports them itself.
-    // Never let one stop the chat from opening.
-    console.warn(`Ignoring unreadable settings file ${file}:`, error);
-    return undefined;
-  }
+/** Tiers a checkout can carry: `.claude/settings.json` is committed outright, and
+ *  nothing stops a repository shipping the `.local.json` that convention ignores. */
+const REPO_TIERS: readonly string[] = ['project', 'local'];
+
+/** Modes the CLI takes only from a tier the user owns. Measured against CLI 2.1.276,
+ *  which resolves `auto` and `bypassPermissions` to `default` when either repo tier
+ *  asks for them, and honours `acceptEdits` from any tier. */
+const USER_TIER_ONLY: readonly string[] = ['auto', 'bypassPermissions'];
+
+/** Whether the checkout, rather than the user or an administrator, asked for `mode`. */
+function askedByRepo(resolved: ResolvedSettings, mode: string): boolean {
+  const asked = [...resolved.sources]
+    .reverse() // Sources run low to high precedence; the last to set the mode owns it.
+    .find((source) => source.settings.permissions?.defaultMode === mode);
+  return !!asked && REPO_TIERS.includes(asked.source);
 }
 
 /**
- * The `permissions.defaultMode` Claude Code itself would resolve for `cwd`, with
- * managed settings winning over local, local over project, and project over user.
+ * The `permissions.defaultMode` Claude Code itself would honour for `cwd`, or
+ * `undefined` when no tier it trusts asks for one.
  *
  * The chat has to resolve this itself: the SDK sends `--permission-mode` on every
  * session it starts, and that flag outranks the settings file, so the CLI never
  * gets to apply `defaultMode` on its own the way it does in a terminal.
+ *
+ * The merge is the SDK's own engine, not a cascade of ours, and what it returns
+ * passes two trust filters rather than one. `filterEscalatingDefaultMode` is the
+ * SDK's, and it covers the committed `project` tier only; the CLI itself also
+ * refuses an escalating mode from `settings.local.json`, so `askedByRepo` covers
+ * that. Which matters because a worktree holding code the user has not read is
+ * exactly what this app opens: honouring it would let a repository grant itself
+ * a session that stops asking.
+ *
+ * Loaded on demand, the way the session itself loads the SDK, so starting the app
+ * never pays for a chat nobody opened.
  */
-export function settingsDefaultMode(cwd: string): string | undefined {
-  return settingsFiles(cwd).reduce<string | undefined>(
-    (mode, file) => defaultModeIn(file) ?? mode,
-    undefined,
-  );
+export async function settingsDefaultMode(cwd: string): Promise<string | undefined> {
+  try {
+    const { resolveSettings, filterEscalatingDefaultMode } =
+      await import('@anthropic-ai/claude-agent-sdk');
+    const resolved = await resolveSettings({ cwd, settingSources: chatSettingSources() });
+    const mode = filterEscalatingDefaultMode(resolved).permissions?.defaultMode;
+    if (!mode) return undefined;
+    return USER_TIER_ONLY.includes(mode) && askedByRepo(resolved, mode) ? undefined : mode;
+  } catch (error) {
+    // Settings are the user's to fix and Claude Code reports them itself. Never
+    // let one stop the chat from opening; asking is the safe way to carry on.
+    console.warn('Ignoring unreadable Claude Code settings:', error);
+    return undefined;
+  }
 }
 
-/** The modes a chat session may launch itself in on the strength of a settings file. */
-const LAUNCHABLE = new Set<string>(['default', 'acceptEdits', 'plan', 'auto', 'dontAsk']);
+/** The modes a chat session may launch itself in on the strength of a settings file.
+ *  Typed against the SDK's own union, so a mode it renames stops the build rather
+ *  than quietly becoming a mode this app no longer forwards. */
+const LAUNCHABLE = [
+  'default',
+  'acceptEdits',
+  'plan',
+  'auto',
+  'dontAsk',
+] as const satisfies readonly PermissionMode[];
 
 /**
  * A settings `defaultMode` as a mode the session can launch in, or `undefined`
@@ -70,5 +84,5 @@ export function launchPermissionMode(mode: string | undefined): PermissionMode |
   // 'manual' is what the CLI calls the asking mode on the command line; the SDK
   // and the session's own reports still call the same mode 'default'.
   if (mode === 'manual') return 'default';
-  return mode && LAUNCHABLE.has(mode) ? (mode as PermissionMode) : undefined;
+  return LAUNCHABLE.find((launchable) => launchable === mode);
 }
