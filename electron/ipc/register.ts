@@ -4,10 +4,15 @@ import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { IPC } from './channels.js';
-import { startAgentChat, getAgentChat, stopAgentChat, releaseCodexChat } from '../chat/sessions.js';
+import { startAgentChat, getAgentChat, stopAgentChat, releaseChat } from '../chat/sessions.js';
 import { getChatConnection } from '../chat/protocol.js';
 import { isChatDecision, isChatPermissionMode } from '../shared/agent-chat-types.js';
-import { buildPtySpawnEnv, validateCommand, handoffCodexTerminal } from './pty.js';
+import {
+  buildPtySpawnEnv,
+  validateCommand,
+  handoffCodexTerminal,
+  handoffClaudeTerminal,
+} from './pty.js';
 import { loadEnvFile } from './env-file.js';
 import { appendGitInfoExcludeBlock } from './git-exclude.js';
 import {
@@ -440,10 +445,16 @@ export function registerAllHandlers(win: BrowserWindow): void {
     assertString(args.action, 'action');
     if (args.action === 'handoffToChat') {
       // Any older separate chat must also be idle before adopting the terminal's ID.
-      await releaseCodexChat(args.agentId);
+      await releaseChat(args.agentId);
+      if (args.provider === 'claude') {
+        // Claude's session id belongs to the pane, so nothing has to be read
+        // back out of the terminal — it only has to stop holding the session.
+        await handoffClaudeTerminal(args.agentId);
+        return {};
+      }
       return { threadId: await handoffCodexTerminal(args.agentId) };
     }
-    if (args.action === 'handoffToTerminal') return releaseCodexChat(args.agentId);
+    if (args.action === 'handoffToTerminal') return releaseChat(args.agentId);
     if (args.action === 'start') {
       if (args.provider !== 'codex' && args.provider !== 'claude')
         throw new Error('Unsupported chat provider.');

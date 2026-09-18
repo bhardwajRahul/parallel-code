@@ -43,10 +43,37 @@ const sessions = new Map<string, PtySession>();
 const pendingSpawns = new Map<string, symbol>();
 const codexExitIds = new Map<string, string>();
 const handingOff = new Set<string>();
+const carriedScrollback = new Map<string, string>();
+
+/**
+ * Hold on to what the pane showed, so the next spawn can put it back.
+ *
+ * A handoff ends the CLI process and the return trip starts a new one, which
+ * gets a new PTY and an empty scrollback buffer. The conversation is resumed
+ * either way, but without this the user comes back to a blank terminal and the
+ * whole exchange looks lost.
+ */
+function carryScrollback(session: PtySession): void {
+  const data = session.scrollback.toBase64();
+  if (data) carriedScrollback.set(session.agentId, data);
+}
+
+/**
+ * Refuse a handoff while a spawn is between its first await and `sessions.set`.
+ *
+ * There is no session to find in that gap, and reading it as "already exited"
+ * would hand the session id to the other view while a CLI is still on its way
+ * to that exact id — the two-processes-on-one-conversation case this avoids.
+ */
+function assertNoSpawnInFlight(agentId: string): void {
+  if (pendingSpawns.has(agentId))
+    throw new Error('The terminal is still starting. Try switching again in a moment.');
+}
 
 /** Ask an idle Codex TUI to exit, then wait for its exact resume footer. */
 export async function handoffCodexTerminal(agentId: string): Promise<string> {
   if (handingOff.has(agentId)) throw new Error('A view switch is already in progress.');
+  assertNoSpawnInFlight(agentId);
   const session = sessions.get(agentId);
   if (!session) {
     const id = codexExitIds.get(agentId);
@@ -72,8 +99,10 @@ export async function handoffCodexTerminal(agentId: string): Promise<string> {
         clearTimeout(timer);
         exit.dispose();
         const id = codexExitIds.get(agentId);
-        if (exitCode === 0 && !signal && id) resolve(id);
-        else
+        if (exitCode === 0 && !signal && id) {
+          carryScrollback(session);
+          resolve(id);
+        } else
           reject(new Error('Codex exited without a resume ID. The terminal output is preserved.'));
       });
       // Ctrl+D exits an empty Codex composer without submitting a prompt.
@@ -82,6 +111,70 @@ export async function handoffCodexTerminal(agentId: string): Promise<string> {
       } catch (error) {
         clearTimeout(timer);
         exit.dispose();
+        reject(error);
+      }
+    });
+  } finally {
+    handingOff.delete(agentId);
+  }
+}
+
+/** How long Claude's "Press Ctrl-D again to exit" prompt stays armed, as seen
+ *  in the CLI: the second press has to land inside it or the first is forgotten. */
+const CLAUDE_EXIT_CONFIRM_MS = 300;
+
+/**
+ * Ask an idle Claude Code TUI to exit, so the chat view can resume its session.
+ *
+ * Claude needs Ctrl+D twice — the first press only arms "Press Ctrl-D again to
+ * exit" — where Codex goes on one. No resume footer to read: the pane already
+ * knows its session id, because it launched the CLI with `--session-id`.
+ */
+export async function handoffClaudeTerminal(agentId: string): Promise<void> {
+  if (handingOff.has(agentId)) throw new Error('A view switch is already in progress.');
+  assertNoSpawnInFlight(agentId);
+  const session = sessions.get(agentId);
+  // Already exited — the transcript is on disk and nothing is holding it open.
+  if (!session) return;
+  if (session.isShell || session.containerName || !isClaudeCommand(session.command))
+    throw new Error('This terminal does not support Claude conversation handoff.');
+  handingOff.add(agentId);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let confirm: ReturnType<typeof setTimeout> | undefined;
+      const stopWaiting = () => {
+        clearTimeout(timer);
+        if (confirm) clearTimeout(confirm);
+        exit.dispose();
+      };
+      const timer = setTimeout(() => {
+        stopWaiting();
+        reject(
+          new Error(
+            'Claude has not exited. Finish the response, clear the terminal input, then try again.',
+          ),
+        );
+      }, 5000);
+      // Any exit frees the session: an abnormal one still leaves a transcript
+      // that `--resume` reads, and refusing here would strand the user in a
+      // terminal whose CLI is already gone.
+      const exit = session.proc.onExit(() => {
+        stopWaiting();
+        carryScrollback(session);
+        resolve();
+      });
+      try {
+        session.proc.write('\x04');
+        confirm = setTimeout(() => {
+          try {
+            session.proc.write('\x04');
+          } catch (error) {
+            // Claude quit on the first press; the exit handler above resolves.
+            logDebug('pty', `claude handoff confirm write failed ${agentId}`, { error });
+          }
+        }, CLAUDE_EXIT_CONFIRM_MS);
+      } catch (error) {
+        stopWaiting();
         reject(error);
       }
     });
@@ -431,6 +524,25 @@ function buildPtySpawnSpec(
   };
 }
 
+/**
+ * Put the pre-handoff output back at the top of a fresh PTY, above a divider so
+ * the relaunch is visible rather than looking like one continuous run. Written
+ * to the new session's buffer too, so a renderer reload keeps it.
+ */
+function replayCarriedScrollback(win: BrowserWindow, session: PtySession): void {
+  const carried = carriedScrollback.get(session.agentId);
+  if (!carried) return;
+  carriedScrollback.delete(session.agentId);
+  // The ring buffer drops its oldest bytes mid-escape-sequence, so terminate
+  // whatever the first line started (ST) and reset the attributes before the
+  // divider — otherwise a half-eaten sequence can swallow it and the first of
+  // the new CLI's output.
+  const divider = Buffer.from('\x1b\\\x1b[0m\r\n\x1b[2m── resumed ──\x1b[0m\r\n', 'utf8');
+  const replay = Buffer.concat([Buffer.from(carried, 'base64'), divider]);
+  session.scrollback.write(replay);
+  sendToChannel(win, session.channelId, { type: 'Data', data: replay.toString('base64') });
+}
+
 function cleanupExistingSession(agentId: string, existing: PtySession | undefined): void {
   if (!existing) return;
   if (existing.flushTimer) clearTimeout(existing.flushTimer);
@@ -682,6 +794,7 @@ export async function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): Prom
     containerName: spawnSpec.containerName,
   };
   sessions.set(args.agentId, session);
+  replayCarriedScrollback(win, session);
   attachPtyOutputHandlers(win, session, args, command);
 
   emitPtyEvent('spawn', args.agentId);
@@ -722,6 +835,7 @@ export function resumeAgent(agentId: string): void {
 export function killAgent(agentId: string): void {
   pendingSpawns.delete(agentId);
   codexExitIds.delete(agentId);
+  carriedScrollback.delete(agentId);
   stopAgentChat(agentId);
   const session = sessions.get(agentId);
   if (session) {
@@ -750,6 +864,7 @@ export function countRunningAgents(): number {
 export function killAllAgents(): void {
   pendingSpawns.clear();
   codexExitIds.clear();
+  carriedScrollback.clear();
   // Only called on shutdown, so detached chat process groups must die now, not on a timer.
   stopAllAgentChats(true);
   for (const [, session] of sessions) {

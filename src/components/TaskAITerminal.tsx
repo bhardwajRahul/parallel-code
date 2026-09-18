@@ -1,13 +1,4 @@
-import {
-  batch,
-  Show,
-  For,
-  createSignal,
-  createEffect,
-  onMount,
-  onCleanup,
-  untrack,
-} from 'solid-js';
+import { Show, For, createSignal, createEffect, onMount, onCleanup, untrack } from 'solid-js';
 import type { TranscriptMarks } from '../investigation/transcript';
 
 import {
@@ -39,9 +30,11 @@ import { TerminalView } from './TerminalView';
 import { SessionPicker } from './SessionPicker';
 import { AgentChatView } from './AgentChatView';
 import { isAgentChat, agentChatProvider, agentChatUnavailableReason } from '../store/agent-chat';
+import { agentViewHandsOff, agentViewSwitchCost, switchMainAgentView } from '../store/agent-view';
 import { setStore } from '../store/core';
 import { saveState } from '../store/persistence';
 import { Dialog } from './Dialog';
+import { ConfirmDialog } from './ConfirmDialog';
 import { CloseIcon, CommentIcon, TerminalIcon } from './icons';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
@@ -136,8 +129,13 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
   const [switchingView, setSwitchingView] = createSignal(false);
   const [viewError, setViewError] = createSignal('');
   const [noticeRequested, setNoticeRequested] = createSignal(false);
+  /** The view the user asked for and has yet to confirm quitting the other for. */
+  const [pendingSwitch, setPendingSwitch] = createSignal<'chat' | 'terminal' | null>(null);
   const currentView = () => (isAgentChat(props.task, firstAgentId()) ? 'chat' : 'terminal');
-  const codexHandoff = () => agentChatProvider(firstAgentId()) === 'codex';
+  const agentName = () => (agentChatProvider(firstAgentId()) === 'claude' ? 'Claude' : 'Codex');
+  /** Whether leaving the terminal hands its conversation over, rather than
+   *  leaving a running CLI behind and opening a separate chat. */
+  const terminalHandoff = () => agentViewHandsOff(props.task, firstAgentId(), 'chat');
   const switchBlockedReason = () => {
     const unavailable = agentChatUnavailableReason(props.task);
     if (unavailable) return unavailable;
@@ -146,12 +144,12 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
       if (state?.requests.length) return 'Resolve the pending request before switching views';
       if (state?.status === 'working' || state?.status === 'starting')
         return 'Finish or stop the response before switching views';
-    } else if (codexHandoff()) {
+    } else if (terminalHandoff()) {
       if (props.task.initialPrompt) return 'Wait for the queued prompt before switching views';
       if (props.task.terminalInputPending)
         return 'Send or clear the terminal draft before switching views';
       if (!isAgentIdle(firstAgentId()) || isAgentAskingQuestion(firstAgentId()))
-        return 'Wait for Codex to finish and resolve pending requests before switching views';
+        return `Wait for ${agentName()} to finish and resolve pending requests before switching views`;
     }
     return '';
   };
@@ -160,7 +158,16 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
   // asking for something already done nor resurface a reason that has since
   // been replaced by a different one.
   const viewNotice = () => viewError() || (noticeRequested() ? switchBlockedReason() : '');
-  async function switchView(mode: 'chat' | 'terminal') {
+  // Drop a question whose cost has gone, so a later restart cannot make the
+  // dialog reappear for a switch the user asked about minutes ago.
+  createEffect(() => {
+    const mode = pendingSwitch();
+    if (mode && !agentViewSwitchCost(props.task, firstAgentId(), mode)) setPendingSwitch(null);
+  });
+  async function switchView(mode: 'chat' | 'terminal', confirmed = false) {
+    // The answer is spent whatever happens below — including a refusal, which
+    // belongs in the alert rather than behind a dialog that stays open.
+    if (confirmed) setPendingSwitch(null);
     if (currentView() === mode || switchingView()) return;
     // A disabled button's tooltip is unreachable by keyboard and screen readers,
     // so the precondition is reported where the handoff errors already appear.
@@ -168,31 +175,18 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
     setNoticeRequested(!!blocked);
     setViewError('');
     if (blocked) return;
+    // Quitting a live CLI is the user's call, and the answer is asked for again
+    // on every switch: what the running side is in the middle of changes.
+    if (!confirmed && agentViewSwitchCost(props.task, firstAgentId(), mode)) {
+      setPendingSwitch(mode);
+      return;
+    }
     const agentId = firstAgentId();
     const taskId = props.task.id;
     setSwitchingView(true);
     try {
-      if (codexHandoff()) {
-        const session = await invoke<NonNullable<Task['codexChatHandoff']>>(IPC.AgentChat, {
-          action: mode === 'chat' ? 'handoffToChat' : 'handoffToTerminal',
-          agentId,
-        });
-        if (!store.tasks[taskId] || !store.agents[agentId]) return;
-        batch(() => {
-          if (mode === 'chat') {
-            setStore('tasks', taskId, 'codexChatThreadId', session.threadId);
-            setStore('tasks', taskId, 'codexChatHandoff', undefined);
-          } else {
-            setStore('tasks', taskId, 'codexChatHandoff', {
-              threadId: session.threadId ?? props.task.codexChatThreadId,
-              model: session.model,
-              reasoningEffort: session.reasoningEffort,
-            });
-            restartAgent(agentId, true);
-          }
-          setStore('tasks', taskId, 'mainAgentView', mode);
-        });
-      } else setStore('tasks', taskId, 'mainAgentView', mode);
+      await switchMainAgentView(taskId, agentId, mode);
+      if (!store.tasks[taskId] || !store.agents[agentId]) return;
       selectAgent(agentId);
       void saveState();
     } catch (error) {
@@ -514,9 +508,9 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
                               : blocked()
                                 ? switchBlockedReason()
                                 : mode === 'chat'
-                                  ? codexHandoff()
+                                  ? terminalHandoff()
                                     ? 'Continue this conversation in Chat'
-                                    : 'Open a separate Claude chat in this worktree'
+                                    : `Open a separate ${agentName()} chat in this worktree`
                                   : 'Open the terminal conversation'
                           }
                           onClick={(event) => {
@@ -579,6 +573,25 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
         fileName={mdViewerFileName()}
         filePath={mdViewerFilePath()}
       />
+      <Show when={pendingSwitch()}>
+        {(mode) => (
+          // Re-read on every render: the CLI on the other side may have exited
+          // on its own while the dialog was open, and then there is nothing
+          // left to quit — the question goes away with the cost.
+          <Show when={agentViewSwitchCost(props.task, firstAgentId(), mode())}>
+            {(cost) => (
+              <ConfirmDialog
+                open
+                title={cost().title}
+                message={cost().message}
+                confirmLabel={cost().confirmLabel}
+                onConfirm={() => void switchView(mode(), true)}
+                onCancel={() => setPendingSwitch(null)}
+              />
+            )}
+          </Show>
+        )}
+      </Show>
     </>
   );
 }

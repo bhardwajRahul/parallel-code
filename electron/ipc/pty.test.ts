@@ -87,6 +87,7 @@ vi.mock('../log.js', () => ({
 import {
   buildPtySpawnEnv,
   handoffCodexTerminal,
+  handoffClaudeTerminal,
   buildDockerImage,
   DOCKER_CONTAINER_HOME,
   dockerImageExists,
@@ -1376,6 +1377,17 @@ describe('writeToAgent — interrupt keystrokes', () => {
   });
 });
 
+/** Everything a window was sent as terminal output, decoded and joined. */
+function channelData(win: BrowserWindow): string {
+  return vi
+    .mocked(win.webContents.send)
+    .mock.calls.map(([, message]) => {
+      const payload = message as { type: string; data?: string };
+      return payload.type === 'Data' ? Buffer.from(payload.data ?? '', 'base64').toString() : '';
+    })
+    .join('');
+}
+
 describe('Codex terminal handoff', () => {
   const id = '01999999-1234-4321-9876-0123456789ab';
   function launch() {
@@ -1398,6 +1410,22 @@ describe('Codex terminal handoff', () => {
     await expect(handoffCodexTerminal(agentId)).resolves.toBe(id);
     expect(proc.kill).not.toHaveBeenCalled();
   });
+  it('replays the pre-handoff output into the relaunched terminal', async () => {
+    const args = buildSpawnArgs({ command: 'codex', args: [], dockerMode: false });
+    void spawnAgent(createMockWindow(), args);
+    const proc = mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1].value;
+    proc.emitData('an earlier exchange\r\n');
+    const promise = handoffCodexTerminal(args.agentId);
+    proc.emitData(`\r\nTo continue this session, run codex resume ${id}\r\n`);
+    proc.emitExit({ exitCode: 0, signal: undefined });
+    await promise;
+
+    const next = createMockWindow();
+    void spawnAgent(next, { ...args, command: 'codex', args: [], dockerMode: false });
+    expect(channelData(next)).toContain('an earlier exchange');
+    expect(channelData(next)).toContain('── resumed ──');
+  });
+
   it('rejects abnormal exits and leaves the final output available', async () => {
     const { agentId, proc } = launch();
     const promise = handoffCodexTerminal(agentId);
@@ -1410,6 +1438,114 @@ describe('Codex terminal handoff', () => {
     try {
       const { agentId, proc } = launch();
       const promise = handoffCodexTerminal(agentId);
+      const rejected = expect(promise).rejects.toThrow('has not exited');
+      await vi.advanceTimersByTimeAsync(5000);
+      await rejected;
+      expect(proc.kill).not.toHaveBeenCalled();
+      expect(() => writeToAgent(agentId, 'still here')).not.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('Claude terminal handoff', () => {
+  function launch(win: BrowserWindow, agentId?: string) {
+    const args = buildSpawnArgs({
+      command: 'claude',
+      args: [],
+      dockerMode: false,
+      ...(agentId ? { agentId } : {}),
+    });
+    void spawnAgent(win, args);
+    return {
+      agentId: args.agentId,
+      proc: mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1].value,
+    };
+  }
+  it('confirms the exit with a second Ctrl+D and replays the output into the next launch', async () => {
+    vi.useFakeTimers();
+    try {
+      const win = createMockWindow();
+      const { agentId, proc } = launch(win);
+      proc.emitData('an earlier exchange\r\n');
+      const promise = handoffClaudeTerminal(agentId);
+      // The first press only arms Claude's "Press Ctrl-D again to exit".
+      expect(proc.write).toHaveBeenCalledTimes(1);
+      expect(() => writeToAgent(agentId, 'new prompt')).toThrow('view switch');
+      await vi.advanceTimersByTimeAsync(300);
+      expect(proc.write.mock.calls).toEqual([['\x04'], ['\x04']]);
+      proc.emitExit({ exitCode: 0, signal: undefined });
+      await promise;
+      expect(proc.kill).not.toHaveBeenCalled();
+
+      const next = createMockWindow();
+      launch(next, agentId);
+      expect(channelData(next)).toBe(
+        'an earlier exchange\r\n\x1b\\\x1b[0m\r\n\x1b[2m── resumed ──\x1b[0m\r\n',
+      );
+      // Only the launch that follows the handoff inherits it.
+      const third = createMockWindow();
+      launch(third, agentId);
+      expect(channelData(third)).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refuses a handoff while a spawn is still on its way to the session', async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'pty-handoff-'));
+    tempPaths.push(cwd);
+    const args = buildSpawnArgs({ command: 'claude', args: [], dockerMode: false, cwd });
+    // Started but not yet registered: reading that gap as "already exited" would
+    // hand the session to Chat while this CLI is still launching into it.
+    const spawning = spawnAgent(createMockWindow(), args).catch(() => {});
+    await expect(handoffClaudeTerminal(args.agentId)).rejects.toThrow('still starting');
+    await spawning;
+  });
+
+  it('drops the carried output when the agent is killed instead of resumed', async () => {
+    vi.useFakeTimers();
+    try {
+      const win = createMockWindow();
+      const { agentId, proc } = launch(win);
+      proc.emitData('an earlier exchange\r\n');
+      const promise = handoffClaudeTerminal(agentId);
+      await vi.advanceTimersByTimeAsync(300);
+      proc.emitExit({ exitCode: 0, signal: undefined });
+      await promise;
+      killAgent(agentId);
+
+      const next = createMockWindow();
+      launch(next, agentId);
+      expect(channelData(next)).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('is a no-op once the CLI has already exited', async () => {
+    const win = createMockWindow();
+    const { agentId, proc } = launch(win);
+    proc.emitExit({ exitCode: 0, signal: undefined });
+    await expect(handoffClaudeTerminal(agentId)).resolves.toBeUndefined();
+  });
+
+  it('refuses a terminal that is not running Claude', async () => {
+    const win = createMockWindow();
+    const args = buildSpawnArgs({ command: 'codex', args: [], dockerMode: false });
+    void spawnAgent(win, args);
+    await expect(handoffClaudeTerminal(args.agentId)).rejects.toThrow(
+      'does not support Claude conversation handoff',
+    );
+  });
+
+  it('does not force-kill a terminal which refuses to exit, and restores input after timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const win = createMockWindow();
+      const { agentId, proc } = launch(win);
+      const promise = handoffClaudeTerminal(agentId);
       const rejected = expect(promise).rejects.toThrow('has not exited');
       await vi.advanceTimersByTimeAsync(5000);
       await rejected;
