@@ -26,10 +26,12 @@ export function GraphSearch<N extends MapNode>(props: {
     if (event.key === 'ArrowDown' && count) {
       event.preventDefault();
       setOpen(true);
-      setActive((index) => (index + 1) % count);
+      // Step from the row on screen, not the raw index. After an agent update shrinks the
+      // results the two differ, and wrapping the stale one swallows a keypress or skips a row.
+      setActive(() => (activeIndex() + 1) % count);
     } else if (event.key === 'ArrowUp' && count) {
       event.preventDefault();
-      setActive((index) => (index - 1 + count) % count);
+      setActive(() => (activeIndex() - 1 + count) % count);
     } else if (event.key === 'Enter' && listOpen()) {
       const hit = results()[activeIndex()];
       if (!hit) return;
