@@ -806,6 +806,8 @@ export async function sendPrompt(
   );
   await new Promise((r) => setTimeout(r, pasteDelayMs(effectiveText)));
   await writeToAgentWhenReady(taskId, agentId, '\r');
+  // App sends bypass xterm's onData handler, which normally clears this flag on Enter.
+  if (agentId === task?.agentIds[0]) setTaskTerminalInputPending(taskId, false);
   // Recorded only after delivery, so a failed write does not silence the guidance.
   if (withGuidance && store.agents[agentId]?.generation === guidedGeneration)
     setStore('agents', agentId, 'canvasGuidanceGeneration', guidedGeneration);

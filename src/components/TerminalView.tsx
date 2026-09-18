@@ -673,7 +673,8 @@ export function TerminalView(props: TerminalViewProps) {
 
         // Generic escape sequence bindings
         if (binding.escapeSequence) {
-          enqueueInput(binding.escapeSequence);
+          // Use the same input tracking as ordinary keys (including clear-line).
+          term?.input(binding.escapeSequence, true);
           return false;
         }
       }

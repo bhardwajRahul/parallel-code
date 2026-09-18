@@ -21,6 +21,16 @@ describe('nextTerminalInputPending', () => {
     expect(nextTerminalInputPending(false, 'hello\x15')).toBe(false);
   });
 
+  it('keeps a draft pending when Shift+Enter inserts a newline', () => {
+    expect(nextTerminalInputPending(true, '\x1b\r')).toBe(true);
+    expect(hasTerminalUserActivity('\x1b\r')).toBe(true);
+  });
+
+  it('does not mistake Alt word navigation for typed text', () => {
+    expect(nextTerminalInputPending(false, '\x1bb')).toBe(false);
+    expect(hasTerminalUserActivity('\x1bb')).toBe(true);
+  });
+
   it('does not mark cursor escape sequences as pending input', () => {
     expect(nextTerminalInputPending(false, '\x1b[A')).toBe(false);
     expect(nextTerminalInputPending(false, '\x1b[B')).toBe(false);

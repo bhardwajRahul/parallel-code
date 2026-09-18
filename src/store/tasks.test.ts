@@ -1171,6 +1171,30 @@ describe('sendPrompt', () => {
     expect(writePayloads()).toEqual(['\x1b[I', 'hello Codex', '\r']);
   });
 
+  it('clears stale terminal input after the app submits a prompt', async () => {
+    mockTasks['task-1'].agentIds = ['agent-1'];
+    mockTasks['task-1'].terminalInputPending = true;
+    await sendPrompt('task-1', 'agent-1', 'Continue');
+    expect(mockTasks['task-1'].terminalInputPending).toBeUndefined();
+  });
+
+  it('keeps terminal input pending if submitting Enter fails', async () => {
+    mockTasks['task-1'].agentIds = ['agent-1'];
+    mockTasks['task-1'].terminalInputPending = true;
+    mockInvoke.mockImplementation(async (_channel, payload) => {
+      if (payload?.data === '\r') throw new Error('PTY closed');
+    });
+    await expect(sendPrompt('task-1', 'agent-1', 'Continue')).rejects.toThrow('PTY closed');
+    expect(mockTasks['task-1'].terminalInputPending).toBe(true);
+  });
+
+  it('does not clear the main terminal draft when sending to another agent', async () => {
+    mockTasks['task-1'].agentIds = ['main-agent', 'agent-1'];
+    mockTasks['task-1'].terminalInputPending = true;
+    await sendPrompt('task-1', 'agent-1', 'Continue');
+    expect(mockTasks['task-1'].terminalInputPending).toBe(true);
+  });
+
   it.each([
     'please explain our architecture in reasoning graph',
     'show the Reasoning Graph',

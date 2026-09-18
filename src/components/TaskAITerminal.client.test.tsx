@@ -7,6 +7,7 @@ import { nextTerminalInputPending } from '../lib/terminalInputPending';
 import { IPC } from '../../electron/ipc/channels';
 import { closeAgentInTask } from '../store/agents';
 import { resumeAgentSession } from '../store/sessions';
+import { sendPrompt } from '../store/tasks';
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(channel: unknown, args?: unknown) => Promise<unknown>>(async () => undefined),
@@ -336,6 +337,18 @@ it('can return to Chat after the resumed terminal sends automatic replies and be
       (call) => (call[1] as { action?: string })?.action === 'handoffToChat',
     ),
   ).toHaveLength(2);
+});
+
+it('allows Chat after an app-submitted prompt clears stale terminal input', async () => {
+  setStore('tasks', 'task', 'terminalInputPending', true);
+  mount();
+  clickChat();
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('terminal draft');
+
+  await sendPrompt('task', 'agent', 'Continue');
+  markAgentOutput('agent', new TextEncoder().encode('\r\n› '));
+  clickChat();
+  await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('chat'));
 });
 
 it('shows a startup failure after clicking Chat', async () => {

@@ -22,7 +22,9 @@ function skipEscapeSequence(data: string, index: number): number {
     }
     return data.length - 1;
   }
-  return index;
+  // Alt/Meta keys are ESC followed by one character. Consume both so word
+  // navigation isn't a draft and Shift+Enter isn't mistaken for submission.
+  return kind === undefined ? index : index + 1;
 }
 
 function isTerminalReport(data: string, start: number, end: number): boolean {
