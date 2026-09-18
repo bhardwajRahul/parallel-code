@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import http from 'http';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -25,6 +25,19 @@ vi.mock('../ipc/pty.js', () => ({
 vi.mock('./protocol.js', () => ({
   parseClientMessage: vi.fn(() => null),
 }));
+
+/** Lets one test make persisting the credential file fail the way a full disk would. */
+const { failAtomicWrite } = vi.hoisted(() => ({ failAtomicWrite: { value: false } }));
+vi.mock('../mcp/atomic.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../mcp/atomic.js')>();
+  return {
+    ...actual,
+    atomicWriteFileSync: (...args: Parameters<typeof actual.atomicWriteFileSync>) => {
+      if (failAtomicWrite.value) throw new Error('ENOSPC: no space left on device');
+      return actual.atomicWriteFileSync(...args);
+    },
+  };
+});
 
 const { startRemoteServer, toFriendlyListenError } = await import('./server.js');
 
@@ -201,6 +214,23 @@ describe('remembered phones', () => {
     srv.enableRememberedDevices(join(credentialsDir, 'phones.json'));
     expect((await req('GET', '/api/mobile/projects', remembered)).status).toBe(401);
     expect((await req('GET', '/api/mobile/projects', sessionOnly)).status).toBe(401);
+  });
+
+  it('revokes remembered phones durably even when the credential file cannot be rewritten', async () => {
+    const remembered = await pair(true);
+    const credentials = join(credentialsDir, 'phones.json');
+    expect(JSON.parse(readFileSync(credentials, 'utf8'))).toHaveLength(1);
+    // Revoking in memory is not enough: the next start reads the file back, so a rewrite that
+    // fails must leave no file rather than one still naming the phone we just revoked.
+    failAtomicWrite.value = true;
+    try {
+      await stop(true);
+    } finally {
+      failAtomicWrite.value = false;
+    }
+    expect(existsSync(credentials)).toBe(false);
+    await startServer();
+    expect((await req('GET', '/api/mobile/projects', remembered)).status).toBe(401);
   });
 
   it('evicts the oldest remembered phone when the credential limit is reached', async () => {

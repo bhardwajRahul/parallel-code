@@ -1,7 +1,7 @@
 // electron/remote/server.ts
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
-import { existsSync, createReadStream, readFileSync } from 'fs';
+import { existsSync, createReadStream, readFileSync, rmSync } from 'fs';
 import { join, resolve, relative, extname, isAbsolute } from 'path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes, randomInt, timingSafeEqual, createHash } from 'crypto';
@@ -920,6 +920,8 @@ export function startRemoteServer(opts: {
     rememberedHashes = hashes;
   }
 
+  const describe = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
   /** Disconnect every paired phone, session-only ones included. Clearing the credential file
    *  alone would not revoke anything: `isPairedToken` authenticates against `pairedTokenBufs`,
    *  and re-enabling the same file is a no-op, so the file is never re-read. Sockets authenticate
@@ -928,14 +930,23 @@ export function startRemoteServer(opts: {
     // Revoke before persisting. A credential file that cannot be written — read-only directory,
     // full disk — must not leave every paired phone holding a working token.
     pairedTokenBufs = [];
+    rememberedHashes = [];
     for (const [client, type] of clientTokenTypes) if (type === 'paired') client.terminate();
+    if (!pairedDevicesPath) return;
     try {
-      if (pairedDevicesPath) saveRememberedDevices([]);
+      saveRememberedDevices([]);
     } catch (error) {
-      warn(
-        'remote',
-        `Could not clear the remembered devices file; phones are revoked for this run: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      // Rewriting the file failed, so delete it instead: a stale file the next run reads back is
+      // the whole problem, and an absent one pairs from scratch. Deleting needs a writable
+      // directory, which a full disk still has even when the atomic write's temp file does not.
+      try {
+        rmSync(pairedDevicesPath, { force: true });
+      } catch (removeError) {
+        warn(
+          'remote',
+          `Could not clear the remembered devices file; phones are revoked for this run but the next start will accept them again: ${describe(error)}; ${describe(removeError)}`,
+        );
+      }
     }
   }
 
