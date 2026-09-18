@@ -12,6 +12,7 @@ import {
 import { parseReasoningFeed } from '../shared/reasoning-feed.js';
 import type { ReasoningUpdate } from '../shared/reasoning-state.js';
 import { reasoningFeedPath, REASONING_MAX_BYTES } from '../shared/reasoning.js';
+import { MAX_COORDINATOR_CONCURRENT_TASKS } from '../shared/coordinator-limits.js';
 
 const { appendGitInfoExcludeBlock, replayed } = vi.hoisted(() => ({
   appendGitInfoExcludeBlock: vi.fn(() => 'appended' as const),
@@ -342,6 +343,39 @@ it('keeps one append cheap however long the history is', async () => {
   const parsed = parseReasoningFeed((await read(dir)) ?? '');
   expect(parsed.error).toBeUndefined();
   expect(parsed.history.updates).toHaveLength(revision + 1);
+});
+
+it('keeps every feed of a full coordinator run warm, not just the last one appended to', () => {
+  // A coordinator run drives one feed per concurrent subtask plus its own, and they interleave:
+  // each agent appends in turn. A cache that cannot hold them all evicts each feed before its
+  // next turn, so every append replays the whole history — the exact cost the cache exists to
+  // avoid, paid on every write instead of none. Size the fixture at the concurrency ceiling the
+  // coordinator actually allows.
+  const dir = root();
+  const agents = Array.from(
+    { length: MAX_COORDINATOR_CONCURRENT_TASKS + 1 },
+    (_, i) => `agent-${i}`,
+  );
+  const revisions = new Map(
+    agents.map((agent) => [agent, appendReasoningUpdate(dir, 'task', agent, initial).revision]),
+  );
+  const round = () => {
+    for (const agent of agents)
+      revisions.set(
+        agent,
+        appendReasoningUpdate(dir, 'task', agent, {
+          runId: 'run',
+          expectedRevision: revisions.get(agent),
+          operations: [{ type: 'update', id: 'goal', changes: { title: `by ${agent}` } }],
+        }).revision,
+      );
+  };
+  round();
+  replayed.length = 0;
+  round();
+  // Every feed resumed from the history the previous round left cached, replaying only the line
+  // it just wrote. A non-zero entry here is a feed that was evicted between its own turns.
+  expect(replayed).toEqual(agents.map(() => 0));
 });
 
 it('re-reads a feed that changed outside the append path', async () => {

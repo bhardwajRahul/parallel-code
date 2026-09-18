@@ -9,6 +9,7 @@ import {
 import { validatePath } from './validate.js';
 import { appendGitInfoExcludeBlock } from './git-exclude.js';
 import { parseReasoningFeed, parseReasoningUpdate } from '../shared/reasoning-feed.js';
+import { MAX_COORDINATOR_CONCURRENT_TASKS } from '../shared/coordinator-limits.js';
 import {
   acceptUpdate,
   emptyHistory,
@@ -207,11 +208,14 @@ function stuckError(error: string | undefined, pending: boolean): Error {
 // Remember what the last append produced so the parser can reuse the updates it already
 // accepted. The remembered text is the proof: only a feed that still starts with it may reuse
 // the history, so an out-of-band edit, a rollback or a rotation falls back to a full parse.
-// An entry is not cheap: `history.snapshots` keeps a cloned graph per update, so a long-running
-// feed retains roughly (updates × graph size). Keep only the few feeds actually being appended
-// to — the win is consecutive appends to the same one, which even a small cache captures.
-// shortcut: a count bounds entries, not bytes. Cap total retained snapshots if this grows.
-const MAX_CACHED_FEEDS = 4;
+// The cache must clear the coordinator's ceiling: a run drives one feed per concurrent subtask
+// plus its own, all appended to in round-robin. Size it below that and each feed evicts the next
+// before its turn comes round again, so every append pays the full replay this cache exists to
+// avoid — a cache that is worse than none.
+// shortcut: entries are bounded, bytes are not. `history.snapshots` keeps a cloned graph per
+// update against a per-feed cap of 1000 updates, so a full cache of long feeds is the ceiling
+// here. Bound retained snapshots instead if that is ever reached in practice.
+const MAX_CACHED_FEEDS = MAX_COORDINATOR_CONCURRENT_TASKS + 1;
 const parsedFeeds = new Map<string, { raw: string; history: History }>();
 
 /** Drop cached feeds under `directory`; their bytes are gone and must not be held for reuse. */
