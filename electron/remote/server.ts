@@ -47,6 +47,8 @@ const MAX_LOG_ENTRIES = 200;
 const REST_COORDINATOR_SENTINEL = 'api';
 const MAX_REST_PROMPT_BYTES = 16 * 1024;
 const MAX_NOTES_BYTES = 100 * 1024;
+/** Give the TUI a read of its own for a prefix keystroke before the paste lands. */
+const PREFIX_KEY_DELAY_MS = 50;
 // Device pairing: a mobile client proves it can see the desktop by entering a
 // short-lived PIN, which elevates it to a "paired" token allowed to create tasks.
 const PAIRING_PIN_TTL_MS = 5 * 60_000;
@@ -1591,13 +1593,17 @@ export function startRemoteServer(opts: {
             reply(false, 'Another message is being submitted. Try again in a moment.');
             break;
           }
-          try {
-            writeToAgent(msg.agentId, msg.data);
-          } catch {
-            reply(false, 'This agent is no longer available. Your draft has been kept.');
-            break;
-          }
-          if (msg.submit) {
+          const writeText = () => {
+            try {
+              writeToAgent(msg.agentId, msg.data);
+            } catch {
+              reply(false, 'This agent is no longer available. Your draft has been kept.');
+              return;
+            }
+            if (!msg.submit) {
+              reply(true);
+              return;
+            }
             // Let the TUI finish processing pasted text before submitting it.
             const delay = Math.min(500, Math.max(50, msg.data.split('\n').length * 15));
             pendingSubmissions.set(
@@ -1615,9 +1621,27 @@ export function startRemoteServer(opts: {
                 }
               }, delay),
             );
-          } else {
-            reply(true);
+          };
+          if (!msg.prefixKey) {
+            writeText();
+            break;
           }
+          try {
+            writeToAgent(msg.agentId, msg.prefixKey);
+          } catch {
+            reply(false, 'This agent is no longer available. Your draft has been kept.');
+            break;
+          }
+          // Keep holding the agent across the gap: the prefix needs its own
+          // terminal read to register as a keystroke, and another phone
+          // submitting into the shell prompt it opens would run as a command.
+          pendingSubmissions.set(
+            msg.agentId,
+            setTimeout(() => {
+              pendingSubmissions.delete(msg.agentId);
+              writeText();
+            }, PREFIX_KEY_DELAY_MS),
+          );
           break;
         }
 

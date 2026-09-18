@@ -468,6 +468,56 @@ describe('acknowledged phone messages', () => {
     ws2.close();
   });
 
+  it('types a shell prefix in its own write so the TUI reads it as a keystroke', async () => {
+    const ws = await connectAndAuth(await pair());
+    const result = nextMessage(ws);
+    ws.send(
+      JSON.stringify({
+        type: 'input',
+        agentId: 'agent-1',
+        data: 'ls -la',
+        requestId: 'shell-1',
+        submit: true,
+        prefixKey: '!',
+      }),
+    );
+    expect(await result).toEqual({ type: 'input-result', requestId: 'shell-1', ok: true });
+    expect(pty.writeToAgent).toHaveBeenNthCalledWith(1, 'agent-1', '!');
+    expect(pty.writeToAgent).toHaveBeenNthCalledWith(2, 'agent-1', 'ls -la');
+    expect(pty.writeToAgent).toHaveBeenNthCalledWith(3, 'agent-1', '\r');
+    ws.close();
+  });
+
+  it('does not let a second phone type into the shell prompt a prefix just opened', async () => {
+    const ws1 = await connectAndAuth(await pair());
+    const ws2 = await connectAndAuth(await pair());
+    const rejected = nextMessage(ws2);
+    ws1.send(
+      JSON.stringify({
+        type: 'input',
+        agentId: 'agent-1',
+        data: 'ls -la',
+        requestId: 'shell',
+        submit: true,
+        prefixKey: '!',
+      }),
+    );
+    await vi.waitFor(() => expect(pty.writeToAgent).toHaveBeenCalledWith('agent-1', '!'));
+    ws2.send(
+      JSON.stringify({
+        type: 'input',
+        agentId: 'agent-1',
+        data: 'Looks good, ship it',
+        requestId: 'chat',
+        submit: true,
+      }),
+    );
+    expect(await rejected).toMatchObject({ requestId: 'chat', ok: false });
+    expect(pty.writeToAgent).not.toHaveBeenCalledWith('agent-1', 'Looks good, ship it');
+    ws1.close();
+    ws2.close();
+  });
+
   it('does not give view-only phones write access through acknowledged submission', async () => {
     const ws = await connectAndAuth(mobileToken);
     const closed = waitForClose(ws);

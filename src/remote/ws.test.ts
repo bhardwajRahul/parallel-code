@@ -114,7 +114,7 @@ describe('phone message delivery', () => {
   it('waits for the matching acknowledgment', async () => {
     const { client, socket } = await connected();
     const resolved = vi.fn();
-    const pending = client.sendInput('a', 'hello', true).then(resolved);
+    const pending = client.sendInput('a', 'hello', { submit: true }).then(resolved);
     const requestId = socket.sent.at(-1)?.requestId;
     socket.receive({ type: 'input-result', requestId: 'different', ok: true });
     await Promise.resolve();
@@ -138,7 +138,7 @@ describe('phone message delivery', () => {
   });
   it('reports uncertain delivery on a disconnect and never replays the input', async () => {
     const { client, socket } = await connected();
-    const pending = client.sendInput('a', 'hello', true);
+    const pending = client.sendInput('a', 'hello', { submit: true });
     const rejected = expect(pending).rejects.toThrow('may have reached');
     socket.disconnect();
     await rejected;
