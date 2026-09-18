@@ -116,8 +116,13 @@ export function getAgentChat(agentId: string): AgentChat {
 export function stopAgentChat(agentId: string, immediate = false): void {
   const starting = starts.get(agentId);
   if (starting) starting.cancelled = true;
-  chats.get(agentId)?.chat.stop(immediate);
-  chats.delete(agentId);
+  try {
+    chats.get(agentId)?.chat.stop(immediate);
+  } finally {
+    // Deregister even when the provider throws. The caller already treats the chat as gone, and
+    // a stuck entry would keep answering `runningAgentChatIds` and block the next start.
+    chats.delete(agentId);
+  }
 }
 /** Called on app shutdown, where a chat's own grace timer would never get to run. */
 export function stopAllAgentChats(immediate = false): void {
