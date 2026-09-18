@@ -47,7 +47,10 @@ export function AgentDetail(props: AgentDetailProps) {
   const draftKey = `reply:${props.agentId}`;
   // eslint-disable-next-line solid/reactivity
   const notesKey = `notes:${props.agentId}`;
+  // eslint-disable-next-line solid/reactivity
+  const bashKey = `reply:${props.agentId}:bash`;
   const [inputText, setInputText] = createSignal(readLocal(draftKey));
+  const [bashMode, setBashMode] = createSignal(readLocal(bashKey) === 'true');
   const [sending, setSending] = createSignal(false);
   const [sendError, setSendError] = createSignal('');
   const [sent, setSent] = createSignal(false);
@@ -73,6 +76,7 @@ export function AgentDetail(props: AgentDetailProps) {
     );
 
   createEffect(() => writeLocal(draftKey, inputText()));
+  createEffect(() => writeLocal(bashKey, bashMode() ? 'true' : ''));
   createEffect(() => {
     if (notesDirty()) {
       writeLocal(notesKey, notesText());
@@ -342,11 +346,20 @@ export function AgentDetail(props: AgentDetailProps) {
     setSendError('');
     setSent(false);
     try {
-      await sendInput(props.agentId, data, true);
+      // The server types the `!` in a write of its own, so the TUI reads it as a
+      // keystroke and opens its shell prompt; inside the paste it would stay text.
+      await sendInput(props.agentId, data, {
+        submit: true,
+        ...(bashMode() ? { prefixKey: '!' } : {}),
+      });
       // Clear only the accepted draft, including when the user navigated away.
-      if (readLocal(draftKey) === text) writeLocal(draftKey, '');
+      if (readLocal(draftKey) === text) {
+        writeLocal(draftKey, '');
+        writeLocal(bashKey, '');
+      }
       if (!disposed) {
         if (inputText() === text) setInputText('');
+        setBashMode(false);
         setSent(true);
       }
     } catch (err) {
@@ -369,6 +382,23 @@ export function AgentDetail(props: AgentDetailProps) {
     } finally {
       if (!disposed) setSending(false);
     }
+  }
+
+  const composerPlaceholder = () => {
+    if (bashMode()) return 'Shell command…';
+    return agent()?.attention === 'needs_input' ? 'Reply to agent…' : 'Message agent…';
+  };
+
+  function composerInput(field: HTMLTextAreaElement) {
+    // Mirror the desktop TUI: `!` opening an empty prompt switches to the shell
+    // rather than being typed. Only a typed bang counts, so a restored or pasted
+    // draft that happens to start with one still goes to the agent as text.
+    if (field.value === '!' && !inputText() && !bashMode()) {
+      setBashMode(true);
+      // The signal never left '', so no reactive update would clear the field.
+      field.value = '';
+    } else setInputText(field.value);
+    setSent(false);
   }
 
   function selectView(next: 'terminal' | 'notes') {
@@ -482,6 +512,18 @@ export function AgentDetail(props: AgentDetailProps) {
               </p>
             </Show>
             <div class="mobile-composer-row">
+              <button
+                class="mobile-button mobile-bash"
+                aria-label="Shell command mode"
+                aria-pressed={bashMode()}
+                disabled={sending()}
+                onClick={() => {
+                  setBashMode((on) => !on);
+                  inputRef?.focus();
+                }}
+              >
+                !
+              </button>
               <textarea
                 ref={(element) => {
                   inputRef = element;
@@ -493,14 +535,9 @@ export function AgentDetail(props: AgentDetailProps) {
                 rows={1}
                 maxlength={4000}
                 aria-label="Message agent"
-                placeholder={
-                  agent()?.attention === 'needs_input' ? 'Reply to agent…' : 'Message agent…'
-                }
+                placeholder={composerPlaceholder()}
                 value={inputText()}
-                onInput={(e) => {
-                  setInputText(e.currentTarget.value);
-                  setSent(false);
-                }}
+                onInput={(e) => composerInput(e.currentTarget)}
                 disabled={sending()}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) {

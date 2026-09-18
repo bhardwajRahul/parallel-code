@@ -71,6 +71,12 @@ export interface InputCommand {
   requestId?: string;
   /** Submit a composed message after pasting its text. */
   submit?: boolean;
+  /**
+   * Keystroke to type before the paste, in its own terminal write. Agent TUIs
+   * open their shell prompt only for a `!` that arrives alone; inside a paste
+   * it stays literal text.
+   */
+  prefixKey?: string;
 }
 
 export interface ResizeCommand {
@@ -132,12 +138,18 @@ export function parseClientMessage(raw: string): ClientMessage | null {
         )
           return null;
         if (msg.submit !== undefined && typeof msg.submit !== 'boolean') return null;
+        if (
+          msg.prefixKey !== undefined &&
+          (typeof msg.prefixKey !== 'string' || !msg.prefixKey.length || msg.prefixKey.length > 4)
+        )
+          return null;
         return {
           type: 'input',
           agentId: msg.agentId,
           data: msg.data,
           ...(typeof msg.requestId === 'string' ? { requestId: msg.requestId } : {}),
           ...(typeof msg.submit === 'boolean' ? { submit: msg.submit } : {}),
+          ...(typeof msg.prefixKey === 'string' ? { prefixKey: msg.prefixKey } : {}),
         };
       case 'resize':
         if (typeof msg.cols !== 'number' || typeof msg.rows !== 'number') return null;

@@ -410,6 +410,17 @@ textarea.mobile-input {
 .mobile-composer-row > button {
   min-height: 48px;
 }
+.mobile-bash {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  font-family: ui-monospace, monospace;
+  font-size: 18px;
+}
+.mobile-bash[aria-pressed='true'] {
+  color: #bdeaff;
+  border-color: #467b93;
+  background: #183344;
+}
 .mobile-composer textarea {
   flex: 1;
   min-width: 0;

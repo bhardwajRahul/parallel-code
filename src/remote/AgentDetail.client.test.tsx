@@ -108,6 +108,11 @@ function type(text: string) {
   composer().value = text;
   composer().dispatchEvent(new Event('input', { bubbles: true }));
 }
+function bashButton() {
+  const button = host.querySelector<HTMLButtonElement>('[aria-label="Shell command mode"]');
+  if (!button) throw new Error('Missing shell command button');
+  return button;
+}
 function click(text: string) {
   const button = [...host.querySelectorAll('button')].find((b) => b.textContent === text);
   if (!button) throw new Error(`Missing button: ${text}`);
@@ -139,11 +144,57 @@ describe('phone reply composer', () => {
     click('Send');
     expect(composer().value).toBe('First line\nSecond line');
     expect(composer().disabled).toBe(true);
-    expect(sendInput).toHaveBeenCalledWith('a1', '\x1b[200~First line\nSecond line\x1b[201~', true);
+    expect(sendInput).toHaveBeenCalledWith('a1', '\x1b[200~First line\nSecond line\x1b[201~', {
+      submit: true,
+    });
     accept();
     await vi.waitFor(() => expect(composer().value).toBe(''));
     expect(localStorage.getItem('parallel-mobile:reply:a1')).toBeNull();
     expect(host.textContent).toContain('Accepted by terminal');
+  });
+  it('sends a shell command as one request the server can keep ordered', async () => {
+    vi.mocked(sendInput).mockResolvedValue(undefined);
+    mount();
+    bashButton().click();
+    type('ls -la');
+    click('Send');
+    await vi.waitFor(() => expect(composer().value).toBe(''));
+    expect(vi.mocked(sendInput).mock.calls).toEqual([
+      ['a1', '\x1b[200~ls -la\x1b[201~', { submit: true, prefixKey: '!' }],
+    ]);
+    // The agent's shell prompt closes after the command, so the next reply is text.
+    expect(bashButton().getAttribute('aria-pressed')).toBe('false');
+  });
+  it('switches to the shell when "!" opens an empty prompt, as the desktop TUI does', () => {
+    mount();
+    type('!');
+    expect(bashButton().getAttribute('aria-pressed')).toBe('true');
+    expect(composer().value).toBe('');
+    expect(composer().placeholder).toBe('Shell command…');
+  });
+  it('still sends a message that merely begins with "!" as text', async () => {
+    vi.mocked(sendInput).mockResolvedValue(undefined);
+    localStorage.setItem('parallel-mobile:reply:a1', '!important: do not deploy');
+    mount();
+    expect(bashButton().getAttribute('aria-pressed')).toBe('false');
+    click('Send');
+    await vi.waitFor(() => expect(composer().value).toBe(''));
+    expect(vi.mocked(sendInput).mock.calls).toEqual([
+      ['a1', '\x1b[200~!important: do not deploy\x1b[201~', { submit: true }],
+    ]);
+  });
+  it('keeps shell mode with the draft when a send fails or the task is reopened', async () => {
+    vi.mocked(sendInput).mockRejectedValue(new Error('Delivery could not be confirmed'));
+    mount();
+    bashButton().click();
+    type('npm test');
+    click('Send');
+    await vi.waitFor(() => expect(host.textContent).toContain('Delivery could not be confirmed'));
+    expect(bashButton().getAttribute('aria-pressed')).toBe('true');
+    dispose();
+    mount();
+    expect(composer().value).toBe('npm test');
+    expect(bashButton().getAttribute('aria-pressed')).toBe('true');
   });
   it('keeps a failed draft and restores it when reopening the task', async () => {
     vi.mocked(sendInput).mockRejectedValue(new Error('Delivery could not be confirmed'));

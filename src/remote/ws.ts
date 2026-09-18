@@ -214,7 +214,18 @@ function send(msg: Record<string, unknown>): void {
   }
 }
 
-export function sendInput(agentId: string, data: string, submit = false): Promise<void> {
+export interface SendInputOptions {
+  /** Press Enter once the terminal has taken the text. */
+  submit?: boolean;
+  /** Keystroke to type before the text, in its own terminal write. */
+  prefixKey?: string;
+}
+
+export function sendInput(
+  agentId: string,
+  data: string,
+  { submit = false, prefixKey }: SendInputOptions = {},
+): Promise<void> {
   if (!canControl() || ws?.readyState !== WebSocket.OPEN) {
     return Promise.reject(new Error('Reconnect before sending. Your draft has been kept.'));
   }
@@ -232,7 +243,14 @@ export function sendInput(agentId: string, data: string, submit = false): Promis
     }, 10000);
     pendingInputs.set(requestId, { resolve, reject, timer });
     try {
-      send({ type: 'input', agentId, data, requestId, submit });
+      send({
+        type: 'input',
+        agentId,
+        data,
+        requestId,
+        submit,
+        ...(prefixKey ? { prefixKey } : {}),
+      });
     } catch {
       clearTimeout(timer);
       pendingInputs.delete(requestId);
