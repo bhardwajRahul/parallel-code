@@ -43,6 +43,9 @@ it('uses the real SDK for streaming, approval, model controls, interruption and 
     );
   }
   await vi.waitFor(() => expect(chat?.state.model).toBe('claude-fixture'));
+  await vi.waitFor(() =>
+    expect(chat?.state.contextUsage).toEqual({ usedTokens: 50000, maxTokens: 200000 }),
+  );
   await chat.selectModel('claude-fixture', 'high');
   await chat.send('Hello');
   await vi.waitFor(() => expect(chat?.state.status).toBe('ready'));
@@ -88,9 +91,15 @@ it('uses the real SDK for streaming, approval, model controls, interruption and 
     .split('\n')
     .map(
       (line) =>
-        JSON.parse(line) as { type: string; request?: { subtype: string; settings?: unknown } },
+        JSON.parse(line) as {
+          type: string;
+          request?: { subtype: string; settings?: unknown; detail?: string };
+        },
     );
   expect(
     wire.find((message) => message.request?.subtype === 'apply_flag_settings')?.request?.settings,
   ).toEqual({ model: 'claude-fixture', effortLevel: 'high' });
+  const summaries = wire.filter((message) => message.request?.subtype === 'get_context_usage');
+  expect(summaries.length).toBeGreaterThan(1);
+  expect(summaries.every((message) => message.request?.detail === 'summary')).toBe(true);
 }, 20_000);

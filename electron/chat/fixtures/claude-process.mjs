@@ -103,6 +103,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         available_output_styles: [],
       };
     if (request.subtype === 'apply_flag_settings') model = request.settings.model ?? model;
+    if (request.subtype === 'get_context_usage')
+      response = { totalTokens: 50000, rawMaxTokens: 200000 };
     emit({
       type: 'control_response',
       response: { subtype: 'success', request_id: message.request_id, response },

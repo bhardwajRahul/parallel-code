@@ -77,6 +77,8 @@ export interface AgentChatState {
   error?: string;
   startedAt?: number;
   interrupted?: boolean;
+  /** Latest context estimate, separate from cumulative session token usage. */
+  contextUsage?: { usedTokens: number; maxTokens: number };
   tokenUsage?: {
     totalTokens: number;
     inputTokens: number;
@@ -89,6 +91,22 @@ export interface AgentChatState {
   permissionMode?: string;
   /** Why the running mode differs from the one the user configured, if it does. */
   permissionNote?: string;
+}
+
+export function readContextUsage(
+  usedTokens: unknown,
+  maxTokens: unknown,
+): AgentChatState['contextUsage'] {
+  if (
+    typeof usedTokens !== 'number' ||
+    !Number.isSafeInteger(usedTokens) ||
+    usedTokens < 0 ||
+    typeof maxTokens !== 'number' ||
+    !Number.isSafeInteger(maxTokens) ||
+    maxTokens <= 0
+  )
+    return undefined;
+  return { usedTokens, maxTokens };
 }
 
 /** Images are sent directly to the provider; the app writes no attachment files. */

@@ -79,6 +79,40 @@ function harness() {
 afterEach(() => vi.useRealTimers());
 
 describe('Codex chat app-server protocol', () => {
+  it('tracks the latest context window separately from session totals and clears unknown limits', async () => {
+    const h = harness();
+    await h.start();
+    const update = (usedTokens: number, limit: number | null) =>
+      h.receive({
+        method: 'thread/tokenUsage/updated',
+        params: {
+          threadId: 'thread-1',
+          tokenUsage: {
+            total: { totalTokens: 900000, inputTokens: 800000, outputTokens: 100000 },
+            last: { totalTokens: usedTokens },
+            modelContextWindow: limit,
+          },
+        },
+      });
+    update(150000, 200000);
+    expect(h.chat.state.contextUsage).toEqual({ usedTokens: 150000, maxTokens: 200000 });
+    update(50000, 200000); // Context shrinks after compaction; session totals do not.
+    expect(h.chat.state.contextUsage?.usedTokens).toBe(50000);
+    expect(h.chat.state.tokenUsage?.totalTokens).toBe(900000);
+    update(210000, 200000);
+    expect(h.chat.state.contextUsage?.usedTokens).toBe(210000);
+    for (const limit of [null, 0, -1]) {
+      update(100, limit);
+      expect(h.chat.state.contextUsage).toBeUndefined();
+    }
+    update(-1, 200000);
+    expect(h.chat.state.contextUsage).toBeUndefined();
+    update(100, 200000);
+    h.chat.selectModel('model-b');
+    expect(h.chat.state.contextUsage).toBeUndefined();
+    h.chat.stop();
+  });
+
   it('uses cumulative conversation tokens without adding repeated updates', async () => {
     const h = harness();
     await h.start();

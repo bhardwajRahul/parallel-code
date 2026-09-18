@@ -14,6 +14,7 @@ import type {
   ChatPermissionMode,
 } from '../shared/agent-chat-types.js';
 import { stripAnsi } from '../shared/prompt-detect.js';
+import { readContextUsage } from '../shared/agent-chat-types.js';
 import { describePermissionUpdates, describeToolCall, visibleUserText } from './describe.js';
 import { chatSettingSources, launchPermissionMode, settingsDefaultMode } from './settings-mode.js';
 import type { AgentChat, ChatStartOptions } from './types.js';
@@ -69,6 +70,7 @@ export class ClaudeChat implements AgentChat {
   /** Launch output only: before the first prompt it cannot contain tool arguments. */
   private launchDiagnostics: string[] = [];
   private connecting = true;
+  private contextRequest = 0;
 
   constructor(
     private sdk: ClaudeSDK | undefined,
@@ -158,6 +160,22 @@ export class ClaudeChat implements AgentChat {
     this.noteUnadoptedSettingsMode(settingsMode);
     this.state.status = 'ready';
     this.publish();
+    void this.refreshContextUsage();
+  }
+
+  private async refreshContextUsage(): Promise<void> {
+    const request = ++this.contextRequest;
+    let usage: AgentChatState['contextUsage'];
+    try {
+      // Summary uses the last response and local estimates, without token-count API calls.
+      const response = await this.query?.getContextUsage({ detail: 'summary' });
+      usage = readContextUsage(response?.totalTokens, response?.rawMaxTokens);
+    } catch {
+      // Older CLIs may not support context summaries; usage is optional UI metadata.
+    }
+    if (request !== this.contextRequest || this.isClosed()) return;
+    this.state.contextUsage = usage;
+    this.publish();
   }
 
   /**
@@ -217,6 +235,8 @@ export class ClaudeChat implements AgentChat {
     )
       throw new Error('This reasoning effort is not supported by the selected model.');
     // One control request applies both overrides; never write the user's settings files.
+    ++this.contextRequest;
+    this.state.contextUsage = undefined;
     this.state.status = 'starting';
     this.publish();
     try {
@@ -229,7 +249,10 @@ export class ClaudeChat implements AgentChat {
         this.state.reasoningEffort = effort;
       }
     } finally {
-      if (!this.isClosed()) this.state.status = 'ready';
+      if (!this.isClosed()) {
+        this.state.status = 'ready';
+        void this.refreshContextUsage();
+      }
       this.publish();
     }
   }
@@ -659,6 +682,7 @@ export class ClaudeChat implements AgentChat {
       this.settleActivities();
       this.seenToolResults.clear();
       this.toolDecisions.clear();
+      void this.refreshContextUsage();
     } else return;
     this.publish();
   }

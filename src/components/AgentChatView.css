@@ -50,6 +50,33 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.codex-chat-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.codex-chat-context-track {
+  width: 28px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--border);
+}
+.codex-chat-context-track > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.codex-chat-context[data-level='high'] .codex-chat-context-track > span {
+  background: var(--warning);
+}
+.codex-chat-context[data-level='full'] .codex-chat-context-track > span {
+  background: var(--error);
+}
 .codex-chat-action:disabled {
   color: var(--fg-muted);
   cursor: default;

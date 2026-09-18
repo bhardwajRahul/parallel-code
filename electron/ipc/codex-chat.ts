@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { readContextUsage } from '../shared/agent-chat-types.js';
 import type {
   ChatDecision,
   ChatItem,
@@ -264,6 +265,7 @@ export class CodexChat {
       !choice.supportedReasoningEfforts.some((option) => option.reasoningEffort === effort)
     )
       throw new Error('This reasoning effort is not supported by the selected model.');
+    if (this.state.model !== model) this.state.contextUsage = undefined;
     this.state.model = model;
     this.state.reasoningEffort = effort || undefined;
     this.publish();
@@ -554,6 +556,11 @@ export class CodexChat {
       )
         return;
       this.state.tokenUsage = { totalTokens, inputTokens, outputTokens, scope: 'conversation' };
+      const usage = record(params.tokenUsage);
+      this.state.contextUsage = readContextUsage(
+        record(usage.last).totalTokens,
+        usage.modelContextWindow,
+      );
     } else if (method === 'turn/plan/updated') {
       this.state.plan = (Array.isArray(params.plan) ? params.plan : []).map((value) => {
         const entry = record(value);

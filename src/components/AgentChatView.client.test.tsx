@@ -124,6 +124,29 @@ afterEach(() => {
 });
 
 describe('Codex chat view', () => {
+  it('shows context capacity, remaining tokens, and over-limit usage independently of session totals', async () => {
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    await tick();
+    const meter = () => container.querySelector<HTMLElement>('[role="meter"]');
+    expect(meter()).toBeNull();
+    expect(container.querySelector('.codex-chat-context')?.textContent).toContain('Context —');
+    mocks.channel?.onmessage?.(state({ contextUsage: { usedTokens: 50000, maxTokens: 200000 } }));
+    expect(meter()?.textContent).toContain('Context 25% · 150K left');
+    expect(meter()?.title).toContain('50,000 of 200,000');
+    expect(meter()?.getAttribute('aria-valuenow')).toBe('50000');
+    mocks.channel?.onmessage?.(state({ contextUsage: { usedTokens: 190000, maxTokens: 200000 } }));
+    expect(meter()?.dataset.level).toBe('high');
+    mocks.channel?.onmessage?.(state({ contextUsage: { usedTokens: 210000, maxTokens: 200000 } }));
+    expect(meter()?.textContent).toContain('Context 105% · 0 left');
+    expect(meter()?.dataset.level).toBe('full');
+    expect(meter()?.getAttribute('aria-valuenow')).toBe('200000');
+    expect(meter()?.getAttribute('aria-valuetext')).toContain('210,000 of 200,000');
+    mocks.channel?.onmessage?.(state({ contextUsage: { usedTokens: 0, maxTokens: 200000 } }));
+    expect(meter()?.textContent).toContain('Context 0% · 200K left');
+    mocks.channel?.onmessage?.(state({ threadId: 'new-session' }));
+    expect(meter()).toBeNull();
+  });
+
   it('shows compact session tokens with an exact breakdown and clears them for a new session', async () => {
     dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     await tick();

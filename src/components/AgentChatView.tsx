@@ -331,6 +331,12 @@ export function AgentChatView(props: {
     if (!usage) return 'Session token usage has not been reported yet.';
     return `${usage.totalTokens.toLocaleString()} tokens · ${usage.inputTokens.toLocaleString()} input (including cache) · ${usage.outputTokens.toLocaleString()} output. ${usage.scope === 'connection' ? 'Since this chat connected; updates after each turn.' : 'Total for this conversation.'}`;
   };
+  const contextTitle = () => {
+    const usage = state()?.contextUsage;
+    if (!usage) return 'Context window usage is not available yet.';
+    const remaining = Math.max(0, usage.maxTokens - usage.usedTokens);
+    return `${usage.usedTokens.toLocaleString()} of ${usage.maxTokens.toLocaleString()} context tokens used · ${remaining.toLocaleString()} remaining. Latest provider-reported estimate; the window may reflect an automatic compaction limit.`;
+  };
   return (
     <div class="codex-chat" role="region" aria-label={`${agentName()} conversation`}>
       <div class="codex-chat-header">
@@ -349,6 +355,44 @@ export function AgentChatView(props: {
           {state()?.tokenUsage ? compactTokens.format(state()?.tokenUsage?.totalTokens ?? 0) : '—'}{' '}
           tokens
         </span>
+        <Show
+          when={state()?.contextUsage}
+          fallback={
+            <span class="codex-chat-context" title={contextTitle()}>
+              Context —
+            </span>
+          }
+        >
+          {(usage) => (
+            <span
+              class="codex-chat-context"
+              role="meter"
+              aria-label="Context window usage"
+              aria-valuemin={0}
+              aria-valuemax={usage().maxTokens}
+              aria-valuenow={Math.min(usage().usedTokens, usage().maxTokens)}
+              aria-valuetext={contextTitle()}
+              title={contextTitle()}
+              data-level={
+                usage().usedTokens >= usage().maxTokens
+                  ? 'full'
+                  : usage().usedTokens / usage().maxTokens >= 0.9
+                    ? 'high'
+                    : 'normal'
+              }
+            >
+              <span class="codex-chat-context-track" aria-hidden="true">
+                <span
+                  style={{
+                    width: `${Math.min(100, (usage().usedTokens / usage().maxTokens) * 100)}%`,
+                  }}
+                />
+              </span>
+              Context {Math.round((usage().usedTokens / usage().maxTokens) * 100)}% ·{' '}
+              {compactTokens.format(Math.max(0, usage().maxTokens - usage().usedTokens))} left
+            </span>
+          )}
+        </Show>
         <Show when={props.task.chatSessions?.some((session) => session.provider === provider())}>
           <select
             class="codex-chat-action"

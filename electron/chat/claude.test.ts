@@ -56,6 +56,9 @@ function harness(
   const output = new PassThrough({ objectMode: true });
   const controls = {
     initializationResult: vi.fn(async () => ({})),
+    getContextUsage: vi.fn(
+      async (): Promise<{ totalTokens: number; rawMaxTokens: number } | undefined> => undefined,
+    ),
     supportedModels: vi.fn(async () => [
       {
         value: 'sonnet',
@@ -109,6 +112,55 @@ function harness(
 }
 
 describe('Claude chat adapter', () => {
+  it('loads a context summary on resume and refreshes it after turns and model changes', async () => {
+    const h = harness([], 'saved-session');
+    h.controls.getContextUsage.mockResolvedValue({ totalTokens: 150000, rawMaxTokens: 200000 });
+    await h.chat.start();
+    expect(h.controls.getContextUsage).toHaveBeenCalledWith({ detail: 'summary' });
+    expect(h.chat.state.contextUsage).toEqual({ usedTokens: 150000, maxTokens: 200000 });
+    h.controls.getContextUsage.mockResolvedValue({ totalTokens: 50000, rawMaxTokens: 200000 });
+    await h.emit({ type: 'result', is_error: false });
+    expect(h.chat.state.contextUsage?.usedTokens).toBe(50000);
+    h.controls.getContextUsage.mockResolvedValue({ totalTokens: 50000, rawMaxTokens: 1000000 });
+    await h.chat.selectModel('claude-fixture');
+    expect(h.chat.state.contextUsage?.maxTokens).toBe(1000000);
+    expect(h.controls.getContextUsage).toHaveBeenCalledTimes(3);
+  });
+
+  it('ignores stale context responses and reports unavailable summaries without failing chat', async () => {
+    const h = harness();
+    let release = (_value: { totalTokens: number; rawMaxTokens: number }) => {};
+    h.controls.getContextUsage.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await h.chat.start();
+    h.controls.getContextUsage.mockResolvedValue({ totalTokens: 10, rawMaxTokens: 100 });
+    await h.emit({ type: 'result', is_error: false });
+    release({ totalTokens: 90, rawMaxTokens: 100 });
+    await Promise.resolve();
+    expect(h.chat.state.contextUsage?.usedTokens).toBe(10);
+    h.controls.getContextUsage.mockRejectedValueOnce(new Error('Unsupported control request'));
+    await h.emit({ type: 'result', is_error: false });
+    expect(h.chat.state.contextUsage).toBeUndefined();
+    expect(h.chat.state.error).toBeUndefined();
+    expect(h.chat.state.status).toBe('ready');
+    h.controls.getContextUsage.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await h.emit({ type: 'result', is_error: false });
+    h.chat.stop();
+    h.publish.mockClear();
+    release({ totalTokens: 90, rawMaxTokens: 100 });
+    await Promise.resolve();
+    expect(h.publish).not.toHaveBeenCalled();
+  });
+
   it('replaces cumulative model totals, includes cache tokens, and ignores incomplete usage', async () => {
     const h = harness();
     await h.chat.start();
