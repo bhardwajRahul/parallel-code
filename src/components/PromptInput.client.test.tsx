@@ -1,11 +1,15 @@
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PromptInput } from './PromptInput';
+import { registerAction, registerFocusFn } from '../store/store';
 
-const { storeMock, setTaskPromptDraft } = vi.hoisted(() => ({
+const { storeMock, setTaskPromptDraft, taskUsesAgentChat } = vi.hoisted(() => ({
   storeMock: { tasks: {} as Record<string, unknown> },
   setTaskPromptDraft: vi.fn(),
+  taskUsesAgentChat: vi.fn(() => false),
 }));
+
+vi.mock('../store/agent-chat', () => ({ taskUsesAgentChat }));
 
 vi.mock('../lib/ipc', () => ({ invoke: vi.fn(async () => undefined), fireAndForget: vi.fn() }));
 vi.mock('../lib/log', () => ({ debug: vi.fn(), warn: vi.fn() }));
@@ -51,6 +55,9 @@ afterEach(() => {
   document.body.replaceChildren();
   storeMock.tasks = {};
   setTaskPromptDraft.mockClear();
+  taskUsesAgentChat.mockReturnValue(false);
+  vi.mocked(registerFocusFn).mockClear();
+  vi.mocked(registerAction).mockClear();
 });
 
 async function waitFor(probe: () => boolean): Promise<void> {
@@ -71,6 +78,29 @@ function mount(taskId: string): HTMLTextAreaElement {
   if (!el) throw new Error('textarea not rendered');
   return el;
 }
+
+describe('PromptInput key ownership', () => {
+  const promptKeys = () =>
+    [
+      ...vi.mocked(registerFocusFn).mock.calls.map(([key]) => key),
+      ...vi.mocked(registerAction).mock.calls.map(([key]) => key),
+    ].filter((key) => key.startsWith('task-1:'));
+
+  it('claims the prompt keys for the terminal composer', () => {
+    storeMock.tasks = { 'task-1': { id: 'task-1', agentIds: ['agent-1'] } };
+    mount('task-1');
+    expect(promptKeys()).toEqual(['task-1:prompt', 'task-1:send-prompt']);
+  });
+
+  it('stands aside in chat mode, where AgentChatView owns the visible composer', () => {
+    taskUsesAgentChat.mockReturnValue(true);
+    storeMock.tasks = { 'task-1': { id: 'task-1', agentIds: ['agent-1'], mainAgentView: 'chat' } };
+    mount('task-1');
+    // This element is still built in chat mode, just never shown. Registering would let the
+    // hidden textarea swallow Enter and the focus key from the composer the user can see.
+    expect(promptKeys()).toEqual([]);
+  });
+});
 
 describe('PromptInput draft persistence', () => {
   it('shows the draft restored from the store on mount', () => {
