@@ -8,6 +8,7 @@ import { refreshTaskStatus, clearAgentActivity, markAgentSpawned } from './taskS
 import { saveState } from './persistence';
 import { refreshUsage, usageProviderForAgent } from './usage';
 import { assignFreshSessionId } from './session-ids';
+import { widenTaskColumnForAgentPanes } from './task-column';
 
 export async function loadAgents(): Promise<void> {
   const defaults = await invoke<AgentDef[]>(IPC.ListAgents);
@@ -43,6 +44,9 @@ export async function addAgentToTask(taskId: string, agentDef: AgentDef): Promis
       s.lastAgentId = agentDef.id;
     }),
   );
+
+  // The new pane splits the task body; keep every pane workable.
+  widenTaskColumnForAgentPanes(taskId);
 
   // Start the agent as "busy" immediately, before any PTY data arrives.
   markAgentSpawned(agentId);

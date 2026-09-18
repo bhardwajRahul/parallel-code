@@ -13,16 +13,11 @@ import { IPC } from '../../electron/ipc/channels';
 import { isAgentHookEventPayload } from '../../electron/agent-hooks/status';
 import { isPlanApprovalEvent, nextCanvasOpen } from '../lib/canvas-auto-open';
 import { canvasTabKey, isTaskCanvasVisible, withTab, withoutTab } from '../lib/canvas-tabs';
-import {
-  CANVAS_DEFAULT_WIDTH,
-  TASK_TILE_DEFAULT_WIDTH,
-  TASK_TILE_MIN_WIDTH,
-} from '../lib/layout-sizes';
+import { resizeTaskColumnForCanvas } from './task-column';
 import { store, setStore } from './core';
 import { setPlanContent, setPrefillPrompt, setTaskPromptDraftActive } from './tasks';
 import { setActiveTask } from './navigation';
 import { saveState } from './persistence';
-import { getPanelUserSize, setPanelUserSize } from './ui';
 import { aiTerminalPanels, setTaskFocusedPanel } from './focused-panel';
 import type { CanvasTab, Task } from './types';
 import type { ReasoningProfile } from '../investigation/profiles';
@@ -81,20 +76,6 @@ function stageCanvasRequest(taskId: string, request: string): void {
   queueMicrotask(() => {
     if (store.tasks[taskId]) setTaskFocusedPanel(taskId, 'prompt');
   });
-}
-
-/** The width the canvas column takes: the size the user dragged it to, else its minimum. */
-function canvasWidth(taskId: string): number {
-  return getPanelUserSize(`task:${taskId}:canvas-cols:canvas`) ?? CANVAS_DEFAULT_WIDTH;
-}
-
-/** The task column grows by the canvas when it opens and gives the space back
- *  when it closes, so the task body keeps its width either way. */
-function resizeTaskColumnForCanvas(taskId: string, direction: 1 | -1): void {
-  const key = `tiling:${taskId}`;
-  const width = getPanelUserSize(key) ?? TASK_TILE_DEFAULT_WIDTH;
-  const next = width + direction * canvasWidth(taskId);
-  setPanelUserSize(key, Math.max(TASK_TILE_MIN_WIDTH, next));
 }
 
 /** Applies a canvas change, resizing the column when it appears or goes. */
