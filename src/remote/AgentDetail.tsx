@@ -104,13 +104,21 @@ export function AgentDetail(props: AgentDetailProps) {
       if (context) context.font = `${fontSize}px monospace`;
       const charWidth = context?.measureText('M').width ?? fontSize * 0.61;
       const availableWidth = outputArea.clientWidth;
-      const fittedFontSize =
+      const availableHeight = outputArea.clientHeight;
+      // Fitting a wide agent grid to the phone's width alone shrinks it to a few
+      // pixels per row and leaves the pane mostly empty — and since nothing then
+      // overflows, there is nothing to pan either, so a full-screen agent UI (which
+      // has no scrollback to fall through to) cannot be scrolled at all. Fill the
+      // pane on whichever axis binds less and let the other overflow into the pan
+      // gestures below. Each fit is the largest font size that axis still allows;
+      // zero means the axis is unmeasured, not that it is infinitely tight.
+      const widthFit =
         availableWidth > 0
-          ? Math.min(
-              fontSize,
-              (fontSize * Math.max(1, availableWidth - 24)) / (term.cols * charWidth),
-            )
-          : fontSize;
+          ? (fontSize * Math.max(1, availableWidth - 24)) / (term.cols * charWidth)
+          : 0;
+      const heightFit =
+        availableHeight > 0 ? Math.max(1, availableHeight - 8) / (term.rows * 1.2) : 0;
+      const fittedFontSize = Math.min(fontSize, Math.max(widthFit, heightFit) || fontSize);
       // Scale through xterm so rendering, link hit testing and selection share cell dimensions.
       const renderedFontSize = Math.max(1, fittedFontSize * zoom());
       term.options.fontSize = renderedFontSize;

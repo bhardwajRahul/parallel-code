@@ -280,6 +280,18 @@ describe('phone terminal viewport', () => {
     await vi.waitFor(() => expect(terminalMocks.refresh).toHaveBeenCalledWith(0, 39));
   });
 
+  it('keeps a wide grid readable and overflowing so a full-screen agent UI can be panned', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(360);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
+    mount();
+    const { content } = viewport();
+    terminalMocks.scrollback?.('', 120, 40);
+    await vi.waitFor(() => expect(terminalMocks.refresh).toHaveBeenCalledWith(0, 39));
+    // Fitting to the width alone would land near 4px per row and fit the pane exactly.
+    expect(terminalMocks.options.fontSize).toBeGreaterThan(10);
+    expect(parseFloat(content.style.width)).toBeGreaterThan(360);
+  });
+
   it('opens Terminal with immediately usable keys even with the old Read preference', async () => {
     localStorage.setItem('parallel-mobile:output-view', 'output');
     vi.mocked(sendInput).mockResolvedValue(undefined);
