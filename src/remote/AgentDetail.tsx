@@ -6,7 +6,7 @@ import { fetchNotes, saveNotes, ApiError } from './api';
 import { clearPairedToken } from './auth';
 import { readLocal, writeLocal } from './storage';
 import { agentStatusDisplay } from './attention';
-import { messageForTerminal } from './terminalText';
+import { messageForTerminal, splitBashPrefix } from './terminalText';
 import { ConnectionBanner } from './ConnectionBanner';
 import {
   subscribeAgent,
@@ -336,13 +336,17 @@ export function AgentDetail(props: AgentDetailProps) {
       return;
     }
     const text = inputText();
-    const data = messageForTerminal(text, term?.modes.bracketedPasteMode ?? false);
-    if (!data) return;
+    const { bash, body } = splitBashPrefix(text);
+    const data = messageForTerminal(body, term?.modes.bracketedPasteMode ?? false);
+    if (!data && !bash) return;
     setSending(true);
     setSendError('');
     setSent(false);
     try {
-      await sendInput(props.agentId, data, true);
+      // Type the `!` on its own first so the TUI opens its shell prompt before
+      // the command arrives; a paste containing it would stay literal text.
+      if (bash) await sendInput(props.agentId, '!');
+      if (data) await sendInput(props.agentId, data, true);
       // Clear only the accepted draft, including when the user navigated away.
       if (readLocal(draftKey) === text) writeLocal(draftKey, '');
       if (!disposed) {
@@ -369,6 +373,19 @@ export function AgentDetail(props: AgentDetailProps) {
     } finally {
       if (!disposed) setSending(false);
     }
+  }
+
+  const bashMode = () => splitBashPrefix(inputText()).bash;
+  const composerPlaceholder = () => {
+    if (bashMode()) return 'Shell command…';
+    return agent()?.attention === 'needs_input' ? 'Reply to agent…' : 'Message agent…';
+  };
+
+  function toggleBashMode() {
+    const { bash, body } = splitBashPrefix(inputText());
+    setInputText(bash ? body.trimStart() : `!${inputText()}`);
+    setSent(false);
+    inputRef?.focus();
   }
 
   function selectView(next: 'terminal' | 'notes') {
@@ -482,6 +499,15 @@ export function AgentDetail(props: AgentDetailProps) {
               </p>
             </Show>
             <div class="mobile-composer-row">
+              <button
+                class="mobile-button mobile-bash"
+                aria-label="Run as shell command"
+                aria-pressed={bashMode()}
+                disabled={sending()}
+                onClick={toggleBashMode}
+              >
+                !
+              </button>
               <textarea
                 ref={(element) => {
                   inputRef = element;
@@ -493,9 +519,7 @@ export function AgentDetail(props: AgentDetailProps) {
                 rows={1}
                 maxlength={4000}
                 aria-label="Message agent"
-                placeholder={
-                  agent()?.attention === 'needs_input' ? 'Reply to agent…' : 'Message agent…'
-                }
+                placeholder={composerPlaceholder()}
                 value={inputText()}
                 onInput={(e) => {
                   setInputText(e.currentTarget.value);

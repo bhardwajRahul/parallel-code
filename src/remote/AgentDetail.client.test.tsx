@@ -145,6 +145,31 @@ describe('phone reply composer', () => {
     expect(localStorage.getItem('parallel-mobile:reply:a1')).toBeNull();
     expect(host.textContent).toContain('Accepted by terminal');
   });
+  it('runs a "!" reply as a shell command instead of pasting it as text', async () => {
+    vi.mocked(sendInput).mockResolvedValue(undefined);
+    mount();
+    type('! ls -la');
+    click('Send');
+    await vi.waitFor(() => expect(composer().value).toBe(''));
+    expect(vi.mocked(sendInput).mock.calls).toEqual([
+      ['a1', '!'],
+      ['a1', '\x1b[200~ls -la\x1b[201~', true],
+    ]);
+  });
+  it('toggles the shell prefix from the button so phones need no bang key', () => {
+    mount();
+    const bash = host.querySelector<HTMLButtonElement>('[aria-label="Run as shell command"]');
+    if (!bash) throw new Error('Missing shell command button');
+    expect(bash.getAttribute('aria-pressed')).toBe('false');
+    type('npm test');
+    bash.click();
+    expect(composer().value).toBe('!npm test');
+    expect(bash.getAttribute('aria-pressed')).toBe('true');
+    expect(composer().placeholder).toBe('Shell command…');
+    bash.click();
+    expect(composer().value).toBe('npm test');
+    expect(bash.getAttribute('aria-pressed')).toBe('false');
+  });
   it('keeps a failed draft and restores it when reopening the task', async () => {
     vi.mocked(sendInput).mockRejectedValue(new Error('Delivery could not be confirmed'));
     mount();
