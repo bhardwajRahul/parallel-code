@@ -67,6 +67,14 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
   createEffect(() => {
     if (!props.isActive) setFullscreen(false);
   });
+
+  /** Enters fullscreen from a control that unmounts itself in the act.
+   *  Focus would land on the document body, out of reach of the Escape
+   *  handler above, leaving the overlay with no way back. */
+  function enterFullscreen(): void {
+    setFullscreen(true);
+    panelRef?.focus();
+  }
   const [contextMenu, setContextMenu] = createSignal<{
     path: string;
     x: number;
@@ -74,6 +82,11 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
   } | null>(null);
 
   const tabs = () => props.task.canvasTabs ?? [];
+  // Closing the last tab under a fullscreen canvas would leave the window
+  // filled with the empty state and no tab strip worth showing.
+  createEffect(() => {
+    if (tabs().length === 0) setFullscreen(false);
+  });
   const active = () => props.task.canvasActiveTab;
   const markdownTabs = () => tabs().filter((tab) => tab.kind === 'markdown');
   // Mind map and reasoning tabs render from props; only file-backed tabs mount documents.
@@ -186,7 +199,7 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
   function openFullscreenEditor(path: string): void {
     setContextMenu(null);
     activateCanvasTab(props.task.id, canvasTabKey({ kind: 'markdown', path }));
-    setFullscreen(true);
+    enterFullscreen();
   }
 
   return (
@@ -231,7 +244,7 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
           }}
           onCloseAll={requestCloseAll}
           fullscreen={fullscreen()}
-          onEnterFullscreen={() => setFullscreen(true)}
+          onEnterFullscreen={enterFullscreen}
           onExitFullscreen={() => setFullscreen(false)}
           onOpenInDefaultEditor={openDefaultEditor}
         />

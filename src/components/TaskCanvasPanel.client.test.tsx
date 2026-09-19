@@ -310,7 +310,7 @@ describe('TaskCanvasPanel', () => {
     expect(openFileInEditor).toHaveBeenCalledWith('/tmp/task', 'docs/design.md');
   });
 
-  it('expands and restores the canvas from the tab strip', async () => {
+  it('expands the canvas from the tab strip, and Escape still comes back', async () => {
     mockIpc();
     const { container } = mount('docs/design.md');
     await editorLine(container, 'Keep state in one store.');
@@ -323,9 +323,28 @@ describe('TaskCanvasPanel', () => {
     expand?.click();
     expect(canvas?.dataset.fullscreen).toBe('true');
 
-    // The button that takes the canvas back is the one the strip swaps in.
-    expect(container.querySelector('[title="Fill the window with this canvas"]')).toBeNull();
-    container.querySelector<HTMLButtonElement>('[title="Exit fullscreen"]')?.click();
+    // The button unmounts itself in the act, so focus has to be put somewhere
+    // the panel's Escape handler can still be reached from.
+    expect(canvas?.contains(document.activeElement)).toBe(true);
+    document.activeElement?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    expect(canvas?.dataset.fullscreen).toBe('false');
+  });
+
+  it('leaves fullscreen when the last canvas tab is closed', async () => {
+    mockIpc();
+    const { container, setTask } = mount('docs/design.md');
+    await editorLine(container, 'Keep state in one store.');
+    container
+      .querySelector<HTMLButtonElement>('[title="Fill the window with this canvas"]')
+      ?.click();
+    const canvas = container.querySelector<HTMLElement>('[data-testid="task-canvas"]');
+    expect(canvas?.dataset.fullscreen).toBe('true');
+
+    setTask({ canvasTabs: [], canvasActiveTab: undefined });
+
+    // Otherwise a fixed overlay fills the window with the empty state.
     expect(canvas?.dataset.fullscreen).toBe('false');
   });
 

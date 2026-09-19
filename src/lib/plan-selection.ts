@@ -136,10 +136,17 @@ export function getPlanSelectionRects(
   const rects: PlanSelectionRect[] = [];
   for (const range of ranges) {
     for (const rect of range.getClientRects()) {
+      // Text inside a box that scrolls on its own — a wide table — reports
+      // where it sits, not where it shows. An overlay drawn at that position
+      // would sit outside the column and scroll the whole plan sideways, so
+      // each highlight is cut to the part of the column it covers.
+      const left = Math.max(rect.left, containerRect.left);
+      const right = Math.min(rect.right, containerRect.right);
+      if (right <= left) continue;
       rects.push({
         top: rect.top - containerRect.top,
-        left: rect.left - containerRect.left,
-        width: rect.width,
+        left: left - containerRect.left,
+        width: right - left,
         height: rect.height,
       });
     }
@@ -156,10 +163,18 @@ export function trackPlanSelectionGeometry(
   const refresh = () => onChange(getPlanSelectionRects(containerEl, ranges));
   refresh();
 
-  if (typeof ResizeObserver === 'undefined') return () => undefined;
+  // Scrolling a table's own box moves the text under the overlays without
+  // resizing anything. Scroll events do not bubble, so catch them capturing.
+  containerEl.addEventListener('scroll', refresh, { capture: true, passive: true });
+  const stopScroll = () => containerEl.removeEventListener('scroll', refresh, { capture: true });
+
+  if (typeof ResizeObserver === 'undefined') return stopScroll;
   const observer = new ResizeObserver(refresh);
   observer.observe(containerEl);
-  return () => observer.disconnect();
+  return () => {
+    stopScroll();
+    observer.disconnect();
+  };
 }
 
 /**

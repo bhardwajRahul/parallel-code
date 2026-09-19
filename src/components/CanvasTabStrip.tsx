@@ -166,7 +166,7 @@ export function CanvasTabStrip(props: CanvasTabStripProps) {
             />
           )}
         </Show>
-        <Show when={!props.fullscreen && props.tabs.length > 0}>
+        <Show when={!props.fullscreen && activePath()}>
           <IconButton
             icon={<ExpandIcon size={13} />}
             onClick={() => props.onEnterFullscreen()}

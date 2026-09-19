@@ -7,6 +7,7 @@ import {
   PLAN_REVIEW_FLOW_SLOT_SELECTOR,
   trackPlanSelectionGeometry,
 } from './plan-selection';
+import type { PlanSelectionRect } from './plan-selection';
 
 afterEach(() => {
   window.getSelection()?.removeAllRanges();
@@ -312,6 +313,81 @@ describe('plan selection DOM behavior', () => {
 
     expect(getPlanSelectionFlowAnchor(container, textRanges)).toBe(paragraphs[0]);
     expect(getPlanSelection(container, 'plan.md', textRanges)).toBeNull();
+  });
+
+  it('cuts a highlight to the column when its text is inside a scrolling table', () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<p>Cell text</p>';
+    document.body.append(container);
+    const paragraph = container.querySelector('p');
+    const text = paragraph?.firstChild as Text;
+    selectText(text, text);
+    const ranges = getPlanSelectionTextRanges(container);
+    // The container spans 5..45; the text sits at 35..75, half of it scrolled
+    // out of sight inside a table's own box.
+    Object.defineProperty(ranges[0], 'getClientRects', {
+      value: () => [rect(30, 35)] as unknown as DOMRectList,
+    });
+    Object.defineProperty(container, 'getBoundingClientRect', { value: () => rect(10, 5) });
+
+    const rects: PlanSelectionRect[][] = [];
+    const stop = trackPlanSelectionGeometry(container, ranges, (next) => rects.push(next));
+    stop();
+
+    expect(rects.at(-1)).toEqual([{ top: 20, left: 30, width: 10, height: 12 }]);
+  });
+
+  it('drops a highlight whose text is scrolled out of the column entirely', () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<p>Hidden cell</p>';
+    document.body.append(container);
+    const text = container.querySelector('p')?.firstChild as Text;
+    selectText(text, text);
+    const ranges = getPlanSelectionTextRanges(container);
+    Object.defineProperty(ranges[0], 'getClientRects', {
+      value: () => [rect(30, 200)] as unknown as DOMRectList,
+    });
+    Object.defineProperty(container, 'getBoundingClientRect', { value: () => rect(10, 5) });
+
+    const rects: PlanSelectionRect[][] = [];
+    const stop = trackPlanSelectionGeometry(container, ranges, (next) => rects.push(next));
+    stop();
+
+    expect(rects.at(-1)).toEqual([]);
+  });
+
+  it('realigns highlights when a table inside the plan is scrolled', () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<div class="md-table-scroll"><p>Cell text</p></div>';
+    document.body.append(container);
+    const text = container.querySelector('p')?.firstChild as Text;
+    selectText(text, text);
+    const ranges = getPlanSelectionTextRanges(container);
+    let left = 15;
+    Object.defineProperty(ranges[0], 'getClientRects', {
+      value: () => [rect(30, left)] as unknown as DOMRectList,
+    });
+    Object.defineProperty(container, 'getBoundingClientRect', { value: () => rect(10, 5) });
+
+    const lefts: number[] = [];
+    const stop = trackPlanSelectionGeometry(container, ranges, (next) =>
+      lefts.push(...next.map((item) => item.left)),
+    );
+    expect(lefts.at(-1)).toBe(10);
+
+    // The box scrolls right by 5; the text moves with it.
+    left = 10;
+    container
+      .querySelector('.md-table-scroll')
+      ?.dispatchEvent(new Event('scroll', { bubbles: false }));
+    expect(lefts.at(-1)).toBe(5);
+
+    stop();
+    left = 40;
+    container
+      .querySelector('.md-table-scroll')
+      ?.dispatchEvent(new Event('scroll', { bubbles: false }));
+    expect(lefts.at(-1)).toBe(5);
   });
 
   it('recalculates retained range geometry when the plan reflows', () => {
