@@ -296,6 +296,39 @@ describe('TaskCanvasPanel', () => {
     expect(canvas?.dataset.fullscreen).toBe('false');
   });
 
+  it('opens the document in the default editor from the tab strip', async () => {
+    mockIpc();
+    const { container } = mount('docs/design.md');
+    await editorLine(container, 'Keep state in one store.');
+    const button = container.querySelector<HTMLButtonElement>(
+      '[title="Open docs/design.md in the default editor"]',
+    );
+
+    expect(button).not.toBeNull();
+    button?.click();
+
+    expect(openFileInEditor).toHaveBeenCalledWith('/tmp/task', 'docs/design.md');
+  });
+
+  it('expands and restores the canvas from the tab strip', async () => {
+    mockIpc();
+    const { container } = mount('docs/design.md');
+    await editorLine(container, 'Keep state in one store.');
+    const canvas = container.querySelector<HTMLElement>('[data-testid="task-canvas"]');
+    const expand = container.querySelector<HTMLButtonElement>(
+      '[title="Fill the window with this canvas"]',
+    );
+
+    expect(expand).not.toBeNull();
+    expand?.click();
+    expect(canvas?.dataset.fullscreen).toBe('true');
+
+    // The button that takes the canvas back is the one the strip swaps in.
+    expect(container.querySelector('[title="Fill the window with this canvas"]')).toBeNull();
+    container.querySelector<HTMLButtonElement>('[title="Exit fullscreen"]')?.click();
+    expect(canvas?.dataset.fullscreen).toBe('false');
+  });
+
   it('leaves fullscreen when the task stops being the active one', async () => {
     mockIpc();
     const { container, setActive } = mount('docs/design.md');

@@ -231,7 +231,9 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
           }}
           onCloseAll={requestCloseAll}
           fullscreen={fullscreen()}
+          onEnterFullscreen={() => setFullscreen(true)}
           onExitFullscreen={() => setFullscreen(false)}
+          onOpenInDefaultEditor={openDefaultEditor}
         />
         <Show when={pickerOpen()}>
           <CanvasFilePicker

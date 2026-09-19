@@ -191,6 +191,27 @@ export function LinkIcon(props: IconProps): JSX.Element {
   );
 }
 
+/** Opening something outside the app: a file in its own editor, a URL in the browser. */
+export function ExternalLinkIcon(props: IconProps): JSX.Element {
+  return (
+    <SvgIcon {...props}>
+      <path d="M3.5 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5v-3a.75.75 0 0 1 1.5 0v3A3 3 0 0 1 12.5 16h-9A3 3 0 0 1 0 12.5v-9A3 3 0 0 1 3.5 0h3a.75.75 0 0 1 0 1.5h-3ZM10 .75a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0V2.56L8.53 8.53a.75.75 0 0 1-1.06-1.06L13.44 1.5H10.75A.75.75 0 0 1 10 .75Z" />
+    </SvgIcon>
+  );
+}
+
+/** Four corner brackets: take the whole window. */
+export function ExpandIcon(props: IconProps): JSX.Element {
+  return (
+    <SvgIcon {...props}>
+      <path d="M2 2h5v1.5H3.5V7H2V2Z" />
+      <path d="M14 2v5h-1.5V3.5H9V2h5Z" />
+      <path d="M2 14V9h1.5v3.5H7V14H2Z" />
+      <path d="M14 14H9v-1.5h3.5V9H14v5Z" />
+    </SvgIcon>
+  );
+}
+
 export function KebabIcon(props: IconProps): JSX.Element {
   return (
     <SvgIcon {...props}>

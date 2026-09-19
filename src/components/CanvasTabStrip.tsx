@@ -4,7 +4,7 @@ import { sf } from '../lib/fontScale';
 import { canvasTabKey } from '../lib/canvas-tabs';
 import type { CanvasTab, CanvasTabKind } from '../store/types';
 import { IconButton } from './IconButton';
-import { CloseIcon, PlusIcon } from './icons';
+import { CloseIcon, ExpandIcon, ExternalLinkIcon, PlusIcon } from './icons';
 
 interface CanvasTabStripProps {
   tabs: CanvasTab[];
@@ -17,7 +17,10 @@ interface CanvasTabStripProps {
   onAdd: (kind: CanvasTabKind) => void;
   onCloseAll: () => void;
   fullscreen: boolean;
+  onEnterFullscreen: () => void;
   onExitFullscreen: () => void;
+  /** Hands the open document to whatever the system opens Markdown with. */
+  onOpenInDefaultEditor: (path: string) => void;
 }
 
 /** What the "+" menu offers. */
@@ -43,6 +46,11 @@ const tabLabel = (tab: CanvasTab): string => {
  *  more, and a cross that closes the whole column. */
 export function CanvasTabStrip(props: CanvasTabStripProps) {
   const [menuOpen, setMenuOpen] = createSignal(false);
+  /** The file behind the open tab, when the open tab is a document. */
+  const activePath = (): string | undefined => {
+    const tab = props.tabs.find((candidate) => canvasTabKey(candidate) === props.active);
+    return tab?.kind === 'markdown' ? tab.path : undefined;
+  };
 
   return (
     <div
@@ -148,6 +156,22 @@ export function CanvasTabStrip(props: CanvasTabStripProps) {
           >
             Exit fullscreen
           </button>
+        </Show>
+        <Show when={activePath()}>
+          {(path) => (
+            <IconButton
+              icon={<ExternalLinkIcon size={13} />}
+              onClick={() => props.onOpenInDefaultEditor(path())}
+              title={`Open ${path()} in the default editor`}
+            />
+          )}
+        </Show>
+        <Show when={!props.fullscreen && props.tabs.length > 0}>
+          <IconButton
+            icon={<ExpandIcon size={13} />}
+            onClick={() => props.onEnterFullscreen()}
+            title="Fill the window with this canvas"
+          />
         </Show>
         <IconButton
           icon={<PlusIcon size={16} />}
