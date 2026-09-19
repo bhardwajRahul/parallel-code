@@ -3,6 +3,7 @@ import { SANITIZE_UNTRUSTED } from './sanitize';
 import { Marked, type Tokens } from 'marked';
 import { createSignal, createEffect } from 'solid-js';
 import { highlightLines } from './shiki-highlighter';
+import { tableScrollRenderer } from './marked-table';
 
 /**
  * Render markdown to HTML with Shiki syntax highlighting for fenced code blocks.
@@ -27,6 +28,7 @@ export async function renderMarkdownWithHighlighting(markdown: string): Promise<
   // Second pass — render with a custom renderer that swaps in highlighted HTML
   let blockIndex = 0;
   const renderer = {
+    ...tableScrollRenderer,
     code(token: Tokens.Code): string {
       // Mermaid blocks → render as placeholder for client-side rendering
       if (token.lang === 'mermaid') {
@@ -113,9 +115,11 @@ export function createHighlightedMarkdown(source: () => string | undefined): () 
       })
       .catch(() => {
         if (thisGen === generation) {
+          const plain = new Marked();
+          plain.use({ renderer: tableScrollRenderer });
           setHtml(
             DOMPurify.sanitize(
-              new Marked().parse(content, { async: false }) as string,
+              plain.parse(content, { async: false }) as string,
               SANITIZE_UNTRUSTED,
             ),
           );

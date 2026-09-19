@@ -3122,6 +3122,32 @@ html[data-look='islands-light'] .window-title-icon {
 
 /* Plan markdown rendering */
 /* ── Plan markdown: base (compact panel preview) ── */
+
+/* Nothing in the prose may set the column's width: a long URL or identifier
+   breaks mid-word rather than pushing the whole document sideways. Wide code
+   blocks and tables get their own scrollbar instead (see below). */
+.plan-markdown {
+  overflow-wrap: break-word;
+}
+
+/* The renderer wraps every table in this box, so a table wider than the column
+   scrolls inside it and leaves the prose around it where it is. Scrolling makes
+   the box a formatting context, which traps the table's own margins inside it
+   where they can no longer collapse with the prose: the block spacing has to
+   move to the box. */
+.plan-markdown .md-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.plan-markdown .md-table-scroll > table {
+  margin: 0;
+}
+
+.plan-markdown-dialog .md-table-scroll {
+  margin: 0.8em 0;
+}
+
 .plan-markdown h1,
 .plan-markdown h2,
 .plan-markdown h3 {

@@ -67,6 +67,15 @@ describe('renderDocumentBlocks', () => {
     expect(blocks.map((b) => b.startLine)).toEqual([1, 3, 5]);
   });
 
+  // A table is as wide as its widest row, so without a box of its own it drags
+  // the whole document into sideways scrolling.
+  it('wraps tables in their own scroll box', async () => {
+    const blocks = await renderDocumentBlocks('| a | b |\n| --- | --- |\n| 1 | 2 |');
+    expect(blocks[0].type).toBe('table');
+    expect(blocks[0].html).toMatch(/^<div class="md-table-scroll"><table>/);
+    expect(blocks[0].html).toContain('<td>1</td>');
+  });
+
   it('renders mermaid fences as placeholders', async () => {
     const blocks = await renderDocumentBlocks('```mermaid\ngraph TD; A-->B\n```');
     expect(blocks[0].html).toContain('mermaid-block');

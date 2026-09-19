@@ -330,7 +330,11 @@ const liveTheme = EditorView.theme({
     cursor: 'pointer',
   },
   '.cm-md-task-done': { opacity: '0.6' },
-  '.cm-md-table': { fontFamily: 'var(--font-mono)', fontSize: '12px', whiteSpace: 'pre' },
+  // No `white-space: pre` here: a row wider than the pane would stretch the
+  // content box and scroll the whole document sideways. The `break-spaces` that
+  // `EditorView.lineWrapping` puts on the content still keeps the runs of
+  // spaces inside a row, but a row that wraps loses its column alignment.
+  '.cm-md-table': { fontFamily: 'var(--font-mono)', fontSize: '12px' },
   '.cm-md-table-header': { fontWeight: '700' },
   '.cm-md-quote': {
     borderLeft: '3px solid var(--border)',
