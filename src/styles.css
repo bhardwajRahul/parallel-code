@@ -1494,6 +1494,45 @@ button {
   min-width: 0;
 }
 
+/* Each action is one segment of the bar and they share its width evenly. Both
+   wrappers matter: a hover hint wraps every action, and a split action (button
+   plus its model chevron) adds another around that. Without this the split is
+   the only flexible segment, so it takes all the slack on a wide panel and all
+   the shrinking on a narrow one, where it collapses to nothing. */
+.change-tour-row > :is(.tour-hint-anchor, .tour-split),
+.change-tour-row .tour-split > .tour-hint-anchor {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Several actions share the bar and read as one control, divided the same way
+   the model chevron divides itself off. */
+.change-tour-row > * + * {
+  border-left: 1px solid var(--border-subtle);
+}
+
+/* Three labels sharing a narrow panel wrap to one character per line, and the
+   bar grows into the note it exists to stay out of. Truncate instead; every
+   action here has a hover popover that spells its label out in full. */
+.notes-tour-footer .change-tour-action-label {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The notes panel's own min-height can exceed the ResizablePanel cell holding
+   it (pinned drag, absorber compression), and the cell clips from the bottom —
+   which would swallow this bar whole. Sticking it to the cell's visible bottom
+   edge means the textarea takes the clipping instead, as it did before the bar
+   existed. Opaque, so the overflowing note passes behind it. */
+.notes-tour-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--task-panel-bg);
+}
+
 .change-tour-model {
   display: inline-flex;
   align-items: center;

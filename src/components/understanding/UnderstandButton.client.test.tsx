@@ -4,7 +4,7 @@ import {
   createUnderstandingTour,
   type UnderstandingTourController,
 } from '../../lib/create-understanding-tour';
-import { UnderstandButton } from './UnderstandButton';
+import { UnderstandButton, tourButtonStyle } from './UnderstandButton';
 import { tourHintText } from './TourHint';
 
 vi.mock('../../lib/ipc', () => ({ invoke: vi.fn() }));
@@ -63,6 +63,61 @@ describe('UnderstandButton hint', () => {
     button.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
     expect(hint()?.textContent).toContain('Click to open it.');
     expect(hint()?.textContent).not.toContain('Uses:');
+  });
+});
+
+describe('UnderstandButton split chrome', () => {
+  function mountSplit(props: { class?: string; style?: typeof tourButtonStyle }) {
+    const container = document.createElement('div');
+    document.body.append(container);
+    disposers.push(
+      render(
+        () => (
+          <UnderstandButton
+            label="Take Tour"
+            tour={createUnderstandingTour()}
+            kind="plan"
+            subject="docs/plan.md"
+            onClick={() => undefined}
+            class={props.class}
+            style={props.style}
+            modelMenu
+          />
+        ),
+        container,
+      ),
+    );
+    const action = container.querySelector<HTMLButtonElement>('button:not([aria-label])');
+    const chevron = container.querySelector<HTMLButtonElement>('[aria-label="Tour model"]');
+    if (!action || !chevron) throw new Error('Split button did not render both halves');
+    return { action, chevron };
+  }
+
+  // The pill callers (CanvasTabStrip) must keep the chrome they pass in, and the
+  // glued corners that make the pair read as one control.
+  it('keeps a caller pill class and flattens the corners where the halves meet', () => {
+    const { action, chevron } = mountSplit({
+      class: 'btn-secondary review-plan-btn canvas-tour-btn',
+      style: tourButtonStyle,
+    });
+
+    expect(action.className).toBe('btn-secondary review-plan-btn canvas-tour-btn');
+    expect(chevron.className).toBe('btn-secondary review-plan-btn canvas-tour-btn');
+    expect(action.style.borderTopRightRadius).toBe('0px');
+    expect(action.style.borderBottomRightRadius).toBe('0px');
+    expect(chevron.style.borderTopLeftRadius).toBe('0px');
+    expect(chevron.style.borderLeftStyle).toBe('none');
+  });
+
+  // With no chrome passed, the pair takes the flat footer bar's own classes and
+  // brings no inline styles: there are no rounded corners left to flatten.
+  it('falls back to the footer bar chrome when the caller passes none', () => {
+    const { action, chevron } = mountSplit({});
+
+    expect(action.className).toBe('change-tour-action understanding-action');
+    expect(chevron.className).toBe('change-tour-model');
+    expect(action.getAttribute('style')).toBeNull();
+    expect(chevron.getAttribute('style')).toBeNull();
   });
 });
 

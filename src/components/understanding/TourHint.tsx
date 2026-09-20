@@ -1,18 +1,8 @@
-import { Show, createSignal, createUniqueId, type JSX } from 'solid-js';
-import { Portal } from 'solid-js/web';
-import {
-  createAnchorEffect,
-  createHeldSignal,
-  placeBelow,
-  type BelowAnchor,
-} from '../../lib/floating';
+import { Show, type JSX } from 'solid-js';
 import type { UnderstandingTourState } from '../../lib/create-understanding-tour';
 import type { UnderstandingTourKind } from '../../lib/understanding-tour';
+import { HoverHint } from './HoverHint';
 import { askCodeModelLabel } from './ask-code-label';
-
-const HINT_WIDTH = 300;
-/** Room the hint needs; placeBelow flips it above the control when the foot is close. */
-const HINT_HEIGHT = 200;
 
 const HEADINGS: Record<UnderstandingTourKind, string> = {
   plan: 'Guided tour of this document',
@@ -74,25 +64,6 @@ export function TourHint(props: {
   class?: string;
   children: (describedBy: () => string | undefined) => JSX.Element;
 }) {
-  const id = createUniqueId();
-  const held = createHeldSignal<boolean>(150);
-  const open = () => !!held.value();
-  const [position, setPosition] = createSignal<BelowAnchor>({ top: 0, right: 0, maxHeight: 0 });
-  let anchor: HTMLDivElement | undefined;
-
-  createAnchorEffect(open, () => {
-    if (!anchor) return;
-    setPosition(
-      placeBelow(
-        anchor.getBoundingClientRect(),
-        Math.min(HINT_WIDTH, window.innerWidth - 24),
-        { width: window.innerWidth, height: window.innerHeight },
-        12,
-        HINT_HEIGHT,
-      ),
-    );
-  });
-
   const text = () =>
     tourHintText({
       kind: props.kind,
@@ -106,46 +77,23 @@ export function TourHint(props: {
   const idle = () => text().action.startsWith('Generates');
 
   return (
-    <>
-      <div
-        ref={anchor}
-        class={props.class ? `tour-hint-anchor ${props.class}` : 'tour-hint-anchor'}
-        onMouseEnter={() => held.set(true)}
-        onMouseLeave={() => {
-          if (!anchor?.contains(document.activeElement)) held.clear();
-        }}
-        onFocusIn={() => held.set(true)}
-        onFocusOut={(event) => {
-          if (!(event.relatedTarget instanceof Node) || !anchor?.contains(event.relatedTarget))
-            held.set(false);
-        }}
-      >
-        {props.children(() => (open() ? id : undefined))}
-      </div>
-      <Show when={open()}>
-        <Portal>
-          <div
-            id={id}
-            role="tooltip"
-            class="tour-hint"
-            style={{
-              top: `${position().top}px`,
-              right: `${position().right}px`,
-              width: `${HINT_WIDTH}px`,
-            }}
-          >
-            <strong class="tour-hint-heading">{text().heading}</strong>
-            <code class="tour-hint-subject" title={props.subject}>
-              {props.subject}
-            </code>
-            <p class="tour-hint-body">{text().body}</p>
-            <p class="tour-hint-action">{text().action}</p>
-            <Show when={idle()}>
-              <p class="tour-hint-action">Uses: {askCodeModelLabel()}</p>
-            </Show>
-          </div>
-        </Portal>
-      </Show>
-    </>
+    <HoverHint
+      class={props.class}
+      hint={() => (
+        <>
+          <strong class="tour-hint-heading">{text().heading}</strong>
+          <code class="tour-hint-subject" title={props.subject}>
+            {props.subject}
+          </code>
+          <p class="tour-hint-body">{text().body}</p>
+          <p class="tour-hint-action">{text().action}</p>
+          <Show when={idle()}>
+            <p class="tour-hint-action">Uses: {askCodeModelLabel()}</p>
+          </Show>
+        </>
+      )}
+    >
+      {props.children}
+    </HoverHint>
   );
 }

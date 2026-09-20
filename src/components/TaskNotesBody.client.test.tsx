@@ -51,7 +51,7 @@ const task: Task = {
   planFileName: 'plan.md',
 };
 
-/** Both overlay buttons carry the same class, so they are told apart by label. */
+/** Every footer button carries the same class, so they are told apart by label. */
 function buttonLabelled(container: HTMLElement, label: string): HTMLButtonElement {
   const button = [...container.querySelectorAll<HTMLButtonElement>('button')].find((candidate) =>
     candidate.textContent?.includes(label),
@@ -110,9 +110,34 @@ describe('TaskNotesBody plan button', () => {
       'Take Tour',
       '',
     ]);
-    container.querySelector<HTMLButtonElement>('.review-plan-btn')?.click();
+    buttonLabelled(container, 'Review Plan').click();
     expect(onPlanFullscreen).toHaveBeenCalledOnce();
     expect(container.querySelector('.plan-markdown')).toBeNull();
+  });
+
+  it('keeps the plan actions out of the note, in a footer below the editor', () => {
+    const container = renderPlan({ task: { ...task, notes: 'Keep this note.' } });
+
+    const footer = container.querySelector('.notes-tour-footer');
+    const textarea = container.querySelector('textarea');
+    expect(footer).not.toBeNull();
+    // The send arrow still floats in the corner; the plan actions no longer do.
+    expect(footer?.contains(buttonLabelled(container, 'Review Plan'))).toBe(true);
+    expect(footer?.contains(buttonLabelled(container, 'Take Tour'))).toBe(true);
+    expect(footer?.querySelector('.send-notes-btn')).toBeNull();
+    expect(textarea?.compareDocumentPosition(footer as Node)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it('reserves height for the footer so it never sits on the editor', () => {
+    const withFooter = renderPlan({ task });
+    const withoutFooter = renderPlan({ task: { ...task, planContent: undefined } });
+
+    const height = (container: HTMLElement) =>
+      container.querySelector<HTMLElement>('.task-notes-body')?.style.minHeight;
+    expect(height(withoutFooter)).toBe('56px');
+    expect(height(withFooter)).toBe('87px');
   });
 
   it('keeps the notes editor mounted when a plan arrives or disappears', () => {
@@ -123,20 +148,42 @@ describe('TaskNotesBody plan button', () => {
 
     setNotesTask('planContent', '# New plan');
     // Review Plan, Take Tour and the model chevron glued to it.
-    expect(container.querySelectorAll('.review-plan-btn')).toHaveLength(3);
+    expect(container.querySelectorAll('.notes-tour-footer button')).toHaveLength(3);
     expect(container.querySelector('textarea')).toBe(textarea);
     expect(document.activeElement).toBe(textarea);
 
     setNotesTask('planContent', undefined);
-    expect(container.querySelector('.review-plan-btn')).toBeNull();
+    expect(container.querySelector('.notes-tour-footer')).toBeNull();
     expect(container.querySelector('textarea')).toBe(textarea);
   });
 
   it('hides the plan button when plans are disabled', () => {
     store.showPlans = false;
     const container = renderPlan({ task });
-    expect(container.querySelector('.review-plan-btn')).toBeNull();
+    expect(container.querySelector('.notes-tour-footer')).toBeNull();
     expect(container.querySelector('textarea')).not.toBeNull();
+  });
+
+  it('names the detected plan file in a popover on Review Plan', () => {
+    const container = renderPlan({ task: { ...task, planPath: '.claude/plans/theme-plan.md' } });
+
+    const review = buttonLabelled(container, 'Review Plan');
+    // A popover, not a native tooltip: the two together would double up.
+    expect(review.title).toBe('');
+    const hint = showHint(review);
+    expect(hint.textContent).toContain('Plan for this task');
+    expect(hint.textContent).toContain('.claude/plans/theme-plan.md');
+    expect(hint.textContent).toContain('most recently changed plan file');
+    expect(review.getAttribute('aria-describedby')).toBe(hint.id);
+  });
+
+  it('falls back to the plan file name when no path was recorded', () => {
+    const container = renderPlan({ task });
+
+    const hint = showHint(buttonLabelled(container, 'Review Plan'));
+    // Heading too, so the tour button's own hint cannot satisfy this.
+    expect(hint.textContent).toContain('Plan for this task');
+    expect(hint.textContent).toContain('plan.md');
   });
 
   it('starts a plan tour from the tour button', () => {
@@ -155,19 +202,21 @@ describe('TaskNotesBody plan button', () => {
     expect(onPlanFullscreen).not.toHaveBeenCalled();
   });
 
-  it('gives Take Tour and its model chevron the same chrome as Review Plan', () => {
+  it('gives Take Tour the footer chrome Review Plan uses, and its chevron the divider', () => {
     const container = renderPlan({ task });
 
     const review = buttonLabelled(container, 'Review Plan');
     const tourButton = buttonLabelled(container, 'Take Tour');
     const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Tour model"]');
-    expect(tourButton.className).toBe(review.className);
-    expect(trigger?.className).toBe(review.className);
-    // The pair sits in one wrapper, so the flattened corners meet.
+    expect(review.className).toBe('change-tour-action');
+    expect(tourButton.className).toBe('change-tour-action understanding-action');
+    expect(trigger?.className).toBe('change-tour-model');
+    // The pair sits in one wrapper, so they share a segment of the bar.
     expect(tourButton.closest('.tour-split')).toBe(trigger?.closest('.tour-split'));
     expect(trigger?.closest('.tour-split')).not.toBeNull();
-    // happy-dom drops the split-corner overrides, so only the shared chrome compares here.
-    expect(tourButton.getAttribute('style')).toBe(review.getAttribute('style'));
+    // The bar carries its own chrome, so no button brings inline styles of its own.
+    expect(tourButton.getAttribute('style')).toBeNull();
+    expect(review.getAttribute('style')).toBeNull();
   });
 
   it('picks the tour model from the chevron beside Take Tour', () => {

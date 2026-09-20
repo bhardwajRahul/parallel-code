@@ -45,9 +45,10 @@ export function UnderstandButton(props: {
   const ready = () => props.tour.isReady(props.kind, props.subject);
   const loading = () => props.tour.isLoading(props.kind, props.subject);
   const error = () => props.tour.errorFor(props.kind, props.subject);
-  /** The pair reads as one control: only their outer corners are rounded. */
+  /** The pair reads as one control: only their outer corners are rounded. The
+   *  flat footer chrome has no radius to flatten, so it needs no override. */
   const mainStyle = (): JSX.CSSProperties =>
-    props.modelMenu
+    props.modelMenu && props.style
       ? { ...props.style, 'border-top-right-radius': '0px', 'border-bottom-right-radius': '0px' }
       : (props.style ?? {});
   const triggerStyle = (): JSX.CSSProperties => ({
@@ -101,7 +102,12 @@ export function UnderstandButton(props: {
     <Show when={props.modelMenu} fallback={main}>
       <span class="tour-split" style={{ display: 'inline-flex' }}>
         {main}
-        <TourModelMenu class={props.class} style={triggerStyle()} />
+        {/* Default chrome is the flat footer bar, whose chevron carries its own
+            divider; a caller-supplied pill class needs the glued-corner overrides. */}
+        <TourModelMenu
+          class={props.class ?? 'change-tour-model'}
+          style={props.style ? triggerStyle() : undefined}
+        />
       </span>
     </Show>
   );
