@@ -1,4 +1,14 @@
-import { createSignal, createEffect, on, Show, onMount, onCleanup, untrack, batch } from 'solid-js';
+import {
+  createSignal,
+  createEffect,
+  createMemo,
+  on,
+  Show,
+  onMount,
+  onCleanup,
+  untrack,
+  batch,
+} from 'solid-js';
 import { fireAndForget, invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import {
@@ -133,6 +143,17 @@ export function PromptInput(props: PromptInputProps) {
   // restarts a fresh attempt rather than treating the prompt as delivered.
   const [autoSendRetry, setAutoSendRetry] = createSignal(0);
   let cleanupAutoSend: (() => void) | undefined;
+  // Re-read only when the agent (re)starts: a send in this session also marks the
+  // agent prompted and must not block its own retry, while a failed resume that
+  // falls back to a fresh session (resumed=false) must get the prompt again.
+  const deliveredBeforeRestart = createMemo(() => {
+    void store.agents[props.agentId]?.generation;
+    return untrack(
+      () =>
+        store.agents[props.agentId]?.resumed === true &&
+        (store.tasks[props.taskId]?.promptedAgentIds?.includes(props.agentId) ?? false),
+    );
+  });
 
   // Debug: log whenever controlledBy changes (verbose-gated; forwards to /tmp/out via main process)
   createEffect(() => {
@@ -182,6 +203,7 @@ export function PromptInput(props: PromptInputProps) {
       !shouldRendererAutoSendInitialPrompt({
         coordinatedBy: props.coordinatedBy,
         initialPrompt: props.initialPrompt,
+        deliveredBeforeRestart: deliveredBeforeRestart(),
       })
     ) {
       return;
@@ -830,7 +852,7 @@ export function PromptInput(props: PromptInputProps) {
           retryCount: untrack(autoSendRetry),
           maxRetries: AUTO_SEND_MAX_RETRIES,
         });
-        if (outcome !== 'deliver') {
+        if (outcome === 'retry' || outcome === 'giveup') {
           // The echo was never confirmed — Codex likely received the prompt
           // during a mid-startup redraw and discarded it.  `sendPrompt` already
           // cleared the queued `initialPrompt`, so on a retry we restore it and
@@ -839,8 +861,7 @@ export function PromptInput(props: PromptInputProps) {
           // "Waiting to send prompt…" status; batching the two tracked writes
           // re-runs the effect exactly once.  On giveup we clear it for good so
           // a stray effect re-run can't fire again.  Either way the text stays
-          // in the field so the user can send manually.  An aborted send was
-          // superseded — leave all state untouched.
+          // in the field so the user can send manually.
           if (outcome === 'retry') {
             batch(() => {
               if (initialPromptSnapshot) setInitialPrompt(props.taskId, initialPromptSnapshot);
@@ -851,10 +872,13 @@ export function PromptInput(props: PromptInputProps) {
           }
           return;
         }
+        // 'aborted' falls through: the box unmounted after `sendPrompt` had
+        // already written the prompt, so it is cleared like a delivered one.
       }
 
-      if (signal.aborted) return;
-
+      // No abort check here: `sending()` rules out a superseding send, so the
+      // only abort is unmount, and the prompt is already delivered — the stored
+      // draft must still be cleared or it reappears when the box reopens.
       setTaskPromptDraftActive(props.taskId, false);
       if (initialPromptSnapshot && val === initialPromptSnapshot) {
         setAutoSentInitialPrompt(initialPromptSnapshot);

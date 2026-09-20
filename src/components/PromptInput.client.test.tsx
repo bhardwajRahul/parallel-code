@@ -2,13 +2,24 @@ import { clearStagedNotification, setStagedNotificationUserEdited } from '../sto
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import { createSignal, untrack } from 'solid-js';
+import { createStore } from 'solid-js/store';
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PromptInput } from './PromptInput';
-import { registerAction, registerFocusFn, sendPrompt } from '../store/store';
+import {
+  getAgentOutputTail,
+  onAgentReady,
+  registerAction,
+  registerFocusFn,
+  sendPrompt,
+} from '../store/store';
 
 const { storeMock, setTaskPromptDraft, taskUsesAgentChat } = vi.hoisted(() => ({
-  storeMock: { tasks: {} as Record<string, unknown>, mcpOrchestrationEnabled: true },
+  storeMock: {
+    tasks: {} as Record<string, unknown>,
+    agents: {} as Record<string, unknown>,
+    mcpOrchestrationEnabled: true,
+  },
   setTaskPromptDraft: vi.fn(),
   taskUsesAgentChat: vi.fn(() => false),
 }));
@@ -28,7 +39,7 @@ vi.mock('../store/store', () => ({
   unregisterFocusFn: vi.fn(),
   registerAction: vi.fn(),
   unregisterAction: vi.fn(),
-  getAgentOutputTail: () => '',
+  getAgentOutputTail: vi.fn(() => ''),
   stripAnsi: (s: string) => s,
   onAgentReady: vi.fn(),
   offAgentReady: vi.fn(),
@@ -59,6 +70,8 @@ afterEach(() => {
   while (disposers.length > 0) disposers.pop()?.();
   document.body.replaceChildren();
   storeMock.tasks = {};
+  storeMock.agents = {};
+  vi.mocked(getAgentOutputTail).mockReturnValue('');
   storeMock.mcpOrchestrationEnabled = true;
   setTaskPromptDraft.mockClear();
   taskUsesAgentChat.mockReturnValue(false);
@@ -139,6 +152,96 @@ describe('PromptInput draft persistence', () => {
     await waitFor(() => setTaskPromptDraft.mock.calls.some(([, text]) => text === ''));
 
     expect(textarea.value).toBe('');
+  });
+
+  it('clears the stored draft when the prompt box closes while the prompt is sent', async () => {
+    let finishSend = (): void => {};
+    vi.mocked(sendPrompt).mockImplementationOnce(
+      () => new Promise<void>((resolve) => (finishSend = resolve)),
+    );
+    storeMock.tasks = { 'task-1': { id: 'task-1', agentIds: ['agent-1'], promptDraft: 'send me' } };
+    const textarea = mount('task-1');
+
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await waitFor(() => vi.mocked(sendPrompt).mock.calls.length > 0);
+    disposers.pop()?.();
+    finishSend();
+
+    await waitFor(() => setTaskPromptDraft.mock.calls.some(([, text]) => text === ''));
+  });
+});
+
+describe('PromptInput initial prompt after an app restart', () => {
+  function mountWithInitialPrompt(): void {
+    const container = document.createElement('div');
+    document.body.append(container);
+    disposers.push(
+      render(
+        () => (
+          <PromptInput taskId="task-1" taskName="Task" agentId="agent-1" initialPrompt="do it" />
+        ),
+        container,
+      ),
+    );
+  }
+
+  it('does not resend a prompt the resumed session already received', () => {
+    vi.mocked(onAgentReady).mockClear();
+    storeMock.agents = { 'agent-1': { resumed: true } };
+    storeMock.tasks = {
+      'task-1': { id: 'task-1', agentIds: ['agent-1'], promptedAgentIds: ['agent-1'] },
+    };
+    mountWithInitialPrompt();
+    expect(onAgentReady).not.toHaveBeenCalled();
+  });
+
+  it('still sends a prompt the resumed session never received', () => {
+    vi.mocked(onAgentReady).mockClear();
+    storeMock.agents = { 'agent-1': { resumed: true } };
+    storeMock.tasks = { 'task-1': { id: 'task-1', agentIds: ['agent-1'] } };
+    mountWithInitialPrompt();
+    expect(onAgentReady).toHaveBeenCalled();
+  });
+
+  it('sends the prompt again when a failed resume falls back to a fresh session', () => {
+    vi.mocked(onAgentReady).mockClear();
+    const [agents, setAgents] = createStore({ 'agent-1': { resumed: true, generation: 0 } });
+    // eslint-disable-next-line solid/reactivity -- the component tracks reads through this store mock
+    storeMock.agents = agents;
+    storeMock.tasks = {
+      'task-1': { id: 'task-1', agentIds: ['agent-1'], promptedAgentIds: ['agent-1'] },
+    };
+    mountWithInitialPrompt();
+    expect(onAgentReady).not.toHaveBeenCalled();
+
+    // What restartAgent(id, false) does after the resume args fail.
+    setAgents('agent-1', { resumed: false, generation: 1 });
+    expect(onAgentReady).toHaveBeenCalled();
+  });
+
+  it('clears the stored draft when the box closes during an automatic send', async () => {
+    vi.useFakeTimers();
+    try {
+      let finishSend = (): void => {};
+      vi.mocked(sendPrompt).mockClear();
+      vi.mocked(sendPrompt).mockImplementationOnce(
+        () => new Promise<void>((resolve) => (finishSend = resolve)),
+      );
+      vi.mocked(getAgentOutputTail).mockReturnValue('Claude Code\n❯ ');
+      storeMock.agents = { 'agent-1': {} };
+      storeMock.tasks = { 'task-1': { id: 'task-1', agentIds: ['agent-1'] } };
+      mountWithInitialPrompt();
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(sendPrompt).toHaveBeenCalledWith('task-1', 'agent-1', 'do it');
+      disposers.pop()?.();
+      finishSend();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(setTaskPromptDraft).toHaveBeenLastCalledWith('task-1', '');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
