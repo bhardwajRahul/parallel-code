@@ -549,7 +549,12 @@ export class DelegationService {
     const target = this.options
       .sessions()
       .find((s) => s.agentId === agentId && s.sessionInstanceId === instance);
-    if (!target || !this.canContact(caller.taskId, target.taskId) || getAgentMeta(agentId)?.isShell)
+    if (
+      !target ||
+      target.agentId === caller.agentId ||
+      !this.canContact(caller.taskId, target.taskId) ||
+      getAgentMeta(agentId)?.isShell
+    )
       throw new DelegationError('Recipient unavailable or outside your scope', 403);
     return target;
   }
@@ -851,6 +856,7 @@ export class DelegationService {
         });
       coordinator.deregisterCoordinator(taskId);
       task.closed = true;
+      this.forgetLaunches(taskId);
       this.options.persist();
       return { detachedChildIds };
     } finally {
@@ -887,7 +893,19 @@ export class DelegationService {
   unregister(taskId: string): void {
     const task = this.tasks.get(taskId);
     if (task) task.closed = true;
+    this.forgetLaunches(taskId);
     this.expireMessages();
+  }
+
+  /**
+   * A closed task can no longer create children, so its replay entries (which hold
+   * full prompts) and launch attempts are unreachable. The closed authority record
+   * itself stays: it is what stops a late register from reviving the task.
+   */
+  private forgetLaunches(taskId: string): void {
+    const prefix = `${taskId}:`;
+    for (const key of this.requests.keys()) if (key.startsWith(prefix)) this.requests.delete(key);
+    for (const key of this.attempts.keys()) if (key.startsWith(prefix)) this.attempts.delete(key);
   }
 
   /** Backend lifecycle fields override stale renderer snapshots after detach/stop/close. */

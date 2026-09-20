@@ -1,4 +1,4 @@
-import { createSignal, createEffect, For, Show } from 'solid-js';
+import { createSignal, createEffect, For, on, Show } from 'solid-js';
 import { Dialog } from './Dialog';
 import { updateProject, PASTEL_HUES, isProjectMissing, relinkProject } from '../store/store';
 import { sanitizeBranchPrefix, toBranchName } from '../lib/branch-name';
@@ -42,25 +42,31 @@ export function EditProjectDialog(props: EditProjectDialogProps) {
   const showsTaskSettings = () => props.project?.isGitRepo !== false && !isDocument();
   let nameRef!: HTMLInputElement;
 
-  // Sync signals when project prop changes
-  createEffect(() => {
-    const p = props.project;
-    if (!p) return;
-    setName(p.name);
-    setAllowPeerAccess(p.allowPeerAccess === true);
-    setSaveError('');
-    setSelectedHue(hueFromColor(p.color));
-    setBranchPrefix(sanitizeBranchPrefix(p.branchPrefix ?? 'task'));
-    setDeleteBranchOnClose(p.deleteBranchOnClose ?? true);
-    setDefaultGitIsolation(p.defaultGitIsolation ?? 'worktree');
-    setDefaultBaseBranch(p.defaultBaseBranch ?? '');
-    setCoverageReportPath(p.coverageReportPath ?? '');
-    setVerifyCommand(p.verifyCommand ?? '');
-    setBookmarks(p.terminalBookmarks ? [...p.terminalBookmarks] : []);
-    setNewCommand('');
-    setConfirmRemove(false);
-    requestAnimationFrame(() => nameRef?.focus());
-  });
+  // Sync signals when a project opens. Keyed on identity, not fields: saving
+  // updates the stored project while a peer-access save is still pending, and a
+  // re-sync then would reset the form and move focus mid-save.
+  createEffect(
+    on(
+      () => props.project,
+      (p) => {
+        if (!p) return;
+        setName(p.name);
+        setAllowPeerAccess(p.allowPeerAccess === true);
+        setSaveError('');
+        setSelectedHue(hueFromColor(p.color));
+        setBranchPrefix(sanitizeBranchPrefix(p.branchPrefix ?? 'task'));
+        setDeleteBranchOnClose(p.deleteBranchOnClose ?? true);
+        setDefaultGitIsolation(p.defaultGitIsolation ?? 'worktree');
+        setDefaultBaseBranch(p.defaultBaseBranch ?? '');
+        setCoverageReportPath(p.coverageReportPath ?? '');
+        setVerifyCommand(p.verifyCommand ?? '');
+        setBookmarks(p.terminalBookmarks ? [...p.terminalBookmarks] : []);
+        setNewCommand('');
+        setConfirmRemove(false);
+        requestAnimationFrame(() => nameRef?.focus());
+      },
+    ),
+  );
 
   function addBookmark() {
     const cmd = newCommand().trim();
@@ -98,9 +104,11 @@ export function EditProjectDialog(props: EditProjectDialogProps) {
       verifyCommand: verifyCommand().trim() || undefined,
       terminalBookmarks: bookmarks(),
     };
+    // Local fields save first: a failed peer-access update in the main process must
+    // not drop unrelated edits. The dialog stays open to report and retry it.
+    updateProject(projectId, updates);
     try {
       if (syncPolicy) await updateProjectCoordination(projectId, peerConsent);
-      updateProject(projectId, updates);
       props.onClose();
     } catch (error) {
       setSaveError(String(error));

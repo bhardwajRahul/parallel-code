@@ -341,6 +341,11 @@ function mountPlanTask() {
   return {
     setTask,
     container,
+    // Collapsing a task unmounts its panel; expanding it mounts a fresh one.
+    remount: () => {
+      dispose?.();
+      dispose = render(() => <TaskPanel task={task} isActive />, container);
+    },
     click: (selector: string) =>
       expectDefined(container.querySelector<HTMLButtonElement>(selector)).click(),
     tourState: () =>
@@ -409,6 +414,22 @@ it('opens a tour the agent published and keeps it reachable after closing', () =
   click('.test-agent-tour');
   expect(tourState().open).toBe('true');
   expect(tourState().gist).toBe('Retries hide the failure');
+});
+
+it('does not reopen a dismissed agent tour when the panel remounts', () => {
+  const card = { label: 'KEY DECISION', title: 'One idea', body: 'Body text.' };
+  const payload = { subject: 'the retry bug', gist: card, cards: [card] };
+  const { setTask, click, tourState, remount } = mountPlanTask();
+
+  setTask('agentTour', { revision: 1, payload });
+  expect(tourState().open).toBe('true');
+  click('.test-understanding-close');
+
+  remount();
+  expect(tourState().open).toBe('false');
+
+  setTask('agentTour', { revision: 2, payload });
+  expect(tourState().open).toBe('true');
 });
 
 it('reports a published tour with a card the validator rejects', () => {

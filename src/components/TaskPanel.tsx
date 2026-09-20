@@ -88,6 +88,9 @@ interface TaskPanelProps {
 const STEPS_PANEL_AUTO_MAX = 'min(240px, 33vh)';
 const CHANGED_FILES_PANEL_AUTO_MAX = 'min(300px, 33vh)';
 const NOTES_PANEL_AUTO_MAX = 'min(400px, 33vh)';
+// Last agent-tour revision shown per task. Collapsing and expanding a task
+// remounts its panel, which must not reopen a tour the user already dismissed.
+const shownAgentTourRevisions = new WeakMap<Task, number>();
 
 export function TaskPanel(props: TaskPanelProps) {
   const autoSendChildUpdates = () => props.task.autoSendChildUpdates ?? props.task.coordinatorMode;
@@ -222,7 +225,13 @@ export function TaskPanel(props: TaskPanelProps) {
     on(
       () => props.task.agentTour?.revision,
       (revision) => {
-        if (revision !== undefined) showAgentTour();
+        if (revision === undefined) {
+          shownAgentTourRevisions.delete(props.task);
+          return;
+        }
+        if (shownAgentTourRevisions.get(props.task) === revision) return;
+        shownAgentTourRevisions.set(props.task, revision);
+        showAgentTour();
       },
     ),
   );

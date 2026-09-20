@@ -448,6 +448,15 @@ describe('delegation authority and creation', () => {
     expect(core.createTask).not.toHaveBeenCalled();
   });
 
+  it('forgets launch attempts once their parent is closed', async () => {
+    await register('parent');
+    await expect(service.create(assignment({ expectedHeadSha: 'b'.repeat(40) }))).rejects.toThrow(
+      'changed',
+    );
+    await service.closeParent('parent', false);
+    expect(service.state('parent').attempts).toEqual([]);
+  });
+
   it('rechecks the global setting through the reserved launch guard', async () => {
     await register('parent');
     const caller = session('parent');
@@ -508,6 +517,16 @@ describe('held peer messages and access', () => {
     await expect(service.callTool(child, 'list_agent_sessions', {})).resolves.toEqual([
       expect.objectContaining({ taskId: 'parent' }),
     ]);
+  });
+
+  it('rejects a session addressing itself but reaches another pane of the same task', async () => {
+    await register('parent');
+    const parent = session('parent');
+    const pane: SessionCaller = { ...parent, agentId: 'agent-parent-pane' };
+    sessions.push(pane);
+    policy(true);
+    await expect(send(parent, parent)).rejects.toThrow('scope');
+    await expect(send(parent, pane)).resolves.toMatchObject({ state: 'waiting' });
   });
 
   it('holds messages, deduplicates sends and resolves receipt waits only on explicit handling', async () => {
