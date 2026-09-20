@@ -183,6 +183,9 @@ it('describes tour_publish with the caps the validator enforces', () => {
   expect(tool?.description).toContain(TOUR_TONES.join(', '));
   expect(tool?.description).toContain('as a tour');
   expect(tool?.description).toContain('follow-up');
+  expect(tool?.description).toContain(`0-${TOUR_CARD_LIMITS.questions} short, specific`);
+  expect(tool?.description).toContain(`at most ${TOUR_CARD_LIMITS.question} characters each`);
+  expect(tool?.description).toContain('boundary, trade-off or assumption');
 });
 
 it('advertises a self-contained reasoning example that the transaction engine accepts', () => {

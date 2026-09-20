@@ -28,7 +28,11 @@ vi.mock('../lib/ipc', () => ({
 }));
 vi.mock('../store/store', async () => {
   const { createStore } = await import('solid-js/store');
-  const [store] = createStore({ askCodeProvider: 'minimax', agentEnvFiles: {} });
+  const [store] = createStore({
+    askCodeProvider: 'minimax',
+    agentEnvFiles: {},
+    editorCommand: 'code',
+  });
   return { store };
 });
 vi.mock('../lib/mermaid', () => ({ renderMermaidIn: vi.fn() }));
@@ -136,11 +140,11 @@ function mount() {
 }
 
 /** Mounts the dialog with a generated tour, on its first card: the gist. */
-async function mountWithTour() {
+async function mountWithTour(response = TOUR_JSON) {
   const mounted = mount();
   void mounted.tour.generate(PLAN_INPUT);
   await flush();
-  channels[0].onmessage?.({ type: 'chunk', text: TOUR_JSON });
+  channels[0].onmessage?.({ type: 'chunk', text: response });
   channels[0].onmessage?.({ type: 'done', exitCode: 0 });
   await flush();
   return mounted;
@@ -189,7 +193,7 @@ describe('UnderstandingTourDialog', () => {
     expect(progressText()).toContain('output buffering');
     // The gist is counted and navigable like every other card.
     expect(progressText()).toContain('1 / 4');
-    const segments = panel().querySelectorAll('.understanding-segments > span');
+    const segments = panel().querySelectorAll('.understanding-segments > button');
     expect(segments).toHaveLength(4);
     expect(segments[0].getAttribute('aria-current')).toBe('step');
     expect(panel().querySelectorAll('[aria-current="step"]')).toHaveLength(1);
@@ -241,11 +245,14 @@ describe('UnderstandingTourDialog', () => {
     expect(renderMermaidIn).toHaveBeenCalledWith(block?.parentElement, 'understanding');
   });
 
-  it('opens a code reference in the editor', async () => {
+  it('opens a code reference in the editor at its line', async () => {
     await mountWithTour();
     clickIcon('Next card');
     clickButton('electron/ipc/pty.ts:189');
-    expect(openFileInEditor).toHaveBeenCalledWith('/repo', 'electron/ipc/pty.ts');
+    expect(openFileInEditor).toHaveBeenCalledWith('/repo', 'electron/ipc/pty.ts', {
+      line: 189,
+      editorCommand: 'code',
+    });
   });
 
   it('asks a question from the ask bar and keeps the answer under the card', async () => {
@@ -282,6 +289,38 @@ describe('UnderstandingTourDialog', () => {
     expect(panel().querySelector('.understanding-thread')).toBeNull();
     clickIcon('Previous card');
     expect(panel().querySelectorAll('.understanding-thread')).toHaveLength(1);
+  });
+
+  it('explores a suggested question once and keeps its answer on the source card', async () => {
+    const question = 'What happens if the buffer fills before the timer fires?';
+    await mountWithTour(
+      JSON.stringify({
+        gist: card({ questions: [question, 'Why flush on a timer?'] }),
+        cards: [card({ title: 'Next step', questions: [question] })],
+      }),
+    );
+    const suggestions = () => [...panel().querySelectorAll<HTMLButtonElement>('.tour-question')];
+    expect(suggestions()).toHaveLength(2);
+    suggestions()[0].click();
+    suggestions()[1].click();
+    await flush();
+    const asks = vi.mocked(invoke).mock.calls.filter(([channel]) => channel === IPC.AskAboutCode);
+    expect(asks).toHaveLength(2); // Tour generation plus one follow-up.
+    expect(String(asks[1][1]?.prompt)).toContain(JSON.stringify(question));
+    expect(suggestions().every((button) => button.disabled)).toBe(true);
+    clickIcon('Next card');
+    expect(suggestions()[0].disabled).toBe(true);
+    expect(panel().querySelector('.understanding-thread')).toBeNull();
+    channels[1].onmessage?.({ type: 'chunk', text: BRANCH_JSON });
+    channels[1].onmessage?.({ type: 'done', exitCode: 0 });
+    await flush();
+    expect(suggestions()[0].disabled).toBe(false);
+    clickIcon('Previous card');
+    expect(suggestions().map((button) => button.textContent)).toEqual(['↳Why flush on a timer?']);
+    expect(panel().querySelector('.understanding-thread')?.getAttribute('aria-label')).toBe(
+      question,
+    );
+    expect(panel().querySelector('.understanding-thread')?.textContent).toContain('Deep one');
   });
 
   it('keeps the waiting question under its own card while the reader moves on', async () => {
@@ -349,6 +388,119 @@ describe('UnderstandingTourDialog', () => {
     expect(document.activeElement).toBe(dialog);
     dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     expect(panel().textContent).toContain('First card');
+  });
+
+  it('jumps to a card from its progress segment and with Home and End', async () => {
+    await mountWithTour();
+    clickIcon('Card 4 of 4: Third card');
+    expect(progressText()).toContain('4 / 4');
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+    expect(panel().textContent).toContain('Gist title');
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+    expect(panel().textContent).toContain('Third card');
+  });
+
+  it('shows every card title in the overview and opens the one picked', async () => {
+    await mountWithTour();
+    clickIcon('Show overview');
+    const items = [...panel().querySelectorAll('.understanding-overview li')];
+    expect(items).toHaveLength(4);
+    expect(items[0].textContent).toContain('Gist title');
+    items[3].querySelector('button')?.click();
+    expect(panel().querySelector('.understanding-overview')).toBeNull();
+    expect(progressText()).toContain('4 / 4');
+  });
+
+  it('marks the progress segment of a card that has answers', async () => {
+    await mountWithTour();
+    clickIcon('Next card');
+    const input = askInput();
+    input.value = 'Why?';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flush();
+    channels[1].onmessage?.({ type: 'chunk', text: BRANCH_JSON });
+    channels[1].onmessage?.({ type: 'done', exitCode: 0 });
+    await flush();
+    const segments = panel().querySelectorAll('.understanding-segments > button');
+    expect(segments[1].hasAttribute('data-answered')).toBe(true);
+    expect(segments[1].getAttribute('aria-label')).toContain('(has answers)');
+    expect(segments[0].hasAttribute('data-answered')).toBe(false);
+  });
+
+  it('keeps the dialog open when Escape is pressed while typing a question', async () => {
+    const { onClose } = await mountWithTour();
+    const input = askInput();
+    input.focus();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(onClose).not.toHaveBeenCalled();
+    // The field lets go of focus, so a second Escape closes the tour as usual.
+    expect(document.activeElement).not.toBe(input);
+  });
+
+  it('copies the tour as Markdown', async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    await mountWithTour();
+    clickIcon('Copy tour as Markdown');
+    await flush();
+    const markdown = String(writeText.mock.calls[0]?.[0 as never]);
+    expect(markdown).toContain('# Tour: output buffering');
+    expect(markdown).toContain('## 4. Third card');
+    expect(iconButton('Tour copied')).toBeDefined();
+  });
+
+  it('reworks the tour from the rework bar; Escape closes only the bar', async () => {
+    const { onClose } = await mountWithTour();
+    clickIcon('Rework tour');
+    const input = panel().querySelector<HTMLInputElement>('.tour-rework input');
+    if (!input) throw new Error('Rework input is missing');
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(panel().querySelector('.tour-rework')).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+
+    clickIcon('Rework tour');
+    const again = panel().querySelector<HTMLInputElement>('.tour-rework input');
+    if (!again) throw new Error('Rework input is missing');
+    again.value = 'Only the risks';
+    again.dispatchEvent(new Event('input', { bubbles: true }));
+    again.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flush();
+    expect(panel().textContent).toContain('Reworking tour…');
+    const asks = vi.mocked(invoke).mock.calls.filter(([channel]) => channel === IPC.AskAboutCode);
+    expect(String(asks[1][1]?.prompt)).toContain('"Only the risks"');
+  });
+
+  it('offers Regenerate when a reopened file tour is out of date', async () => {
+    let content = 'export const a = 1;';
+    vi.mocked(invoke).mockImplementation(((channel: IPC) =>
+      channel === IPC.ReadFileTourContext
+        ? Promise.resolve({
+            filePath: 'src/a.ts',
+            files: [{ path: 'src/a.ts', content, truncated: false }],
+            omitted: [],
+          })
+        : Promise.resolve(undefined)) as typeof invoke);
+    const input = {
+      kind: 'file',
+      taskName: 'Task',
+      worktreePath: '/repo',
+      filePath: 'src/a.ts',
+    } as const;
+    const { tour } = mount();
+    void tour.generate(input);
+    await flush();
+    channels[0].onmessage?.({ type: 'chunk', text: TOUR_JSON });
+    channels[0].onmessage?.({ type: 'done', exitCode: 0 });
+    await flush();
+    expect(panel().querySelector('.understanding-notice')).toBeNull();
+    content = 'export const a = 2;';
+    tour.open(input);
+    await flush();
+    expect(panel().querySelector('.understanding-notice')?.textContent).toContain('changed');
+    clickButton('Regenerate');
+    await flush();
+    expect(tour.loading()).toBe(true);
   });
 
   it('cancels a follow-up from the ask bar and ignores its late chunks', async () => {

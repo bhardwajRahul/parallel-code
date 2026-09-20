@@ -131,6 +131,24 @@ export function LayersIcon(props: IconProps): JSX.Element {
   );
 }
 
+/** A numbered list: an overview of items in order. */
+export function ListIcon(props: IconProps): JSX.Element {
+  return (
+    <SvgIcon {...props}>
+      <path
+        d="M6 4h8M6 8h8M6 12h8"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+      />
+      <circle cx="2.75" cy="4" r="1" />
+      <circle cx="2.75" cy="8" r="1" />
+      <circle cx="2.75" cy="12" r="1" />
+    </SvgIcon>
+  );
+}
+
 export function AlertIcon(props: IconProps): JSX.Element {
   return (
     <SvgIcon {...props}>

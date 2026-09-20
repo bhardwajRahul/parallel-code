@@ -24,6 +24,47 @@ function parse(extra: Record<string, unknown> = {}) {
   return parseUnderstandingTour(response(extra), 'file', 'pty.ts');
 }
 
+describe('card forms', () => {
+  const sides = [
+    { label: 'Before', text: 'Every chunk is one IPC message.' },
+    { label: 'After', text: 'One message per flush.' },
+  ];
+
+  it('keeps a comparison and its form', () => {
+    const [, parsed] = parse({ cards: [{ ...card, form: 'comparison', comparison: sides }] }).cards;
+    expect(parsed).toMatchObject({ form: 'comparison', comparison: sides });
+  });
+
+  it.each([
+    ['flow', {}],
+    ['comparison', {}],
+    ['slides', {}],
+    ['flow', { comparison: sides }],
+  ])('draws a card whose %s form lacks its evidence as a standard card', (form, extra) => {
+    const [, parsed] = parse({ cards: [{ ...card, form, ...extra }] }).cards;
+    expect(parsed.form).toBeUndefined();
+  });
+
+  it('keeps a flow form backed by a diagram', () => {
+    const diagram = { kind: 'text', source: 'PTY -> buffer -> IPC' };
+    const [, parsed] = parse({ cards: [{ ...card, form: 'flow', diagram }] }).cards;
+    expect(parsed).toMatchObject({ form: 'flow', diagram });
+  });
+
+  it.each([
+    [[sides[0]]],
+    [[sides[0], { label: 'After' }]],
+    [
+      [
+        sides[0],
+        { ...sides[1], text: 'x'.repeat(toleratedCap(TOUR_CARD_LIMITS.comparisonText) + 1) },
+      ],
+    ],
+  ])('rejects a malformed comparison', (comparison) => {
+    expect(() => parse({ cards: [{ ...card, comparison }] })).toThrow(/comparison/);
+  });
+});
+
 describe('parseUnderstandingTour', () => {
   it('opens the spine with the gist and keeps the sent cards after it', () => {
     const tour = parse();
@@ -53,6 +94,29 @@ describe('parseUnderstandingTour', () => {
     });
     expect(parse({ cards: [{ ...card, whyItMatters: '  ' }] }).cards[1]).not.toHaveProperty(
       'whyItMatters',
+    );
+  });
+
+  it('keeps at most two distinct, valid questions on gist and spine cards', () => {
+    const questions = [
+      42,
+      '  What happens when the buffer fills?  ',
+      'what happens when the buffer fills?',
+      'x'.repeat(TOUR_CARD_LIMITS.question + 1),
+      'Does the timer change ordering?',
+      'Is there a third issue?',
+    ];
+    const tour = parse({
+      gist: { ...gist, questions: ['  Why batch output?  ', null] },
+      cards: [{ ...card, questions }],
+    });
+    expect(tour.cards[0]?.questions).toEqual(['Why batch output?']);
+    expect(tour.cards[1]?.questions).toEqual([
+      'What happens when the buffer fills?',
+      'Does the timer change ordering?',
+    ]);
+    expect(parse({ cards: [{ ...card, questions: 'invalid' }] }).cards[1]).not.toHaveProperty(
+      'questions',
     );
   });
 
@@ -191,6 +255,18 @@ describe('parseAgentTour', () => {
     expect(tour.cards).toHaveLength(2);
     expect(tour.cards[0]).toMatchObject({ label: GIST_LABEL, title: gist.title });
     expect(tour.cards[1]).toMatchObject({ tone: 'important', refs: [card.refs[0]] });
+  });
+
+  it('accepts optional questions on agent cards', () => {
+    const tour = parseAgentTour({
+      ...payload,
+      gist: { ...gist, questions: [' What would invalidate this? '] },
+      cards: [{ ...card, questions: ['Why use a timer?'] }],
+    });
+    expect(tour.cards.map((entry) => entry.questions)).toEqual([
+      ['What would invalidate this?'],
+      ['Why use a timer?'],
+    ]);
   });
 
   it('rejects a card the generated tours would also reject', () => {

@@ -30,14 +30,17 @@ export function TourAskBar(props: {
         value={question()}
         disabled={props.disabled}
         onInput={(event) => setQuestion(event.currentTarget.value)}
-        // Arrow keys move the caret here; the dialog must not navigate cards.
-        onKeyDown={(event) => {
+        // Arrow keys move the caret here; the dialog must not navigate cards, and
+        // Escape only lets go of the field. Native, not delegated: a delegated
+        // handler runs on document, too late to stop the dialog's Escape listener.
+        on:keydown={(event) => {
           event.stopPropagation();
+          if (event.key === 'Escape') event.currentTarget.blur();
           if (event.key !== 'Enter') return;
           event.preventDefault();
           submit();
         }}
-        onKeyUp={(event) => event.stopPropagation()}
+        on:keyup={(event) => event.stopPropagation()}
       />
       <Show
         when={props.asking}

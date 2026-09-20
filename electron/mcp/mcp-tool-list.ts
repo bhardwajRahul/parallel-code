@@ -2,7 +2,7 @@ import type { SessionCapabilities } from '../shared/delegation-types.js';
 import { graphOperationsSchema } from '../shared/graph-schema.js';
 import { canvasViews } from '../shared/canvas-view.js';
 import { AGENT_TOUR_LIMITS } from '../shared/agent-tour.js';
-import { TOUR_CARD_LIMITS, TOUR_TONES } from '../shared/understanding-limits.js';
+import { TOUR_CARD_LIMITS, TOUR_FORMS, TOUR_TONES } from '../shared/understanding-limits.js';
 import { semanticNodeKinds, reasoningStatuses } from '../shared/graph.js';
 import type { ReasoningUpdate } from '../shared/reasoning-state.js';
 /** Pure tool-list logic — extracted so it can be unit-tested without starting the MCP server. */
@@ -147,10 +147,12 @@ export const TOUR_TOOLS: ToolDef[] = [
       'Publish a guided tour of your own explanation and open it for the user immediately. ' +
       'Use it when the user asks to be walked through, presented, shown or explained something "as a tour", for example "can you present me this problem as a tour?". You write the cards yourself; no separate model is called. ' +
       'The reader is a person deciding, not documenting: compress, omit anything that would not change a decision, and put one idea on each card. ' +
-      '"gist" comes first and is the whole explanation in one card, so a reader who stops there still gets the point; the last spine card is the bottom line. ' +
+      '"gist" comes first and is the whole explanation in one card, so a reader who stops there still gets the point; the last spine card leaves the reader something to act on, such as the verdict, the assumption a decision depends on or the invariant to preserve. When one concrete scenario naturally connects the material, reuse it across the relevant cards. Otherwise explain each idea directly; do not force a running example or invent one. ' +
       `Send between ${caps.minCards} and ${caps.maxCards} cards in "cards"; the whole tour must read in 30 seconds to 2 minutes. ` +
-      `A card is {label, title, body, tone, whyItMatters?, refs?, diagram?}: label a short uppercase tag (at most ${caps.label} characters), title a noun phrase of at most ${caps.title} characters, body plain prose or short bullets in Markdown of at most ${caps.body} characters, whyItMatters at most ${caps.whyItMatters} characters. ` +
+      `A card is {label, title, body, tone, whyItMatters?, questions?, form?, diagram?, comparison?, refs?}: label a short uppercase tag (at most ${caps.label} characters), title the card's takeaway as a short complete claim ("Each task gets its own working copy", not "Worktree isolation") of at most ${caps.title} characters, so the titles alone tell the argument; body plain prose or short bullets in Markdown of at most ${caps.body} characters, whyItMatters at most ${caps.whyItMatters} characters. ` +
+      `Optional questions: suggest 0-${caps.questions} short, specific follow-up questions of at most ${caps.question} characters each about a real boundary, trade-off or assumption on that card; omit generic questions, already-answered facts, and the field itself when nothing useful remains to ask. ` +
       `tone is one of ${TOUR_TONES.join(', ')}. refs are up to ${caps.refs} hints of {filePath (repository-relative), line?}; never invent one. diagram is {kind: "text" or "mermaid", source} and only when it beats prose (text source at most ${caps.textDiagram} characters, mermaid at most ${caps.mermaidDiagram}). ` +
+      `form is optional, one of ${TOUR_FORMS.join(', ')}: takeaway is one claim with a single supporting sentence; comparison needs comparison, exactly two sides of {label (at most ${caps.comparisonLabel} characters), text (at most ${caps.comparisonText})} such as before/after; flow needs a diagram, which becomes the main content. For comparison and flow the body is a short caption. ` +
       `Optional "context" (at most ${AGENT_TOUR_LIMITS.context} characters) is the material the app replays to answer the reader's follow-up questions inside the viewer, so include the key facts the cards summarise, not just the cards again. ` +
       `"subject" names what the tour is about, at most ${AGENT_TOUR_LIMITS.subject} characters. Cards that break a cap are rejected outright.`,
     inputSchema: {

@@ -1,14 +1,29 @@
-import { For, Show, createEffect, createUniqueId, onCleanup } from 'solid-js';
+import { For, Show, createEffect, createSignal, createUniqueId, on, onCleanup } from 'solid-js';
 import { Dialog } from './Dialog';
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, RedoIcon } from './icons';
+import {
+  CheckIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CloseIcon,
+  ListIcon,
+  PencilIcon,
+  RedoIcon,
+} from './icons';
 import { TourAskBar } from './understanding/TourAskBar';
 import { TourCard } from './understanding/TourCard';
+import { TourCopyButton } from './understanding/TourCopyButton';
 import { TourIconButton } from './understanding/TourIconButton';
+import { TourOverview } from './understanding/TourOverview';
 import { TourProgress } from './understanding/TourProgress';
+import { TourReworkBar } from './understanding/TourReworkBar';
+import { TourThreads } from './understanding/TourThreads';
+import { tourMarkdown } from '../lib/tour-markdown';
 import type { UnderstandingTourController } from '../lib/create-understanding-tour';
 import type { TourRef } from '../lib/understanding-tour';
 import { errMessage, warn as logWarn } from '../lib/log';
 import { openFileInEditor } from '../lib/shell';
+import { TOUR_KEYS, isTypingTarget } from '../lib/tour-keys';
+import { store } from '../store/store';
 
 /** The panel is only a layout box here: the card inside it is the one surface. */
 const PANEL_STYLE = {
@@ -50,12 +65,40 @@ export function UnderstandingTourDialog(props: {
   const onLastCard = () => props.tour.step() >= cards().length - 1;
   /** Answered follow-ups under the card on screen. */
   const threads = () => props.tour.threadsFor(props.tour.step());
+  /** Spine cards with at least one answered follow-up, for the progress markers. */
+  const answered = () => new Set(props.tour.threads().map((thread) => thread.fromIndex));
+  const [reworking, setReworking] = createSignal(false);
+  const [overview, setOverview] = createSignal(false);
+  /** The finished tour on screen, when there is one to copy or rework. */
+  const shownTour = () => (props.tour.loading() ? null : tour());
+
+  function markdown(): string {
+    return tourMarkdown({
+      title: `Tour: ${props.tour.subject()}`,
+      cards: cards(),
+      threads: props.tour.threads(),
+    });
+  }
+
+  function rework(instructions: string): void {
+    setReworking(false);
+    controller().rework(instructions);
+  }
 
   // Give the primary action focus as soon as a tour is on screen, so Enter and
   // the arrow keys move on without reaching for the pointer.
   createEffect(() => {
     if (props.open && tour() && !props.tour.loading()) primaryRef?.focus();
   });
+
+  // Moving to a card, from the overview or otherwise, shows that card.
+  createEffect(
+    on(
+      () => props.tour.step(),
+      () => setOverview(false),
+      { defer: true },
+    ),
+  );
 
   // A new answer (or the question waiting for one) appears below the card, so
   // bring it into view. Arriving at a card that already has threads must not
@@ -72,24 +115,19 @@ export function UnderstandingTourDialog(props: {
   });
 
   function openRef(ref: TourRef): void {
-    void openFileInEditor(props.worktreePath, ref.filePath).catch((error) =>
+    const at = { line: ref.line, editorCommand: store.editorCommand.trim() };
+    void openFileInEditor(props.worktreePath, ref.filePath, at).catch((error) =>
       logWarn('understandingTour', 'Could not open reference', { error: errMessage(error) }),
     );
   }
 
-  /** Arrow keys navigate, except while typing a question. */
+  /** Arrow keys step, Home and End jump to the gist and the bottom line, except while typing. */
   function onKeyDown(event: KeyboardEvent): void {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    const target = event.target;
-    if (
-      target instanceof HTMLElement &&
-      (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
-    )
-      return;
-    if (!tour()) return;
+    const move = TOUR_KEYS[event.key];
+    if (!move || isTypingTarget(event.target) || !tour()) return;
     event.preventDefault();
-    if (event.key === 'ArrowLeft') props.tour.previous();
-    else props.tour.next();
+    const last = cards().length - 1;
+    props.tour.navigate(move(props.tour.step(), last));
   }
 
   // Reading means clicking on the card, which hands focus to the dialog panel
@@ -151,12 +189,48 @@ export function UnderstandingTourDialog(props: {
           >
             <TourProgress
               subject={props.tour.subject()}
-              total={cards().length}
+              titles={cards().map((card) => card.title)}
               current={props.tour.step()}
+              onSelect={(index) => controller().navigate(index)}
+              answered={answered()}
             />
+          </Show>
+          <Show when={shownTour()}>
+            <TourIconButton
+              label={overview() ? 'Hide overview' : 'Show overview'}
+              tooltip="All cards at a glance"
+              onClick={() => setOverview((open) => !open)}
+            >
+              <ListIcon size={14} />
+            </TourIconButton>
+            <TourCopyButton markdown={markdown} />
+            <TourIconButton
+              label="Rework tour"
+              tooltip="Rework tour with your own instructions"
+              onClick={() => setReworking((open) => !open)}
+            >
+              <PencilIcon size={14} />
+            </TourIconButton>
           </Show>
           {closeButton()}
         </div>
+
+        <Show when={reworking() && shownTour()}>
+          <TourReworkBar onSubmit={rework} onCancel={() => setReworking(false)} />
+        </Show>
+
+        <Show when={shownTour() && props.tour.stale()}>
+          <div class="understanding-notice" role="status">
+            <span>This file changed after the tour was made.</span>
+            <button
+              type="button"
+              class="understanding-notice-action"
+              onClick={() => controller().retry()}
+            >
+              Regenerate
+            </button>
+          </div>
+        </Show>
 
         <Show when={props.tour.loading()}>
           <div class="understanding-stage" aria-busy="true">
@@ -232,32 +306,34 @@ export function UnderstandingTourDialog(props: {
           {(card) => (
             <>
               <div class="understanding-stage understanding-stage--thread" ref={stageRef}>
-                <TourCard card={card()} onOpenRef={openRef} />
-                {/* Every question asked here stays, in the order asked, under the card. */}
-                <For each={threads()}>
-                  {(thread) => (
-                    <section class="understanding-thread" aria-label={thread.question}>
-                      <p class="understanding-thread-question" title={thread.question}>
-                        ↳ {thread.question}
-                      </p>
-                      <For each={thread.cards}>
-                        {(answer) => <TourCard card={answer} onOpenRef={openRef} />}
-                      </For>
-                    </section>
-                  )}
-                </For>
-                <Show when={props.tour.pendingQuestion()}>
-                  {(question) => (
-                    <section class="understanding-thread" aria-label={question()} aria-busy="true">
-                      <p class="understanding-thread-question" title={question()}>
-                        ↳ {question()}
-                      </p>
-                      <div class="understanding-card understanding-card--message">
-                        <span class="inline-spinner" aria-hidden="true" />
-                        <span class="dialog-sr-only">Thinking…</span>
-                      </div>
-                    </section>
-                  )}
+                <Show
+                  when={overview()}
+                  fallback={
+                    <>
+                      <TourCard
+                        card={card()}
+                        onOpenRef={openRef}
+                        onAsk={(question) => void controller().ask(question)}
+                        asking={props.tour.asking()}
+                        answeredQuestions={threads().map((thread) => thread.question)}
+                      />
+                      {/* Every question asked here stays, in the order asked, under the card. */}
+                      <TourThreads
+                        threads={threads()}
+                        pendingQuestion={props.tour.pendingQuestion()}
+                        onOpenRef={openRef}
+                      />
+                    </>
+                  }
+                >
+                  <TourOverview
+                    cards={cards()}
+                    current={props.tour.step()}
+                    onSelect={(index) => {
+                      setOverview(false);
+                      controller().navigate(index);
+                    }}
+                  />
                 </Show>
               </div>
               <div class="understanding-footer">

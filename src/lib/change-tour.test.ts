@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildChangeTourPrompts, parseChangeTour } from './change-tour';
+import {
+  CHANGE_VERIFY_LABEL,
+  buildChangeTourPrompts,
+  changeFollowUpContext,
+  parseChangeTour,
+  stopToCard,
+} from './change-tour';
+import { GIST_LABEL } from './understanding-tour';
 import { parseUnifiedDiff } from './unified-diff-parser';
 import { CHANGE_TOUR_PROMPT_LIMIT } from '../../electron/shared/change-tour-limits';
 
@@ -8,6 +15,7 @@ const files = parseUnifiedDiff(diff);
 const stop = {
   title: 'Behavior',
   explanation: 'Changes the returned value.',
+  tone: 'neutral' as const,
   locations: [{ filePath: 'file.ts', line: 1 }],
 };
 
@@ -53,6 +61,166 @@ describe('change tours', () => {
       parseChangeTour('```json\n' + JSON.stringify({ stops: [stop] }) + '\n```', files),
     ).toEqual([stop]);
   });
+  it('keeps label, tone and why-it-matters, and drops bad hints without failing', () => {
+    const rich = { ...stop, label: 'entry point', tone: 'risk', whyItMatters: 'Callers see it.' };
+    expect(parseChangeTour(JSON.stringify({ stops: [rich] }), files)).toEqual([
+      { ...stop, label: 'ENTRY POINT', tone: 'risk', whyItMatters: 'Callers see it.' },
+    ]);
+    const sloppy = { ...stop, label: 'x'.repeat(200), tone: 'scary', whyItMatters: 3 };
+    expect(parseChangeTour(JSON.stringify({ stops: [sloppy] }), files)).toEqual([stop]);
+  });
+
+  it('draws a stop as a card whose refs are its locations', () => {
+    expect(stopToCard(stop, 2)).toEqual({
+      label: 'STOP 3',
+      title: 'Behavior',
+      body: 'Changes the returned value.',
+      tone: 'neutral',
+      refs: [{ filePath: 'file.ts', line: 1 }],
+    });
+    expect(stopToCard({ ...stop, label: 'TESTS', whyItMatters: 'Why.' }, 0)).toMatchObject({
+      label: 'TESTS',
+      whyItMatters: 'Why.',
+    });
+    expect(
+      stopToCard({ ...stop, questions: ['What if the value is absent?'] }, 0).questions,
+    ).toEqual(['What if the value is absent?']);
+  });
+
+  it('drops bad questions and forwards valid ones from stops', () => {
+    const rich = {
+      ...stop,
+      questions: [
+        '',
+        '  What happens for an empty input? ',
+        'what happens for an empty input?',
+        42,
+        'x'.repeat(141),
+        'Does this change callers?',
+        'A third question?',
+      ],
+    };
+    const [parsed] = parseChangeTour(JSON.stringify({ stops: [rich] }), files);
+    expect(parsed?.questions).toEqual([
+      'What happens for an empty input?',
+      'Does this change callers?',
+    ]);
+    expect(
+      parseChangeTour(JSON.stringify({ stops: [rich] }), files).map(stopToCard)[0]?.questions,
+    ).toEqual(parsed?.questions);
+    expect(parseChangeTour(JSON.stringify({ stops: [{ ...stop, questions: {} }] }), files)).toEqual(
+      [stop],
+    );
+  });
+
+  it("adds the reader's rework request to every prompt", () => {
+    const [prompt] = buildChangeTourPrompts('Task', diff, 'Focus on error handling');
+    expect(prompt).toContain('"Focus on error handling"');
+    expect(buildChangeTourPrompts('Task', diff)[0]).not.toContain('The reader asked');
+  });
+
+  it('asks for useful, bounded questions on stops and whole-change cards', () => {
+    const [prompt] = buildChangeTourPrompts('Task', diff);
+    expect(prompt).toContain(`0-2 short, specific questions`);
+    expect(prompt).toContain('at most 140 characters each');
+    expect(prompt).toContain('each stop, gist and verify');
+    expect(prompt).toContain('Omit it when nothing useful remains to ask');
+  });
+
+  describe('gist and verify cards', () => {
+    const gist = { title: 'The file returns new', explanation: 'It returned old.' };
+    const verify = {
+      title: 'Check callers expect new',
+      explanation: 'Callers compare the value.',
+      locations: [{ filePath: 'file.ts', line: 1 }],
+    };
+    const response = (extra: Record<string, unknown>) =>
+      JSON.stringify({ stops: [stop], ...extra });
+
+    it('wraps the stops in the gist and the verify card for a whole-diff tour', () => {
+      expect(parseChangeTour(response({ gist, verify }), files, true)).toEqual([
+        { ...gist, label: GIST_LABEL, tone: 'neutral', locations: [] },
+        { ...stop, label: 'STOP 1' },
+        { ...verify, label: CHANGE_VERIFY_LABEL, tone: 'important' },
+      ]);
+    });
+
+    it('retains valid questions on gist and verify while dropping bad suggestions', () => {
+      const stops = parseChangeTour(
+        response({
+          gist: { ...gist, questions: ['  Why this direction? ', null] },
+          verify: { ...verify, questions: ['What if a caller expects old?', ' '.repeat(4)] },
+        }),
+        files,
+        true,
+      );
+      expect(stops.map(stopToCard).map((card) => card.questions)).toEqual([
+        ['Why this direction?'],
+        undefined,
+        ['What if a caller expects old?'],
+      ]);
+    });
+
+    it('numbers unlabeled stops from one, not counting the gist', () => {
+      const stops = parseChangeTour(response({ gist }), files, true);
+      expect(stops.map(stopToCard).map((card) => card.label)).toEqual([GIST_LABEL, 'STOP 1']);
+    });
+
+    it('ignores them in one part of a split diff', () => {
+      expect(parseChangeTour(response({ gist, verify }), files)).toEqual([stop]);
+    });
+
+    it('drops a malformed gist, and verify locations outside the diff, instead of failing', () => {
+      const outside = { ...verify, locations: [{ filePath: 'missing.ts', line: 1 }] };
+      expect(
+        parseChangeTour(
+          response({ gist: { title: 'No explanation' }, verify: outside }),
+          files,
+          true,
+        ),
+      ).toEqual([
+        { ...stop, label: 'STOP 1' },
+        { ...outside, label: CHANGE_VERIFY_LABEL, tone: 'important', locations: [] },
+      ]);
+    });
+
+    it('asks for both only when one request covers the whole diff', () => {
+      expect(buildChangeTourPrompts('Task', diff)[0]).toContain('verify closes the tour');
+      const large = `diff --git a/big.ts b/big.ts\n@@ -1 +1 @@\n-${'x'.repeat(CHANGE_TOUR_PROMPT_LIMIT)}\n+y\n`;
+      for (const prompt of buildChangeTourPrompts('Task', large))
+        expect(prompt).not.toContain('verify closes the tour');
+    });
+
+    it('replays only the file list to a gist follow-up when the diff is huge', () => {
+      const other = `diff --git a/other.ts b/other.ts\n@@ -1 +1 @@\n-${'y'.repeat(400_000)}\n+z\n`;
+      const { context } = changeFollowUpContext(diff + other, { ...stop, locations: [] });
+      expect(context).toBe('M file.ts\nM other.ts');
+    });
+  });
+
+  it.each([
+    [{ endLine: 3 }, { endLine: 3 }],
+    [{ endLine: 1 }, {}],
+    [{ endLine: 500 }, {}],
+    [{ endLine: '3' }, {}],
+  ])('keeps a tight endLine range and drops any other (%o)', (range, expected) => {
+    const ranged = { ...stop, locations: [{ filePath: 'file.ts', line: 1, ...range }] };
+    expect(parseChangeTour(JSON.stringify({ stops: [ranged] }), files)[0].locations).toEqual([
+      { filePath: 'file.ts', line: 1, ...expected },
+    ]);
+  });
+
+  it("replays the whole diff to a follow-up, or only the stop's files when it is huge", () => {
+    expect(changeFollowUpContext(diff, stop)).toEqual({
+      context: diff,
+      contextNote: 'the diff the tour was built from',
+    });
+    const other = `diff --git a/other.ts b/other.ts\n@@ -1 +1 @@\n-${'y'.repeat(400_000)}\n+z\n`;
+    const { context, contextNote } = changeFollowUpContext(diff + other, stop);
+    expect(context).toBe(diff);
+    expect(contextNote).toContain("only the diff of this stop's files");
+  });
+
   it('rejects invented paths and lines', () => {
     for (const location of [
       { filePath: 'invented.ts', line: 1 },

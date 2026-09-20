@@ -1,6 +1,7 @@
 import type { AgentTourPayload } from '../../electron/shared/agent-tour';
 import {
   TOUR_CARD_LIMITS,
+  TOUR_FORMS,
   TOUR_TONES,
   toleratedCap,
 } from '../../electron/shared/understanding-limits';
@@ -16,6 +17,7 @@ import { readSingleJsonObject } from './tour-json';
  */
 
 export type TourTone = (typeof TOUR_TONES)[number];
+export type TourForm = (typeof TOUR_FORMS)[number];
 
 export interface TourDiagram {
   kind: 'text' | 'mermaid';
@@ -25,6 +27,14 @@ export interface TourDiagram {
 export interface TourRef {
   filePath: string;
   line?: number;
+  /** Last line of the range the card points at; only change tours set it. */
+  endLine?: number;
+}
+
+/** One side of a comparison card, such as "Before" or "Option A". */
+export interface TourSide {
+  label: string;
+  text: string;
 }
 
 export interface TourCard {
@@ -35,7 +45,12 @@ export interface TourCard {
   body: string;
   whyItMatters?: string;
   tone: TourTone;
+  /** Layout; parsing drops it when the card lacks the evidence the form needs. */
+  form?: TourForm;
   diagram?: TourDiagram;
+  comparison?: [TourSide, TourSide];
+  /** Optional contextual follow-up questions the reader can ask. */
+  questions?: string[];
   refs: TourRef[];
 }
 
@@ -121,6 +136,54 @@ function parseRefs(value: unknown): TourRef[] {
   return refs;
 }
 
+/** Bad optional suggestions are dropped without invalidating a paid tour. */
+export function parseTourQuestions(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const questions: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue;
+    const question = entry.trim();
+    if (!question || question.length > TOUR_CARD_LIMITS.question) continue;
+    const key = question.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    questions.push(question);
+    if (questions.length === TOUR_CARD_LIMITS.questions) break;
+  }
+  return questions.length ? questions : undefined;
+}
+
+function parseComparison(value: unknown, where: string): [TourSide, TourSide] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || value.length !== 2)
+    throw new Error(`${where} comparison needs exactly two sides.`);
+  const side = (entry: unknown, index: number): TourSide => {
+    const record = asRecord(entry);
+    const what = `${where} comparison side ${index + 1}`;
+    return {
+      label: requireText(record?.label, TOUR_CARD_LIMITS.comparisonLabel, `${what} label`),
+      text: requireText(record?.text, TOUR_CARD_LIMITS.comparisonText, `${what} text`),
+    };
+  };
+  return [side(value[0], 0), side(value[1], 1)];
+}
+
+/**
+ * The form is a presentation hint, so an unknown one, or one whose evidence is
+ * missing, falls back to the standard card instead of failing a paid tour.
+ */
+function parseForm(
+  value: unknown,
+  evidence: { diagram?: TourDiagram; comparison?: [TourSide, TourSide] },
+): TourForm | undefined {
+  if (!(TOUR_FORMS as readonly unknown[]).includes(value)) return undefined;
+  const form = value as TourForm;
+  if (form === 'flow' && !evidence.diagram) return undefined;
+  if (form === 'comparison' && !evidence.comparison) return undefined;
+  return form;
+}
+
 function parseWhyItMatters(value: unknown, where: string): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string') throw new Error(`${where} why-it-matters is invalid.`);
@@ -140,8 +203,18 @@ function parseCard(value: unknown, where: string): TourCard {
     refs: parseRefs(record.refs),
   };
   const diagram = parseDiagram(record.diagram, where);
+  const comparison = parseComparison(record.comparison, where);
+  const form = parseForm(record.form, { diagram, comparison });
   const whyItMatters = parseWhyItMatters(record.whyItMatters, where);
-  return { ...base, ...(diagram && { diagram }), ...(whyItMatters && { whyItMatters }) };
+  const questions = parseTourQuestions(record.questions);
+  return {
+    ...base,
+    ...(form && { form }),
+    ...(diagram && { diagram }),
+    ...(comparison && { comparison }),
+    ...(whyItMatters && { whyItMatters }),
+    ...(questions && { questions }),
+  };
 }
 
 function parseCards(value: unknown, what: string, min: number, max: number): TourCard[] {

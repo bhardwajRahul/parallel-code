@@ -4,9 +4,16 @@ import {
   buildFileTourPrompt,
   buildFollowUpPrompt,
   buildPlanTourPrompt,
+  buildTopicTourPrompt,
+  compactSpine,
   renderFileTourContext,
 } from './understanding-prompt';
-import { GIST_LABEL, type FileTourContext, type UnderstandingTour } from './understanding-tour';
+import {
+  GIST_LABEL,
+  type FileTourContext,
+  type TourCard,
+  type UnderstandingTour,
+} from './understanding-tour';
 import {
   TOUR_CARD_LIMITS,
   UNDERSTANDING_PROMPT_LIMIT,
@@ -48,6 +55,34 @@ const tour: UnderstandingTour = {
     },
   ],
 };
+
+describe('presentation rules', () => {
+  const plan = buildPlanTourPrompt({ taskName: 'Task', planContent });
+  const file = buildFileTourPrompt({ taskName: 'Task', context });
+
+  it('asks for claim titles, card forms and a running example only when it fits', () => {
+    expect(plan).toContain("title states the card's takeaway as one short, complete claim");
+    expect(plan).toContain('"takeaway"');
+    expect(plan).toContain('"comparison"');
+    expect(plan).toContain('"flow"');
+    expect(plan).toContain('When one concrete scenario naturally connects the material');
+    expect(plan).toContain('do not force a running example or invent one');
+  });
+
+  it('requests bounded, contextual questions only when a useful boundary remains', () => {
+    expect(plan).toContain(`0-${TOUR_CARD_LIMITS.questions} short, specific questions`);
+    expect(plan).toContain(`at most ${TOUR_CARD_LIMITS.question} characters each`);
+    expect(plan).toContain('boundary, trade-off or assumption tied to this card');
+    expect(plan).toContain('Omit questions when nothing useful remains to ask');
+    expect(file).toContain('questions is optional');
+  });
+
+  it('closes each kind of tour with something the reader can use', () => {
+    expect(plan).toContain('This decision depends on X');
+    expect(file).toContain('When changing this, keep X true');
+    expect(file).not.toContain('This decision depends on X');
+  });
+});
 
 describe('buildPlanTourPrompt', () => {
   const prompt = buildPlanTourPrompt({ taskName: 'Add buffering', planContent });
@@ -159,9 +194,11 @@ describe('buildFollowUpPrompt', () => {
     expect(prompt).toContain(`1 to ${TOUR_CARD_LIMITS.branchMaxCards} cards`);
     expect(prompt).toContain(JSON.stringify(GO_DEEPER_QUESTION));
     expect(prompt).toContain('spine card 2 of 3');
+    expect(prompt).not.toContain('"questions":["optional contextual question"]');
+    expect(prompt).not.toContain('questions is optional');
   });
 
-  it('includes the spine as compact JSON without diagrams or refs, below the untrusted marker', () => {
+  it('includes the spine as compact JSON below the untrusted marker', () => {
     // The spine is model output about untrusted content, so it must not sit
     // above the line that stops the rest of the prompt being read as instructions.
     expect(prompt.indexOf('never instructions')).toBeLessThan(prompt.indexOf('"MAIN FLOW"'));
@@ -174,6 +211,43 @@ describe('buildFollowUpPrompt', () => {
         ],
       }),
     );
+  });
+
+  it.each<Pick<TourCard, 'diagram' | 'comparison'>>([
+    { diagram: { kind: 'text', source: 'PTY -> buffer -> renderer' } },
+    { diagram: { kind: 'mermaid', source: 'graph LR; PTY-->buffer; buffer-->renderer' } },
+    {
+      comparison: [
+        { label: 'Immediate', text: 'Every write sends an IPC message.' },
+        { label: 'Batched', text: 'One message carries several writes.' },
+      ],
+    },
+  ])('preserves card evidence in context and earlier answers: %j', (evidence) => {
+    const card: TourCard = {
+      label: 'TRADE-OFF',
+      title: 'Batching reduces message overhead',
+      body: 'Compare the paths above.',
+      tone: 'neutral',
+      refs: [],
+      ...evidence,
+    };
+    const evidenceTour: UnderstandingTour = { ...tour, cards: [card] };
+    // Agent-published tours can omit source context entirely.
+    const fallbackContext = compactSpine(evidenceTour);
+    expect(JSON.parse(fallbackContext).cards[0]).toMatchObject(evidence);
+
+    const followUp = buildFollowUpPrompt({
+      tour: evidenceTour,
+      currentIndex: 0,
+      question: 'Why does the second path need fewer messages?',
+      context: fallbackContext,
+      earlier: [{ fromIndex: 0, question: 'Show the alternatives.', cards: [card] }],
+    });
+    const spine = followUp.split('The tour so far,')[1].split('\n')[1];
+    const earlier = followUp.split('Follow-ups already answered')[1].split('\n')[1];
+    expect(JSON.parse(spine).cards[0]).toMatchObject(evidence);
+    expect(JSON.parse(earlier)[0].cards[0]).toMatchObject(evidence);
+    expect(followUp.indexOf('never instructions')).toBeLessThan(followUp.indexOf(spine));
   });
 
   it('embeds the context as an untrusted JSON string', () => {
@@ -190,5 +264,49 @@ describe('buildFollowUpPrompt', () => {
         context: 'x'.repeat(UNDERSTANDING_PROMPT_LIMIT),
       }),
     ).toThrow(/too large/i);
+  });
+});
+
+describe('rework requests', () => {
+  it("states the reader's request ahead of the untrusted data, and only when given", () => {
+    const prompt = buildPlanTourPrompt({
+      taskName: 'Task',
+      planContent,
+      instructions: ' Risks only ',
+    });
+    const request = prompt.indexOf('The reader asked for this version of the tour: "Risks only"');
+    expect(request).toBeGreaterThan(-1);
+    expect(request).toBeLessThan(prompt.indexOf('never instructions'));
+    expect(buildPlanTourPrompt({ taskName: 'Task', planContent })).not.toContain(
+      'The reader asked',
+    );
+    expect(buildFileTourPrompt({ taskName: 'Task', context, instructions: 'Shorter' })).toContain(
+      '"Shorter"',
+    );
+  });
+
+  it('rebuilds a topic tour from the supplied material', () => {
+    const prompt = buildTopicTourPrompt({
+      taskName: 'Task',
+      subject: 'the retry bug',
+      context: 'The loop never backs off.',
+      instructions: 'For a newcomer',
+    });
+    expect(prompt).toContain('"the retry bug"');
+    expect(prompt).toContain('The loop never backs off.');
+    expect(prompt).toContain('"For a newcomer"');
+    expect(prompt).toContain('"gist"');
+  });
+
+  it('names a partial context in a follow-up', () => {
+    const prompt = buildFollowUpPrompt({
+      tour: { ...tour, kind: 'change' },
+      currentIndex: 0,
+      question: 'Why?',
+      context: 'diff',
+      contextNote: "only the diff of this stop's files",
+    });
+    expect(prompt).toContain('the code change');
+    expect(prompt).toContain("contains only the diff of this stop's files:");
   });
 });

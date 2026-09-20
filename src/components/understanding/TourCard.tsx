@@ -16,7 +16,10 @@ const TONE_COLOR: Record<TourTone, string> = {
 const WARNED: readonly TourTone[] = ['risk', 'uncertainty'];
 
 function refLabel(ref: TourRef): string {
-  return ref.line === undefined ? ref.filePath : `${ref.filePath}:${ref.line}`;
+  if (ref.line === undefined) return ref.filePath;
+  return ref.endLine === undefined
+    ? `${ref.filePath}:${ref.line}`
+    : `${ref.filePath}:${ref.line}-${ref.endLine}`;
 }
 
 /** Marks a ref chip as a place in the codebase rather than a word. */
@@ -34,11 +37,23 @@ function FileGlyph() {
   );
 }
 
-/** One tour card: label, title, optional diagram, markdown body, why-it-matters, refs. */
-export function TourCard(props: { card: TourCardData; onOpenRef?: (ref: TourRef) => void }) {
+/**
+ * One tour card: label, title, optional evidence (diagram or comparison),
+ * markdown body, why-it-matters, refs. `data-form` lets the stylesheet give a
+ * takeaway, comparison or flow card its own shape.
+ */
+export function TourCard(props: {
+  card: TourCardData;
+  onOpenRef?: (ref: TourRef) => void;
+  onAsk?: (question: string) => void;
+  asking?: boolean;
+  answeredQuestions?: string[];
+}) {
   const bodyHtml = createHighlightedMarkdown(() => props.card.body);
   const tone = () => props.card.tone;
   const warned = () => WARNED.includes(tone());
+  const questions = () =>
+    (props.card.questions ?? []).filter((question) => !props.answeredQuestions?.includes(question));
   let mermaidHost: HTMLDivElement | undefined;
 
   // The host is reused across cards, so the previous diagram's rendered SVG is
@@ -57,6 +72,7 @@ export function TourCard(props: { card: TourCardData; onOpenRef?: (ref: TourRef)
     <article
       class="understanding-card"
       data-tone={tone()}
+      data-form={props.card.form}
       aria-label={props.card.title}
       style={{
         '--tour-tone': TONE_COLOR[tone()],
@@ -85,6 +101,22 @@ export function TourCard(props: { card: TourCardData; onOpenRef?: (ref: TourRef)
           </Show>
         )}
       </Show>
+      <Show when={props.card.comparison}>
+        {(sides) => (
+          <div class="understanding-compare">
+            <For each={sides()}>
+              {(side) => (
+                <section class="understanding-compare-side">
+                  <p class="understanding-card-label" style={{ color: theme.fgMuted }}>
+                    {side.label}
+                  </p>
+                  <p class="understanding-compare-text">{side.text}</p>
+                </section>
+              )}
+            </For>
+          </div>
+        )}
+      </Show>
       <div
         class="understanding-body plan-markdown"
         // eslint-disable-next-line solid/no-innerhtml -- createHighlightedMarkdown sanitizes with DOMPurify
@@ -111,6 +143,23 @@ export function TourCard(props: { card: TourCardData; onOpenRef?: (ref: TourRef)
               >
                 <FileGlyph />
                 {refLabel(ref)}
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+      <Show when={props.onAsk && questions().length > 0}>
+        <div class="tour-questions" role="group" aria-label="Explore this card">
+          <For each={questions()}>
+            {(question) => (
+              <button
+                type="button"
+                class="tour-question"
+                disabled={props.asking}
+                onClick={() => props.onAsk?.(question)}
+              >
+                <span aria-hidden="true">↳</span>
+                <span>{question}</span>
               </button>
             )}
           </For>

@@ -1470,6 +1470,86 @@ button {
     box-shadow 0.16s ease;
 }
 
+/* The change tour beside the diff: the understanding tour's card and threads,
+   compacted to fit the sidebar. */
+.change-tour {
+  display: flex;
+  min-height: 0;
+  max-height: 70%;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 8px;
+  margin: 12px;
+  overflow: hidden;
+}
+
+.change-tour-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+}
+
+.change-tour-top .understanding-subject {
+  max-width: none;
+}
+
+.change-tour-stage {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.change-tour .understanding-card {
+  flex: none;
+  padding: 16px 18px;
+  overflow: visible;
+  box-shadow: none;
+}
+
+.change-tour .tour-rework {
+  padding: 0;
+}
+
+.change-tour-note {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.change-tour-message {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 0;
+  text-align: center;
+}
+
+.change-tour-ask {
+  display: flex;
+}
+
+.change-tour-nav {
+  display: flex;
+  gap: 8px;
+}
+
+.change-tour-nav > button {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+.change-tour-nav > .change-tour-next {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
 .change-tour-footer {
   flex-shrink: 0;
   border-top: 1px solid var(--border-subtle);
@@ -3816,23 +3896,62 @@ html[data-look='islands-light'] .window-title-icon {
   min-width: 60px;
   gap: 4px;
   opacity: 0.35;
+  transition: opacity 120ms ease;
 }
 
-.understanding-segments > span {
+.understanding-segments:hover,
+.understanding-segments:focus-within {
+  opacity: 0.8;
+}
+
+/* The bar is 2px, but the button around it is tall enough to hit. */
+.understanding-segments > button {
+  position: relative;
   flex: 1;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.understanding-segments > button::before {
+  position: absolute;
+  top: 6px;
+  right: 0;
+  left: 0;
   height: 2px;
   border-radius: 2px;
   background: var(--border);
+  content: '';
+}
+
+.understanding-segments > button:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: 1px;
 }
 
 /* Cards already read stay dimmer than the one in hand, so the strip says where
    you are and not only how far you got. */
-.understanding-segments > span[data-state='seen'] {
+.understanding-segments > button[data-state='seen']::before {
   background: color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
-.understanding-segments > span[data-state='current'] {
+.understanding-segments > button[data-state='current']::before {
   background: var(--accent);
+}
+
+/* A dot above the bar marks a card with answered follow-ups under it. */
+.understanding-segments > button[data-answered]::after {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--accent);
+  content: '';
 }
 
 .understanding-count {
@@ -3929,7 +4048,7 @@ html[data-look='islands-light'] .window-title-icon {
   text-transform: uppercase;
 }
 
-/* A step above the body, not a headline: the body carries the card. */
+/* The headline states the claim; the content underneath supports it. */
 .understanding-card-title {
   margin: 0 0 12px;
   font-family: var(--font-ui);
@@ -3970,6 +4089,118 @@ html[data-look='islands-light'] .window-title-icon {
 
 .understanding-body > :last-child {
   margin-bottom: 0;
+}
+
+/* Card forms. A takeaway is its claim; comparison and flow cards give the
+   evidence the room and shrink the prose to a caption under it. */
+.understanding-card[data-form='takeaway'] .understanding-card-title {
+  max-width: 24ch;
+  margin: 8px 0 20px;
+  font-family: var(--font-display);
+  font-size: 26px;
+  line-height: 1.3;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+.understanding-card[data-form='takeaway'] .understanding-body {
+  color: var(--fg-muted);
+  font-size: 16px;
+}
+
+.understanding-card[data-form='flow'] :is(.understanding-diagram, .mermaid-block) {
+  margin: 8px 0 20px;
+  padding: 20px 22px;
+  border: 1px solid var(--border-subtle);
+  color: var(--fg);
+  font-size: 13.5px;
+}
+
+.understanding-card[data-form='flow'] .mermaid-rendered {
+  display: grid;
+  min-height: 160px;
+  place-items: center;
+}
+
+/* Narrow cards scroll the diagram instead of shrinking its labels away. */
+.understanding-card[data-form='flow'] .mermaid-rendered > svg {
+  min-width: 360px;
+}
+
+.understanding-card[data-form='flow'] .understanding-body,
+.understanding-card[data-form='comparison'] .understanding-body {
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/* Side by side where there is room; stacked in the narrow change-tour column. */
+.understanding-compare {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.understanding-compare-side {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.understanding-compare-side > .understanding-card-label {
+  margin-bottom: 6px;
+}
+
+.understanding-compare-text {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+/* The overview borrows the card surface, so the stage keeps its size. */
+.understanding-overview ol {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0 0 0 1.6em;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.understanding-overview button {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.understanding-overview button:hover,
+.understanding-overview button[aria-current='step'] {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+.understanding-overview .understanding-card-label {
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+.understanding-overview-title {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 /* The card's tone appears once, as the rule beside the consequence. */
@@ -4018,6 +4249,47 @@ html[data-look='islands-light'] .window-title-icon {
   opacity: 0.55;
 }
 
+/* Optional questions stay with their evidence, above any answers they open. */
+.tour-questions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 22px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tour-question {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--link);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.tour-question:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+.tour-question:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.tour-question:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .understanding-status {
   display: flex;
   align-items: center;
@@ -4050,6 +4322,37 @@ html[data-look='islands-light'] .window-title-icon {
   height: 10px;
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+
+.tour-rework {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 10px;
+}
+
+/* Stale is a hint, not a failure: muted, with the one action it calls for. */
+.understanding-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px 10px;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.understanding-notice-action {
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.understanding-notice-action:hover {
+  border-color: var(--border-focus);
 }
 
 .understanding-alert-row {

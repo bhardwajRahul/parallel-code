@@ -88,7 +88,12 @@ function mount(initialDiff = diff, initiallyDisabled = false) {
             }}
           />
           <Show when={readerOpen()}>
-            <ChangeTour tour={tour} onNavigate={navigate} onFinish={() => setReaderOpen(false)} />
+            <ChangeTour
+              tour={tour}
+              worktreePath="/repo"
+              onNavigate={navigate}
+              onFinish={() => setReaderOpen(false)}
+            />
           </Show>
         </>
       );
@@ -96,17 +101,39 @@ function mount(initialDiff = diff, initiallyDisabled = false) {
   );
   return { host, setRaw, navigate, setReaderOpen, setDisabled };
 }
-function complete(index = 0, filePath = 'file.ts') {
+function complete(index = 0, filePath = 'file.ts', questions?: string[]) {
   const stop = {
     title: 'Changed behavior',
     explanation: 'The returned value changes.',
     locations: [{ filePath, line: 1 }],
+    questions,
   };
   channels[index].onmessage?.({
     type: 'chunk',
     text: JSON.stringify({ stops: [stop, { ...stop, title: 'Tests' }] }),
   });
   channels[index].onmessage?.({ type: 'done', exitCode: 0 });
+}
+
+const progressText = (host: HTMLElement) =>
+  host.querySelector('.understanding-progress')?.textContent ?? '';
+function buttonByText(host: HTMLElement, text: string): HTMLButtonElement {
+  const button = [...host.querySelectorAll('button')].find(
+    (candidate) => candidate.textContent === text || candidate.getAttribute('aria-label') === text,
+  );
+  if (!button) throw new Error(`No button ${text}`);
+  return button;
+}
+async function flush() {
+  for (let i = 0; i < 8; i += 1) await Promise.resolve();
+}
+/** Generates the two-stop tour and opens the reader on its first stop. */
+function openTour(questions?: string[]) {
+  const mounted = mount();
+  mounted.host.querySelector('button')?.click();
+  complete(0, 'file.ts', questions);
+  mounted.host.querySelector('button')?.click();
+  return mounted;
 }
 
 const largeDiff = ['file.ts', 'second.ts', 'third.ts']
@@ -317,13 +344,13 @@ describe('guided tour', () => {
     );
     complete();
     host.querySelector('button')?.click();
-    expect(host.textContent).toContain('Stop 1 of 2');
-    expect(navigate).toHaveBeenCalledWith('file.ts', 1);
-    const content = host.querySelector('h2')?.parentElement;
+    expect(progressText(host)).toContain('1 / 2');
+    expect(navigate).toHaveBeenCalledWith({ filePath: 'file.ts', line: 1 });
+    const content = host.querySelector<HTMLElement>('.change-tour-stage');
     if (!content) throw new Error('Tour content is missing');
     content.scrollTop = 120;
-    [...host.querySelectorAll('button')].find((button) => button.textContent === 'Next')?.click();
-    expect(host.textContent).toContain('Stop 2 of 2');
+    buttonByText(host, 'Next').click();
+    expect(progressText(host)).toContain('2 / 2');
     expect(host.querySelector('h2')?.textContent).toBe('Tests');
     expect(content.scrollTop).toBe(0);
   });
@@ -362,9 +389,9 @@ describe('guided tour', () => {
     complete(2, 'third.ts');
     expect(navigate).not.toHaveBeenCalled();
     host.querySelector('button')?.click();
-    expect(host.textContent).toContain('Stop 1 of 6');
+    expect(progressText(host)).toContain('1 / 6');
     expect(host.querySelector('[role="status"]')).toBeNull();
-    expect(navigate).toHaveBeenCalledWith('file.ts', 1);
+    expect(navigate).toHaveBeenCalledWith({ filePath: 'file.ts', line: 1 });
     for (const [channel, args] of vi.mocked(invoke).mock.calls) {
       if (channel === IPC.AskAboutCode)
         expect((args?.prompt as string).length).toBeLessThanOrEqual(CHANGE_TOUR_PROMPT_LIMIT);
@@ -398,5 +425,170 @@ describe('guided tour', () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toBe('Provider unavailable');
     expect(host.textContent).not.toContain('Stop 1');
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('draws each stop as a tour card with its label and tone', () => {
+    const { host } = mount();
+    host.querySelector('button')?.click();
+    const stop = {
+      label: 'entry point',
+      title: 'Risky change',
+      explanation: 'Callers break.',
+      tone: 'risk',
+      whyItMatters: 'Existing data is rewritten.',
+      locations: [{ filePath: 'file.ts', line: 1 }],
+    };
+    channels[0].onmessage?.({ type: 'chunk', text: JSON.stringify({ stops: [stop] }) });
+    channels[0].onmessage?.({ type: 'done', exitCode: 0 });
+    host.querySelector('button')?.click();
+    const card = host.querySelector('.understanding-card');
+    expect(card?.getAttribute('data-tone')).toBe('risk');
+    expect(card?.textContent).toContain('⚠ ENTRY POINT');
+    expect(card?.textContent).toContain('Existing data is rewritten.');
+    expect(card?.querySelector('.understanding-ref')?.textContent).toBe('file.ts:1');
+  });
+
+  it('jumps stops from the progress strip and with arrow keys while the tour has focus', () => {
+    const { host, navigate } = openTour();
+    buttonByText(host, 'Card 2 of 2: Tests').click();
+    expect(progressText(host)).toContain('2 / 2');
+    const previous = buttonByText(host, 'Previous');
+    previous.focus();
+    previous.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    expect(progressText(host)).toContain('1 / 2');
+    // Outside the tour the keys belong to the diff.
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+    expect(progressText(host)).toContain('1 / 2');
+    expect(navigate).toHaveBeenLastCalledWith({ filePath: 'file.ts', line: 1 });
+  });
+
+  it('opens with the gist, closes with what to verify and highlights a stop range', () => {
+    const { host, navigate } = mount();
+    host.querySelector('button')?.click();
+    const stop = {
+      title: 'Returns the new value',
+      explanation: 'The returned value changes.',
+      locations: [{ filePath: 'file.ts', line: 1, endLine: 2 }],
+    };
+    channels[0].onmessage?.({
+      type: 'chunk',
+      text: JSON.stringify({
+        gist: { title: 'The file now returns new', explanation: 'It returned old.' },
+        stops: [stop],
+        verify: { title: 'Check callers expect new', explanation: 'Callers compare it.' },
+      }),
+    });
+    channels[0].onmessage?.({ type: 'done', exitCode: 0 });
+    host.querySelector('button')?.click();
+    expect(progressText(host)).toContain('1 / 3');
+    expect(host.querySelector('.understanding-card')?.textContent).toContain('THE GIST');
+    // The gist is about the whole change, so it points nowhere in the diff.
+    expect(navigate).not.toHaveBeenCalled();
+    buttonByText(host, 'Next').click();
+    expect(navigate).toHaveBeenLastCalledWith({ filePath: 'file.ts', line: 1, endLine: 2 });
+    expect(host.querySelector('.understanding-ref')?.textContent).toBe('file.ts:1-2');
+    buttonByText(host, 'Next').click();
+    expect(host.querySelector('.understanding-card')?.textContent).toContain('BEFORE MERGING');
+  });
+
+  it('lists every card title in the overview and opens the one picked', () => {
+    const { host } = openTour();
+    buttonByText(host, 'Show overview').click();
+    const items = [...host.querySelectorAll('.understanding-overview li')];
+    expect(items.map((item) => item.textContent)).toEqual([
+      'STOP 1Changed behavior',
+      'STOP 2Tests',
+    ]);
+    expect(host.querySelector('.understanding-overview [aria-current="step"]')?.textContent).toBe(
+      'STOP 1Changed behavior',
+    );
+    items[1].querySelector('button')?.click();
+    expect(host.querySelector('.understanding-overview')).toBeNull();
+    expect(progressText(host)).toContain('2 / 2');
+  });
+
+  it('offers to resume a tour the reader left midway', () => {
+    const { host, setReaderOpen } = openTour();
+    buttonByText(host, 'Next').click();
+    setReaderOpen(false);
+    expect(host.querySelector('button')?.textContent).toContain('Resume tour · 2/2');
+  });
+
+  it('asks about a stop with the diff as context and keeps the answer under it', async () => {
+    const { host } = openTour();
+    const input = host.querySelector<HTMLInputElement>('.understanding-ask-input');
+    if (!input) throw new Error('Ask input is missing');
+    input.value = 'Why this value?';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flush();
+    expect(host.querySelector('.understanding-thread[aria-busy="true"]')?.textContent).toContain(
+      'Why this value?',
+    );
+    const asks = vi.mocked(invoke).mock.calls.filter(([channel]) => channel === IPC.AskAboutCode);
+    expect(asks[1][1]?.purpose).toBe('understand');
+    const prompt = String(asks[1][1]?.prompt);
+    expect(prompt).toContain('the code change');
+    expect(prompt).toContain('the diff the tour was built from');
+    expect(prompt).toContain('+new');
+    const answer = {
+      cards: [{ label: 'ANSWER', title: 'Because', body: 'Reasons.', tone: 'neutral' }],
+    };
+    channels[1].onmessage?.({ type: 'chunk', text: JSON.stringify(answer) });
+    channels[1].onmessage?.({ type: 'done', exitCode: 0 });
+    await flush();
+    expect(host.querySelector('.understanding-thread')?.textContent).toContain('Because');
+    expect(
+      host.querySelector('.understanding-segments > button')?.hasAttribute('data-answered'),
+    ).toBe(true);
+    // The answer stays with its stop.
+    buttonByText(host, 'Next').click();
+    expect(host.querySelector('.understanding-thread')).toBeNull();
+  });
+
+  it('lets readers retry a cancelled suggestion and hides it after an answer', async () => {
+    const question = 'Which callers depend on the old return value?';
+    const { host } = openTour([question]);
+    const suggestion = () => host.querySelector<HTMLButtonElement>('.tour-question');
+    expect(suggestion()?.textContent).toContain(question);
+    suggestion()?.click();
+    await flush();
+    expect(suggestion()?.disabled).toBe(true);
+    buttonByText(host, 'Cancel question').click();
+    expect(suggestion()?.disabled).toBe(false);
+    suggestion()?.click();
+    await flush();
+    const asks = vi.mocked(invoke).mock.calls.filter(([channel]) => channel === IPC.AskAboutCode);
+    expect(asks).toHaveLength(3);
+    expect(String(asks[2][1]?.prompt)).toContain(JSON.stringify(question));
+    channels[2].onmessage?.({
+      type: 'chunk',
+      text: JSON.stringify({
+        cards: [{ label: 'ANSWER', title: 'Callers', body: 'Check callers.' }],
+      }),
+    });
+    channels[2].onmessage?.({ type: 'done', exitCode: 0 });
+    await flush();
+    expect(suggestion()).toBeNull();
+    expect(host.querySelector('.understanding-thread')?.getAttribute('aria-label')).toBe(question);
+    buttonByText(host, 'Next').click();
+    expect(suggestion()?.disabled).toBe(false);
+    expect(host.querySelector('.understanding-thread')).toBeNull();
+  });
+
+  it('reworks the tour from the same diff with the reader request', () => {
+    const { host } = openTour();
+    buttonByText(host, 'Rework tour').click();
+    const input = host.querySelector<HTMLInputElement>('.tour-rework input');
+    if (!input) throw new Error('Rework input is missing');
+    input.value = 'Tests first';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(host.querySelector('.change-tour')?.textContent).toContain('Reworking tour…');
+    const asks = vi.mocked(invoke).mock.calls.filter(([channel]) => channel === IPC.AskAboutCode);
+    expect(String(asks[1][1]?.prompt)).toContain('"Tests first"');
+    expect(String(asks[1][1]?.prompt)).toContain('+new');
+    complete(1);
+    expect(progressText(host)).toContain('1 / 2');
   });
 });

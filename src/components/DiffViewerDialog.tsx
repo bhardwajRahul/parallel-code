@@ -38,6 +38,7 @@ import type { CommitInfo } from '../ipc/types';
 import type { GitIsolationMode } from '../store/types';
 import { ChangeTour } from './ChangeTour';
 import { createChangeTour, type ChangeTourController } from '../lib/create-change-tour';
+import type { TourLocation } from '../lib/change-tour';
 
 interface DiffViewerDialogProps {
   tour?: ChangeTourController;
@@ -170,18 +171,21 @@ function DiffViewerContent(props: DiffViewerDialogProps & { tour: ChangeTourCont
         props.tour.stops()[props.tour.step()]?.locations.map((location) => location.filePath) ?? [],
       ),
   );
+  // While a reworked tour generates there is no step, so every file stays in view.
   const visibleFiles = createMemo(() =>
-    tourOpen() && !showAllChanges()
+    tourOpen() && !showAllChanges() && stepFiles().size > 0
       ? parsedFiles().filter((file) => stepFiles().has(file.path))
       : parsedFiles(),
   );
 
-  function navigateTour(filePath: string, line: number) {
+  function navigateTour(location: TourLocation) {
+    const { filePath } = location;
     setActiveFilePath(filePath);
     const file = parsedFiles().find((entry) => entry.path === filePath);
     review.setScrollTarget({
       filePath,
-      startLine: line,
+      startLine: location.line,
+      ...(location.endLine !== undefined && { endLine: location.endLine }),
       side: file?.status === 'D' ? 'old' : 'new',
     });
   }
@@ -480,6 +484,7 @@ function DiffViewerContent(props: DiffViewerDialogProps & { tour: ChangeTourCont
           <Show when={tourOpen() && !loading() && !error()}>
             <ChangeTour
               tour={props.tour}
+              worktreePath={props.worktreePath}
               onNavigate={navigateTour}
               onFinish={() => {
                 props.tour.navigate(0);
@@ -525,7 +530,7 @@ function DiffViewerContent(props: DiffViewerDialogProps & { tour: ChangeTourCont
                   setShowAllChanges(showAll);
                   if (!showAll) {
                     const location = props.tour.stops()[props.tour.step()]?.locations[0];
-                    if (location) navigateTour(location.filePath, location.line);
+                    if (location) navigateTour(location);
                   }
                 }}
               >

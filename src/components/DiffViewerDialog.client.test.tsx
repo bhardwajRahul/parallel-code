@@ -115,7 +115,8 @@ function mount(background = false, rawDiff = diff) {
   return { host, setTarget, setStartTour, tour };
 }
 function complete(
-  stops: TourStop[] = [
+  // The provider's wire shape: tone is optional there.
+  stops: Omit<TourStop, 'tone'>[] = [
     {
       title: 'Behavior',
       explanation: 'Changes the value.',

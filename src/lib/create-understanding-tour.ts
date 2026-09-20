@@ -8,13 +8,14 @@
 import { createSignal, onCleanup } from 'solid-js';
 import { IPC } from '../../electron/ipc/channels';
 import { invoke } from './ipc';
-import { errMessage } from './log';
+import { errMessage, warn as logWarn } from './log';
 import { startUnderstandingRequest, type UnderstandingRequestKind } from './understanding-request';
 import {
   GO_DEEPER_QUESTION,
   buildFileTourPrompt,
   buildFollowUpPrompt,
   buildPlanTourPrompt,
+  buildTopicTourPrompt,
   compactSpine,
   renderFileTourContext,
 } from './understanding-prompt';
@@ -42,17 +43,27 @@ export interface UnderstandingTourOptions {
   onError?: (message: string) => void;
 }
 
-export type UnderstandingTourInput =
-  | {
-      kind: 'plan';
-      taskName: string;
-      worktreePath: string;
-      planContent: string;
-      subject: string;
-    }
-  | { kind: 'file'; taskName: string; worktreePath: string; filePath: string }
-  /** A tour the agent published; only reopened, never generated here. */
-  | { kind: 'agent'; taskName: string; worktreePath: string; subject: string };
+/** The reader's "Rework tour" request, carried so Retry repeats it. */
+interface ReworkInstructions {
+  instructions?: string;
+}
+
+export type UnderstandingTourInput = ReworkInstructions &
+  (
+    | {
+        kind: 'plan';
+        taskName: string;
+        worktreePath: string;
+        planContent: string;
+        subject: string;
+      }
+    | { kind: 'file'; taskName: string; worktreePath: string; filePath: string }
+    /**
+     * A tour the agent published. It is only regenerated when the reader
+     * reworks it, from `context`: the material the agent summarised.
+     */
+    | { kind: 'agent'; taskName: string; worktreePath: string; subject: string; context?: string }
+  );
 
 /** The cache key's subject for one input; both entry buttons and open() need it. */
 export function tourInputSubject(input: UnderstandingTourInput): string {
@@ -75,9 +86,8 @@ function cacheKey(kind: UnderstandingTourKind, subject: string): string {
 
 /**
  * A plan tour explains the plan text it was built from, so an edited plan needs
- * a new tour. File tours are keyed by path only; the file's current content is
- * not in the renderer. shortcut: file tours stay cached until reset() — compare a
- * content hash from the main process if stale file tours become a problem.
+ * a new tour. File tours are keyed by path only and checked after they open,
+ * see checkFileFreshness().
  */
 function isStale(cached: UnderstandingTourInput, input: UnderstandingTourInput): boolean {
   return (
@@ -100,6 +110,8 @@ export function createUnderstandingTour(options: UnderstandingTourOptions = {}) 
   const [progress, setProgress] = createSignal('');
   const [elapsedSeconds, setElapsedSeconds] = createSignal(0);
   const [receiving, setReceiving] = createSignal(false);
+  /** The file behind the file tour on screen changed after the tour was made. */
+  const [stale, setStale] = createSignal(false);
   // Finished tours, so starting a file tour does not discard a finished plan
   // tour. A signal (not a bare Map) keeps isReady() reactive for the buttons.
   const [cache, setCache] = createSignal<ReadonlyMap<string, CachedTour>>(new Map());
@@ -130,6 +142,7 @@ export function createUnderstandingTour(options: UnderstandingTourOptions = {}) 
     setError('');
     setElapsedSeconds(0);
     setReceiving(false);
+    setStale(false);
   }
 
   function reset(): void {
@@ -194,12 +207,25 @@ export function createUnderstandingTour(options: UnderstandingTourOptions = {}) 
   async function buildPrompt(
     input: UnderstandingTourInput,
   ): Promise<{ prompt: string; context: string }> {
-    if (input.kind === 'agent') throw new Error('An agent-published tour cannot be generated.');
+    const { instructions } = input;
+    if (input.kind === 'agent') {
+      if (!input.context) throw new Error('This tour has nothing to regenerate it from.');
+      return {
+        prompt: buildTopicTourPrompt({
+          taskName: input.taskName,
+          subject: input.subject,
+          context: input.context,
+          instructions,
+        }),
+        context: input.context,
+      };
+    }
     if (input.kind === 'plan')
       return {
         prompt: buildPlanTourPrompt({
           taskName: input.taskName,
           planContent: input.planContent,
+          instructions,
         }),
         context: input.planContent,
       };
@@ -208,7 +234,7 @@ export function createUnderstandingTour(options: UnderstandingTourOptions = {}) 
       filePath: input.filePath,
     });
     return {
-      prompt: buildFileTourPrompt({ taskName: input.taskName, context: bundle }),
+      prompt: buildFileTourPrompt({ taskName: input.taskName, context: bundle, instructions }),
       context: renderFileTourContext(bundle),
     };
   }
@@ -224,12 +250,18 @@ export function createUnderstandingTour(options: UnderstandingTourOptions = {}) 
     setKind(input.kind);
     setSubject(tourSubject);
     setLoading(true);
-    setProgress(input.kind === 'file' ? 'Reading file…' : 'Generating tour…');
+    setProgress(
+      input.kind === 'file'
+        ? 'Reading file…'
+        : input.instructions
+          ? 'Reworking tour…'
+          : 'Generating tour…',
+    );
     try {
       const built = await buildPrompt(input);
       if (active !== token) return;
       context = built.context;
-      setProgress('Generating tour…');
+      setProgress(input.instructions ? 'Reworking tour…' : 'Generating tour…');
       const text = await run({ prompt: built.prompt, request: 'tour', active });
       if (text === undefined) return;
       const parsed = parseUnderstandingTour(text, input.kind, tourSubject);
@@ -280,6 +312,7 @@ export function createUnderstandingTour(options: UnderstandingTourOptions = {}) 
       taskName: input.subject,
       worktreePath: input.worktreePath,
       subject: input.subject,
+      context: tourContext,
     };
     context = tourContext;
     cwd = input.worktreePath;
@@ -319,17 +352,45 @@ export function createUnderstandingTour(options: UnderstandingTourOptions = {}) 
       return false;
     }
     // Reopening the tour already on screen keeps the reader's place in it.
-    if (kind() === tourKind && subject() === tourSubject && tour()) return true;
-    cancel();
-    clearView();
-    context = cached.context;
-    cwd = cached.cwd;
-    lastInput = cached.input;
-    setKind(tourKind);
-    setSubject(tourSubject);
-    setTour(cached.tour);
-    setThreads(cached.threads);
+    if (kind() !== tourKind || subject() !== tourSubject || !tour()) {
+      cancel();
+      clearView();
+      context = cached.context;
+      cwd = cached.cwd;
+      lastInput = cached.input;
+      setKind(tourKind);
+      setSubject(tourSubject);
+      setTour(cached.tour);
+      setThreads(cached.threads);
+    }
+    void checkFileFreshness(cached);
     return true;
+  }
+
+  /**
+   * Re-reads a file tour's context and flags the tour when it no longer matches
+   * what the tour was built from. It flags rather than regenerates, so a changed
+   * file never costs a provider call the reader did not ask for.
+   */
+  async function checkFileFreshness(cached: CachedTour): Promise<void> {
+    const { input } = cached;
+    if (input.kind !== 'file') return;
+    const shown = tour();
+    try {
+      const bundle = await invoke<FileTourContext>(IPC.ReadFileTourContext, {
+        worktreePath: input.worktreePath,
+        filePath: input.filePath,
+      });
+      // The reader may have moved on to another tour while the file was read.
+      if (tour() !== shown) return;
+      setStale(renderFileTourContext(bundle) !== cached.context);
+    } catch (error) {
+      // A file that can no longer be read is as stale as one that changed.
+      logWarn('understandingTour', 'Could not re-read the toured file', {
+        error: errMessage(error),
+      });
+      if (tour() === shown) setStale(true);
+    }
   }
 
   function isReady(tourKind: UnderstandingTourKind, tourSubject: string): boolean {
@@ -345,9 +406,14 @@ export function createUnderstandingTour(options: UnderstandingTourOptions = {}) 
     return kind() === tourKind && subject() === tourSubject ? error() : '';
   }
 
-  /** Re-runs the last generate input; used by the error state's Retry. */
+  /** Re-runs the last generate input; used by Retry and by Regenerate on a stale tour. */
   function retry(): void {
     if (lastInput) void generate(lastInput);
+  }
+
+  /** Regenerates the tour on screen with the reader's request for how it should change. */
+  function rework(instructions: string): void {
+    if (lastInput && instructions.trim()) void generate({ ...lastInput, instructions });
   }
 
   /** The answered follow-ups under one spine card, oldest first. */
@@ -455,6 +521,7 @@ export function createUnderstandingTour(options: UnderstandingTourOptions = {}) 
     progress,
     elapsedSeconds,
     receiving,
+    stale,
     generate,
     publish,
     open,
@@ -462,6 +529,7 @@ export function createUnderstandingTour(options: UnderstandingTourOptions = {}) 
     isLoading,
     errorFor,
     retry,
+    rework,
     navigate,
     next,
     previous,

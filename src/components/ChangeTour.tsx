@@ -1,150 +1,241 @@
-import { For, Show, createEffect } from 'solid-js';
+import { Show, createEffect, createMemo, createSignal, on, onCleanup } from 'solid-js';
 import type { ChangeTourController } from '../lib/create-change-tour';
-import { theme } from '../lib/theme';
-import { sf } from '../lib/fontScale';
+import { stopToCard, type TourLocation } from '../lib/change-tour';
+import { errMessage, warn as logWarn } from '../lib/log';
+import { openFileInEditor } from '../lib/shell';
+import { TOUR_KEYS, isTypingTarget } from '../lib/tour-keys';
+import { tourMarkdown } from '../lib/tour-markdown';
+import type { TourRef } from '../lib/understanding-tour';
+import { store } from '../store/store';
+import { CloseIcon, ListIcon, PencilIcon } from './icons';
+import { TourAskBar } from './understanding/TourAskBar';
+import { TourCard } from './understanding/TourCard';
+import { TourCopyButton } from './understanding/TourCopyButton';
+import { TourIconButton } from './understanding/TourIconButton';
+import { TourOverview } from './understanding/TourOverview';
+import { TourProgress } from './understanding/TourProgress';
+import { TourReworkBar } from './understanding/TourReworkBar';
+import { TourThreads } from './understanding/TourThreads';
 
-/** Closing the reader preserves the task's generated tour. */
+/**
+ * The change tour beside the diff: one stop at a time as a tour card, with the
+ * follow-ups asked under it. Closing the reader preserves the generated tour.
+ */
 export function ChangeTour(props: {
   tour: ChangeTourController;
-  onNavigate: (filePath: string, line: number) => void;
+  onNavigate: (location: TourLocation) => void;
   onFinish: () => void;
+  worktreePath: string;
 }) {
-  const stop = () => props.tour.stops()[props.tour.step()];
-  const isLastStep = () => props.tour.step() === props.tour.stops().length - 1;
+  const cards = createMemo(() => props.tour.stops().map(stopToCard));
+  const card = () => cards()[props.tour.step()];
+  const isLastStep = () => props.tour.step() === cards().length - 1;
+  const answered = () => new Set(props.tour.threads().map((thread) => thread.fromIndex));
+  const [reworking, setReworking] = createSignal(false);
+  const [overview, setOverview] = createSignal(false);
+  let sectionRef: HTMLElement | undefined;
   let contentRef: HTMLDivElement | undefined;
+
   createEffect(() => {
-    const location = stop()?.locations[0];
+    const location = props.tour.stops()[props.tour.step()]?.locations[0];
     if (contentRef) contentRef.scrollTop = 0;
-    if (location) props.onNavigate(location.filePath, location.line);
+    if (location) props.onNavigate(location);
   });
+
+  // Moving to a card, from the overview or otherwise, shows that card.
+  createEffect(
+    on(
+      () => props.tour.step(),
+      () => setOverview(false),
+      { defer: true },
+    ),
+  );
+
+  // Arrow keys also scroll the diff, so they move the tour only while focus is
+  // inside it — after a click on a stop's ref or control.
+  createEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const move = TOUR_KEYS[event.key];
+      if (!move || isTypingTarget(event.target) || !cards().length) return;
+      if (!(event.target instanceof Node) || !sectionRef?.contains(event.target)) return;
+      event.preventDefault();
+      props.tour.navigate(move(props.tour.step(), cards().length - 1));
+    };
+    document.addEventListener('keydown', onKeyDown);
+    onCleanup(() => document.removeEventListener('keydown', onKeyDown));
+  });
+
+  /** Refs into the diff scroll it; anything else, such as an answer's ref, opens the editor. */
+  function openRef(ref: TourRef): void {
+    const inDiff = props.tour.files().some((file) => file.path === ref.filePath);
+    if (inDiff && ref.line !== undefined) {
+      props.onNavigate({ ...ref, line: ref.line });
+      return;
+    }
+    const at = { line: ref.line, editorCommand: store.editorCommand.trim() };
+    void openFileInEditor(props.worktreePath, ref.filePath, at).catch((error) =>
+      logWarn('changeTour', 'Could not open reference', { error: errMessage(error) }),
+    );
+  }
+
+  function markdown(): string {
+    return tourMarkdown({
+      title: `Change tour: ${props.tour.taskName()}`,
+      cards: cards(),
+      threads: props.tour.threads(),
+    });
+  }
+
   return (
-    <Show when={stop()}>
-      {(current) => (
-        <section
-          aria-label="Guided change tour"
-          style={{
-            display: 'flex',
-            'flex-direction': 'column',
-            margin: '12px',
-            border: `1px solid ${theme.accent}`,
-            'border-radius': '12px',
-            'box-shadow': `0 4px 20px color-mix(in srgb, ${theme.accent} 18%, transparent)`,
-            background: `color-mix(in srgb, ${theme.accent} 8%, ${theme.bgElevated})`,
-            'max-height': '70%',
-            'min-height': '0',
-            'flex-shrink': '0',
-            overflow: 'hidden',
-            color: theme.fg,
-            'font-size': sf(15),
-          }}
+    <section ref={sectionRef} class="change-tour" aria-label="Guided change tour">
+      <div class="change-tour-top">
+        <Show
+          when={!props.tour.loading() && card()}
+          fallback={<span class="understanding-footer-fill" />}
         >
-          <div
-            style={{
-              display: 'flex',
-              'justify-content': 'space-between',
-              gap: '12px',
-              padding: '14px 16px',
-              'flex-shrink': '0',
-              'font-size': sf(12),
-              'font-weight': '600',
-              background: theme.accent,
-              color: theme.accentText,
-              'margin-bottom': '18px',
-            }}
+          <TourProgress
+            subject="Tour"
+            titles={cards().map((entry) => entry.title)}
+            current={props.tour.step()}
+            onSelect={(index) => props.tour.navigate(index)}
+            answered={answered()}
+          />
+          <TourIconButton
+            label={overview() ? 'Hide overview' : 'Show overview'}
+            tooltip="All cards at a glance"
+            onClick={() => setOverview((open) => !open)}
           >
-            <span>GUIDED TOUR</span>
-            <span>
-              Stop {props.tour.step() + 1} of {props.tour.stops().length}
-            </span>
-          </div>
-          <div
-            ref={contentRef}
-            style={{
-              padding: '0 16px 14px',
-              overflow: 'auto',
-              'min-height': '0',
-              'overflow-wrap': 'anywhere',
-            }}
+            <ListIcon size={14} />
+          </TourIconButton>
+          <TourCopyButton markdown={markdown} />
+          <TourIconButton
+            label="Rework tour"
+            tooltip="Rework tour with your own instructions"
+            onClick={() => setReworking((open) => !open)}
           >
-            <h2 style={{ margin: '0 0 16px', 'font-size': sf(21), 'line-height': '1.35' }}>
-              {current().title}
-            </h2>
-            <p style={{ margin: '0 0 16px', 'white-space': 'pre-wrap', 'line-height': '1.7' }}>
-              {current().explanation}
+            <PencilIcon size={14} />
+          </TourIconButton>
+        </Show>
+      </div>
+
+      <Show when={reworking() && !props.tour.loading() && card()}>
+        <TourReworkBar
+          onSubmit={(instructions) => {
+            setReworking(false);
+            props.tour.rework(instructions);
+          }}
+          onCancel={() => setReworking(false)}
+        />
+      </Show>
+
+      <Show when={props.tour.loading()}>
+        <div class="change-tour-message">
+          <p class="understanding-status">
+            <span class="inline-spinner" aria-hidden="true" />
+            {props.tour.progress()}
+          </p>
+          <p class="understanding-substatus">
+            {props.tour.receiving() ? 'Receiving response' : 'Waiting for provider'} ·{' '}
+            {props.tour.elapsedSeconds()}s
+          </p>
+          <TourIconButton label="Cancel generation" onClick={() => props.tour.cancel()}>
+            <CloseIcon size={14} />
+          </TourIconButton>
+        </div>
+      </Show>
+
+      <Show when={!props.tour.loading() && !card() && props.tour.error()}>
+        {(message) => (
+          <div class="change-tour-message">
+            <p role="alert" class="understanding-alert">
+              {message()}
             </p>
-            <For each={current().locations}>
-              {(location) => (
-                <button
-                  class="review-control"
-                  style={{
-                    display: 'block',
-                    'max-width': '100%',
-                    'overflow-wrap': 'anywhere',
-                    'margin-bottom': '6px',
-                    padding: '6px 8px',
-                    'font-size': sf(13),
-                    'text-align': 'left',
+            <button class="review-control" onClick={() => props.tour.retry()}>
+              Retry
+            </button>
+          </div>
+        )}
+      </Show>
+
+      <Show when={!props.tour.loading() && card()}>
+        {(current) => (
+          <>
+            <div ref={contentRef} class="change-tour-stage">
+              <Show
+                when={overview()}
+                fallback={
+                  <>
+                    <TourCard
+                      card={current()}
+                      onOpenRef={openRef}
+                      onAsk={(question) => props.tour.ask(question)}
+                      asking={props.tour.asking()}
+                      answeredQuestions={props.tour
+                        .threadsFor(props.tour.step())
+                        .map((thread) => thread.question)}
+                    />
+                    <TourThreads
+                      threads={props.tour.threadsFor(props.tour.step())}
+                      pendingQuestion={props.tour.pendingQuestion()}
+                      onOpenRef={openRef}
+                    />
+                  </>
+                }
+              >
+                <TourOverview
+                  cards={cards()}
+                  current={props.tour.step()}
+                  onSelect={(index) => {
+                    setOverview(false);
+                    props.tour.navigate(index);
                   }}
-                  onClick={() => props.onNavigate(location.filePath, location.line)}
-                >
-                  {location.filePath}:{location.line}
-                </button>
+                />
+              </Show>
+              <Show when={props.tour.omittedFileCount() > 0}>
+                <p class="change-tour-note">
+                  {props.tour.omittedFileCount()} files are outside this tour. Use “Show all
+                  changes” to review them.
+                </p>
+              </Show>
+            </div>
+            <Show when={props.tour.askError()}>
+              {(message) => (
+                <p role="alert" class="understanding-alert change-tour-ask-error">
+                  {message()}
+                </p>
               )}
-            </For>
-            <Show when={props.tour.omittedFileCount() > 0}>
-              <p style={{ color: theme.fgMuted, 'font-size': sf(12), 'line-height': '1.5' }}>
-                {props.tour.omittedFileCount()} files are outside this tour. Use “Show all changes”
-                to review them.
-              </p>
             </Show>
-            <p
-              style={{
-                margin: '12px 0 0',
-                color: theme.fgMuted,
-                'font-size': sf(12),
-                'line-height': '1.5',
-              }}
-            >
-              Showing changes captured when this tour was generated.
-            </p>
-          </div>
-          <div
-            style={{
-              display: 'flex',
-              gap: '8px',
-              padding: '12px 16px',
-              'border-top': `1px solid ${theme.border}`,
-              'flex-shrink': '0',
-            }}
-          >
-            <button
-              class="review-control"
-              style={{ flex: '1', padding: '8px 12px', 'font-size': sf(14) }}
-              disabled={props.tour.step() === 0}
-              onClick={() => props.tour.navigate(props.tour.step() - 1)}
-            >
-              Previous
-            </button>
-            <button
-              class="review-control"
-              style={{
-                flex: '1',
-                padding: '8px 12px',
-                'font-size': sf(14),
-                'font-weight': '600',
-                background: theme.accent,
-                color: theme.accentText,
-              }}
-              onClick={() => {
-                if (isLastStep()) props.onFinish();
-                else props.tour.navigate(props.tour.step() + 1);
-              }}
-            >
-              {isLastStep() ? 'Finish tour' : 'Next'}
-            </button>
-          </div>
-        </section>
-      )}
-    </Show>
+            <div class="change-tour-ask">
+              <TourAskBar
+                disabled={props.tour.asking()}
+                asking={props.tour.pendingQuestion() !== ''}
+                onAsk={(question) => props.tour.ask(question)}
+                onGoDeeper={() => props.tour.goDeeper()}
+                onCancel={() => props.tour.cancelAsk()}
+              />
+            </div>
+            <div class="change-tour-nav">
+              <button
+                class="review-control"
+                disabled={props.tour.step() === 0}
+                onClick={() => props.tour.navigate(props.tour.step() - 1)}
+              >
+                Previous
+              </button>
+              <button
+                class="review-control change-tour-next"
+                title="Arrow keys navigate while the tour has focus"
+                onClick={() => {
+                  if (isLastStep()) props.onFinish();
+                  else props.tour.navigate(props.tour.step() + 1);
+                }}
+              >
+                {isLastStep() ? 'Finish tour' : 'Next'}
+              </button>
+            </div>
+          </>
+        )}
+      </Show>
+    </section>
   );
 }

@@ -18,6 +18,14 @@ export const FILE_TOUR_MAX_IMPORTS = 12;
 export const TOUR_TONES = ['neutral', 'important', 'risk', 'uncertainty', 'mechanical'] as const;
 
 /**
+ * Card layouts, shared like the tones. Absent means the standard card:
+ * - takeaway: one prominent claim with a single supporting sentence;
+ * - comparison: two sides, such as before/after, with the body as a caption;
+ * - flow: the diagram is the main content and the body is its caption.
+ */
+export const TOUR_FORMS = ['takeaway', 'comparison', 'flow'] as const;
+
+/**
  * Per-card caps enforce the product constraint that a tour reads in 30 seconds to 2 minutes.
  * Characters, not tokens; the prompt states the same numbers so the model can comply.
  */
@@ -29,6 +37,11 @@ export const TOUR_CARD_LIMITS = {
   textDiagram: 1200,
   mermaidDiagram: 1500,
   refs: 6,
+  questions: 2,
+  question: 140,
+  /** Each of a comparison's two sides. */
+  comparisonLabel: 30,
+  comparisonText: 240,
   minCards: 1,
   maxCards: 8,
   branchMaxCards: 3,
@@ -62,4 +75,8 @@ export const UNDERSTANDING_MAX_OUTPUT_CHARS =
     toleratedCap(TOUR_CARD_LIMITS.body) +
     toleratedCap(TOUR_CARD_LIMITS.whyItMatters) +
     toleratedCap(TOUR_CARD_LIMITS.mermaidDiagram) +
+    2 *
+      (toleratedCap(TOUR_CARD_LIMITS.comparisonLabel) +
+        toleratedCap(TOUR_CARD_LIMITS.comparisonText)) +
+    TOUR_CARD_LIMITS.questions * (TOUR_CARD_LIMITS.question + 3) +
     CARD_JSON_OVERHEAD_CHARS);

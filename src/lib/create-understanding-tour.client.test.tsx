@@ -506,6 +506,78 @@ describe('createUnderstandingTour', () => {
     expect(tour.open({ ...edited })).toBe(true);
   });
 
+  it('flags a reopened file tour once the file has changed, without regenerating it', async () => {
+    const tour = setup();
+    void tour.generate(FILE_INPUT);
+    await flush();
+    stream(0, TOUR_JSON);
+    await flush();
+    expect(tour.open(FILE_INPUT)).toBe(true);
+    await flush();
+    expect(tour.stale()).toBe(false);
+
+    const edited = { ...fileContext, files: [{ ...fileContext.files[0], content: 'changed' }] };
+    vi.mocked(invoke).mockImplementation(((channel: IPC) =>
+      channel === IPC.ReadFileTourContext
+        ? Promise.resolve(edited)
+        : Promise.resolve(undefined)) as typeof invoke);
+    expect(tour.open(FILE_INPUT)).toBe(true);
+    await flush();
+    expect(tour.stale()).toBe(true);
+    expect(tour.tour()?.cards[0]?.title).toBe('Gist title');
+    expect(asks()).toHaveLength(1);
+
+    // Regenerate reads the file again and clears the flag.
+    tour.retry();
+    await flush();
+    expect(tour.stale()).toBe(false);
+    expect(promptOf(1)).toContain('changed');
+  });
+
+  it("reworks the tour with the reader's request and repeats it on retry", async () => {
+    const tour = await generatedPlanTour();
+    void tour.ask('Why?');
+    await flush();
+    stream(1, BRANCH_JSON);
+    await flush();
+    expect(tour.threads()).toHaveLength(1);
+
+    tour.rework('Explain it for a newcomer');
+    await flush();
+    expect(tour.progress()).toBe('Reworking tour…');
+    expect(promptOf(2)).toContain('"Explain it for a newcomer"');
+    expect(promptOf(2)).toContain('Buffer before IPC.');
+    stream(2, JSON.stringify({ gist: card({ title: 'Simpler gist' }), cards: [card()] }));
+    await flush();
+    expect(tour.tour()?.cards[0]?.title).toBe('Simpler gist');
+    expect(tour.threads()).toHaveLength(0);
+    // The reworked tour replaces the cached one, so the entry button reopens it.
+    expect(tour.open(PLAN_INPUT)).toBe(true);
+    expect(tour.tour()?.cards[0]?.title).toBe('Simpler gist');
+
+    tour.retry();
+    await flush();
+    expect(promptOf(3)).toContain('"Explain it for a newcomer"');
+  });
+
+  it('reworks a published tour from the material the agent supplied', async () => {
+    const tour = setup();
+    tour.publish({
+      subject: 'the retry bug',
+      tour: PUBLISHED_TOUR,
+      context: 'The agent read the retry loop.',
+      worktreePath: '/repo',
+    });
+    tour.rework('Shorter');
+    await flush();
+    expect(promptOf(0)).toContain('The agent read the retry loop.');
+    expect(promptOf(0)).toContain('"Shorter"');
+    stream(0, TOUR_JSON);
+    await flush();
+    expect(tour.kind()).toBe('agent');
+    expect(tour.tour()?.cards[0]?.title).toBe('Gist title');
+  });
+
   it('publishes an agent tour without a provider call and reopens it from the cache', () => {
     const onReady = vi.fn();
     const tour = setup({ onReady });

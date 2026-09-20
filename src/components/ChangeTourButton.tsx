@@ -19,6 +19,11 @@ export function ChangeTourButton(props: {
   disabled?: boolean;
 }) {
   const ready = () => props.tour.stops().length > 0;
+  /** A reader who closed the tour midway picks it up where they left. */
+  const resumeLabel = () =>
+    props.tour.step() > 0
+      ? `Resume tour · ${props.tour.step() + 1}/${props.tour.stops().length}`
+      : 'Start tour';
   const helpId = createUniqueId();
   const help = createHeldSignal<boolean>(150);
   const helpOpen = () => !!help.value() && !props.disabled && !props.tour.loading() && !ready();
@@ -93,7 +98,12 @@ export function ChangeTourButton(props: {
               title={
                 props.tour.loading()
                   ? 'Cancel tour generation'
-                  : props.tour.error() || (ready() ? 'Start guided tour' : undefined)
+                  : props.tour.error() ||
+                    (ready()
+                      ? props.tour.step() > 0
+                        ? `Resume guided tour at stop ${props.tour.step() + 1} of ${props.tour.stops().length}`
+                        : 'Start guided tour'
+                      : undefined)
               }
               onClick={(event) => {
                 event.stopPropagation();
@@ -145,7 +155,7 @@ export function ChangeTourButton(props: {
                 {props.tour.loading()
                   ? props.tour.progress()
                   : ready()
-                    ? 'Start tour'
+                    ? resumeLabel()
                     : props.tour.error()
                       ? 'Retry tour'
                       : 'Generate tour'}

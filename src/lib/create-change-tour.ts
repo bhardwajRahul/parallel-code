@@ -5,7 +5,15 @@ import { askCodeEnvFile } from '../../electron/shared/ask-code-models';
 import { CHANGE_TOUR_TIMEOUT_MS } from '../../electron/shared/change-tour-limits';
 import { store } from '../store/store';
 import { errMessage, info as logInfo, warn as logWarn } from './log';
-import { buildChangeTourPrompts, parseChangeTour, type TourStop } from './change-tour';
+import {
+  buildChangeTourPrompts,
+  changeFollowUpContext,
+  parseChangeTour,
+  stopToCard,
+  type TourStop,
+} from './change-tour';
+import { createTourQuestions } from './create-tour-questions';
+import { GO_DEEPER_QUESTION, buildFollowUpPrompt } from './understanding-prompt';
 import { parseUnifiedDiff, type FileDiff } from './unified-diff-parser';
 import { loadTaskDiff, type TaskDiffInput } from './load-task-diff';
 
@@ -13,6 +21,15 @@ interface TourMessage {
   type: 'chunk' | 'error' | 'done';
   text?: string;
   exitCode?: number;
+}
+
+interface ChangeTourInput {
+  rawDiff: string;
+  files: FileDiff[];
+  taskName: string;
+  worktreePath: string;
+  /** The reader's "Rework tour" request, carried so Retry repeats it. */
+  instructions?: string;
 }
 
 export function createChangeTour() {
@@ -25,6 +42,10 @@ export function createChangeTour() {
   const [elapsedSeconds, setElapsedSeconds] = createSignal(0);
   const [receiving, setReceiving] = createSignal(false);
   let cancelRequest: (() => void) | undefined;
+  const questions = createTourQuestions();
+  /** What the tour on screen was generated from; follow-ups and rework reuse it. */
+  let lastInput: ChangeTourInput | undefined;
+  const [taskName, setTaskName] = createSignal('');
 
   const [sourceDiff, setSourceDiff] = createSignal('');
   function cancel() {
@@ -34,11 +55,14 @@ export function createChangeTour() {
   }
   function reset() {
     cancel();
+    questions.reset();
     setStops([]);
     setFiles([]);
     setStep(0);
     setError('');
     setSourceDiff('');
+    setTaskName('');
+    lastInput = undefined;
   }
   function reconcile(rawDiff: string) {
     if (sourceDiff() !== rawDiff) reset();
@@ -46,7 +70,39 @@ export function createChangeTour() {
   onCleanup(cancel);
 
   function navigate(index: number) {
-    setStep(index);
+    const last = stops().length - 1;
+    setStep(last < 0 ? 0 : Math.min(Math.max(index, 0), last));
+  }
+
+  /** Asks about the stop on screen; the answer joins the thread under it. */
+  function ask(question: string) {
+    const input = lastInput;
+    const current = stops();
+    const fromIndex = step();
+    const stop = current[fromIndex];
+    if (!input || !stop) return;
+    void questions.ask({
+      question,
+      fromIndex,
+      cwd: input.worktreePath,
+      buildPrompt: () =>
+        buildFollowUpPrompt({
+          tour: { subject: input.taskName, kind: 'change', cards: current.map(stopToCard) },
+          currentIndex: fromIndex,
+          question,
+          ...changeFollowUpContext(input.rawDiff, stop),
+          earlier: questions.threadsFor(fromIndex),
+        }),
+    });
+  }
+
+  /** Regenerates the tour from the same diff with the reader's request. */
+  function rework(instructions: string) {
+    if (lastInput && instructions.trim()) generate({ ...lastInput, instructions });
+  }
+
+  function retry() {
+    if (lastInput) generate(lastInput);
   }
 
   async function generateForTask(input: TaskDiffInput & { taskName: string }) {
@@ -79,20 +135,18 @@ export function createChangeTour() {
     }
   }
 
-  function generate(input: {
-    rawDiff: string;
-    files: FileDiff[];
-    taskName: string;
-    worktreePath: string;
-  }) {
+  function generate(input: ChangeTourInput) {
     setSourceDiff(input.rawDiff);
     cancel();
+    questions.reset();
+    lastInput = input;
+    setTaskName(input.taskName);
     setFiles(input.files);
     setError('');
     setStops([]);
     let prompts: string[];
     try {
-      prompts = buildChangeTourPrompts(input.taskName, input.rawDiff);
+      prompts = buildChangeTourPrompts(input.taskName, input.rawDiff, input.instructions);
     } catch (error) {
       setError(errMessage(error));
       return;
@@ -104,10 +158,9 @@ export function createChangeTour() {
     const envFile = askCodeEnvFile(provider, store.agentEnvFiles);
     const collected: TourStop[] = [];
     function generatePart(index: number) {
+      const verb = input.instructions ? 'Reworking' : 'Generating';
       setProgress(
-        prompts.length > 1
-          ? `Generating part ${index + 1} of ${prompts.length}…`
-          : 'Generating tour…',
+        prompts.length > 1 ? `${verb} part ${index + 1} of ${prompts.length}…` : `${verb} tour…`,
       );
       const requestId = crypto.randomUUID();
       const channel = new Channel<TourMessage>();
@@ -184,7 +237,7 @@ export function createChangeTour() {
           try {
             if (message.exitCode !== 0)
               throw new Error(providerError || 'The tour provider failed. Try again.');
-            collected.push(...parseChangeTour(response, files));
+            collected.push(...parseChangeTour(response, files, prompts.length === 1));
             outcome = 'completed';
             cleanup();
             setError('');
@@ -234,7 +287,19 @@ export function createChangeTour() {
           ),
       ).length,
     stops,
+    files,
+    taskName,
     step,
+    threads: questions.threads,
+    threadsFor: questions.threadsFor,
+    pendingQuestion: () => questions.pendingFor(step()),
+    asking: questions.asking,
+    askError: () => questions.errorFor(step()),
+    ask,
+    goDeeper: () => ask(GO_DEEPER_QUESTION),
+    cancelAsk: questions.cancel,
+    rework,
+    retry,
     loading,
     error,
     progress,

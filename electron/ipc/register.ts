@@ -16,6 +16,7 @@ import {
   handoffClaudeTerminal,
 } from './pty.js';
 import { loadEnvFile } from './env-file.js';
+import { editorGotoArgs, spawnDetached, validateEditorCommand } from './open-file.js';
 import { appendGitInfoExcludeBlock } from './git-exclude.js';
 import {
   spawnAgent,
@@ -123,7 +124,6 @@ import {
   downloadUpdate,
   quitAndInstallUpdate,
 } from './updater.js';
-import { spawn } from 'child_process';
 import { askAboutCode, cancelAskAboutCode } from './ask-code.js';
 import { setMinimaxApiKey } from './ask-code-minimax.js';
 import { isStructuredPurpose } from './ask-code-purpose.js';
@@ -1714,10 +1714,27 @@ export function registerAllHandlers(win: BrowserWindow): void {
     shell.showItemInFolder(args.filePath);
   });
 
-  ipcMain.handle(IPC.ShellOpenFile, (_e, args) => {
+  ipcMain.handle(IPC.ShellOpenFile, async (_e, args) => {
     validatePath(args.worktreePath, 'worktreePath');
     validateRelativePath(args.filePath, 'filePath');
-    return shell.openPath(path.join(args.worktreePath, args.filePath));
+    const absolute = path.join(args.worktreePath, args.filePath);
+    // Only the configured editor can jump to a line; the OS default app cannot.
+    const line = args.line;
+    if (Number.isInteger(line) && line > 0 && args.editorCommand) {
+      const cmd = validateEditorCommand(args.editorCommand);
+      const gotoArgs = editorGotoArgs(cmd, absolute, line);
+      if (gotoArgs) {
+        try {
+          await spawnDetached(cmd, gotoArgs);
+          return '';
+        } catch (err) {
+          logWarn('shell', 'Editor launch failed; opening with the default app', {
+            error: errMessage(err),
+          });
+        }
+      }
+    }
+    return shell.openPath(absolute);
   });
 
   ipcMain.handle(IPC.ShellOpenExternal, async (_e, args) => {
@@ -1726,33 +1743,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
 
   ipcMain.handle(IPC.ShellOpenInEditor, (_e, args) => {
     validatePath(args.worktreePath, 'worktreePath');
-    if (typeof args.editorCommand !== 'string' || !args.editorCommand.trim()) {
-      throw new Error('editorCommand must be a non-empty string');
-    }
-    const cmd = args.editorCommand.trim();
-    if (/[;&|`$(){}[\]<>\\'"*?!#~]/.test(cmd)) {
-      throw new Error('editorCommand must not contain shell metacharacters');
-    }
-    return new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const child = spawn(cmd, [args.worktreePath], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      child.on('error', (err) => {
-        if (!settled) {
-          settled = true;
-          reject(new Error(`Failed to launch "${cmd}": ${err.message}`));
-        }
-      });
-      child.on('spawn', () => {
-        if (!settled) {
-          settled = true;
-          child.unref();
-          resolve();
-        }
-      });
-    });
+    return spawnDetached(validateEditorCommand(args.editorCommand), [args.worktreePath]);
   });
 
   // --- Mobile task-creation bridge (paired phones) ---
