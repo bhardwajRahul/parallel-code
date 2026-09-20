@@ -90,7 +90,9 @@ function getOffscreenAttentionInfo(taskId: string): OffscreenAttentionInfo | nul
   const visibility = getTaskViewportVisibility(taskId);
   if (!visibility || visibility === 'visible') return null;
   const attention = getTaskAttentionState(taskId);
-  if (attention === 'idle' || attention === 'ready') return null;
+  // `shell_busy` joins the quiet states: a terminal running off-screen is not a
+  // reason to pull the eye back to it.
+  if (attention === 'idle' || attention === 'ready' || attention === 'shell_busy') return null;
   const color = getAttentionColor(attention) ?? theme.accent;
   const side = visibility === 'offscreen-left' ? 'left' : 'right';
   const prefix = visibility === 'offscreen-left' ? '←' : '→';

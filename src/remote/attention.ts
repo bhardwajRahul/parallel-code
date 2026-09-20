@@ -28,6 +28,7 @@ const GREY = '#678197';
 const BY_ATTENTION: Partial<Record<RemoteAttentionState, StatusDisplay>> = {
   needs_input: { label: 'Needs input', color: AMBER, glow: true },
   active: { label: 'Working', color: BLUE, glow: true },
+  shell_busy: { label: 'Terminal busy', color: GREY, glow: false },
   error: { label: 'Error', color: RED, glow: true },
   review: { label: 'Review', color: PURPLE, glow: true },
   ready: { label: 'Ready', color: GREEN, glow: false },

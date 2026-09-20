@@ -17,6 +17,7 @@ import { showNotification } from '../store/notification';
 
 const attentionLabels = {
   active: 'Running',
+  shell_busy: 'Terminal busy',
   needs_input: 'Needs input',
   error: 'Error',
   review: 'Review',

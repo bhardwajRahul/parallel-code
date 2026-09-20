@@ -7,6 +7,7 @@ describe('agentStatusDisplay', () => {
     const expected: Record<RemoteAttentionState, string> = {
       needs_input: 'Needs input',
       active: 'Working',
+      shell_busy: 'Terminal busy',
       error: 'Error',
       review: 'Review',
       ready: 'Ready',
@@ -24,7 +25,7 @@ describe('agentStatusDisplay', () => {
 
   it('glows the attention-worthy states only', () => {
     const glowing: RemoteAttentionState[] = ['needs_input', 'active', 'error', 'review'];
-    const calm: RemoteAttentionState[] = ['ready', 'idle'];
+    const calm: RemoteAttentionState[] = ['ready', 'idle', 'shell_busy'];
     for (const a of glowing) {
       expect(agentStatusDisplay({ status: 'running', attention: a }).glow).toBe(true);
     }

@@ -124,7 +124,16 @@ function clearAutoTrustState(agentId: string): void {
 }
 
 export type TaskDotStatus = 'busy' | 'waiting' | 'ready' | 'review';
-export type TaskAttentionState = 'idle' | 'active' | 'needs_input' | 'error' | 'ready' | 'review';
+/** `active` means an agent is working. `shell_busy` means only a plain terminal
+ *  is producing output — informational, and never counted as needing attention. */
+export type TaskAttentionState =
+  | 'idle'
+  | 'active'
+  | 'shell_busy'
+  | 'needs_input'
+  | 'error'
+  | 'ready'
+  | 'review';
 
 // --- Prompt detection helpers ---
 // stripAnsi lives in the shared prompt-detect module (single source of truth);
@@ -958,16 +967,22 @@ function isAgentWorking(agentId: string, active: ReadonlySet<string>): boolean {
   return hook ? hook.state === 'working' : active.has(agentId);
 }
 
-function hasRunningTaskActivity(taskId: string, predicate: (id: string) => boolean): boolean {
+function hasRunningAgentActivity(taskId: string, predicate: (id: string) => boolean): boolean {
   const task = store.tasks[taskId];
   if (!task) return false;
 
-  return (
-    task.agentIds.some((id) => {
-      const agent = store.agents[id];
-      return (agent?.status === 'running' || isAgentChat(task, id)) && predicate(id);
-    }) || task.shellAgentIds.some((id) => predicate(id))
-  );
+  return task.agentIds.some((id) => {
+    const agent = store.agents[id];
+    return (agent?.status === 'running' || isAgentChat(task, id)) && predicate(id);
+  });
+}
+
+function hasShellActivity(taskId: string, predicate: (id: string) => boolean): boolean {
+  return store.tasks[taskId]?.shellAgentIds.some((id) => predicate(id)) ?? false;
+}
+
+function hasRunningTaskActivity(taskId: string, predicate: (id: string) => boolean): boolean {
+  return hasRunningAgentActivity(taskId, predicate) || hasShellActivity(taskId, predicate);
 }
 
 export function getTaskAttentionState(taskId: string): TaskAttentionState {
@@ -988,10 +1003,14 @@ export function getTaskAttentionState(taskId: string): TaskAttentionState {
   }
 
   const active = activeAgents(); // reactive read
-  const hasActive = hasRunningTaskActivity(taskId, (id) => isAgentWorking(id, active));
-  if (hasActive) return 'active';
+  if (hasRunningAgentActivity(taskId, (id) => isAgentWorking(id, active))) return 'active';
 
   if (isTaskReady(taskId)) return 'ready';
+
+  // A plain terminal producing output is not agent work, so it reports itself
+  // separately and ranks below `ready` — otherwise a dev server or watcher
+  // masks a task that is actually finished for as long as it keeps printing.
+  if (hasShellActivity(taskId, (id) => active.has(id))) return 'shell_busy';
   return 'idle';
 }
 
@@ -1016,8 +1035,9 @@ export function getTaskDotStatus(taskId: string): TaskDotStatus {
   }
 
   const active = activeAgents(); // reactive read
-  const hasActive = hasRunningTaskActivity(taskId, (id) => isAgentWorking(id, active));
-  if (hasActive) return 'busy';
+  // Shell panes are deliberately excluded: `busy` reads as "the agent is doing
+  // something", which a terminal running a dev server is not.
+  if (hasRunningAgentActivity(taskId, (id) => isAgentWorking(id, active))) return 'busy';
 
   if (task.needsReview) return 'review';
 

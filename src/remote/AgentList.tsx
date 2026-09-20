@@ -15,7 +15,7 @@ const groups = [
   { name: 'Needs you', states: ['needs_input', 'error'] },
   { name: 'Working', states: ['active'] },
   { name: 'Ready to review', states: ['review', 'ready'] },
-  { name: 'Other tasks', states: ['idle'] },
+  { name: 'Other tasks', states: ['idle', 'shell_busy'] },
 ];
 
 export function AgentList(props: AgentListProps) {

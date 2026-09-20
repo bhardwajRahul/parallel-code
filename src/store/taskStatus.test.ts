@@ -992,9 +992,37 @@ describe('task attention state', () => {
     expect(taskNeedsAttention('task-1')).toBe(true);
   });
 
-  it('returns active and busy when a task shell is currently producing output', () => {
+  it('returns shell_busy without demanding attention when only a task shell is producing output', () => {
     setMockTask('task-1', { agentIds: [], shellAgentIds: ['shell-1'] });
 
+    markAgentSpawned('shell-1');
+
+    expect(getTaskAttentionState('task-1')).toBe('shell_busy');
+    expect(getTaskDotStatus('task-1')).toBe('waiting');
+    expect(taskNeedsAttention('task-1')).toBe(false);
+  });
+
+  it('still reports ready while a task shell keeps producing output', () => {
+    setMockTask('task-1', { agentIds: [], shellAgentIds: ['shell-1'] });
+    vi.setSystemTime(new Date('2026-05-10T10:00:00Z'));
+    mockTaskGitStatus['task-1'] = {
+      has_committed_changes: true,
+      has_uncommitted_changes: false,
+      current_branch: 'task/example',
+      refreshedAt: Date.now(),
+    };
+
+    markAgentSpawned('shell-1');
+
+    expect(getTaskAttentionState('task-1')).toBe('ready');
+    expect(getTaskDotStatus('task-1')).toBe('ready');
+  });
+
+  it('keeps reporting active when an agent works alongside a busy shell', () => {
+    setMockTask('task-1', { agentIds: ['agent-1'], shellAgentIds: ['shell-1'] });
+    setMockAgent('agent-1', { status: 'running' });
+
+    markAgentSpawned('agent-1');
     markAgentSpawned('shell-1');
 
     expect(getTaskAttentionState('task-1')).toBe('active');

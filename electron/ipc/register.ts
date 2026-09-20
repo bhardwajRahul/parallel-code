@@ -1907,6 +1907,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
   const VALID_ATTENTION: ReadonlySet<RemoteAttentionState> = new Set([
     'idle',
     'active',
+    'shell_busy',
     'needs_input',
     'error',
     'ready',

@@ -13,6 +13,8 @@ type StatusGlyph = 'spinner' | 'question' | 'dot';
 
 function getDotColor(status: TaskDotStatus, attention?: TaskAttentionState): string {
   if (attention === 'active') return theme.accent;
+  // Muted, not accented: a terminal is running, but nothing is waiting on you.
+  if (attention === 'shell_busy') return theme.fgMuted;
   if (attention === 'needs_input') return theme.warning;
   if (attention === 'error') return theme.error;
   if (attention === 'review') return REVIEW_COLOR;
@@ -27,7 +29,8 @@ function getDotColor(status: TaskDotStatus, attention?: TaskAttentionState): str
 }
 
 function getDotShadow(attention?: TaskAttentionState): string | undefined {
-  if (!attention || attention === 'idle' || attention === 'ready') return undefined;
+  if (!attention || attention === 'idle' || attention === 'ready' || attention === 'shell_busy')
+    return undefined;
   const color =
     attention === 'active'
       ? theme.accent
@@ -41,6 +44,7 @@ function getDotShadow(attention?: TaskAttentionState): string | undefined {
 
 export function getDotTooltip(status: TaskDotStatus, attention?: TaskAttentionState): string {
   if (attention === 'active') return 'Active — agent is working';
+  if (attention === 'shell_busy') return 'Terminal busy — no agent working';
   if (attention === 'needs_input') return 'Waiting for input';
   if (attention === 'error') return 'Error — agent exited with an error';
   // Without this, a review-flagged task whose agent is still active falls
@@ -59,7 +63,8 @@ export function getStatusGlyph(status: TaskDotStatus, attention?: TaskAttentionS
   if (attention === 'needs_input') return 'question';
   // Error and review outrank activity in the attention state, so a busy task
   // in either shows that state's dot rather than a spinner in its colour.
-  if (attention === 'active' || (status === 'busy' && !attention)) return 'spinner';
+  if (attention === 'active' || attention === 'shell_busy' || (status === 'busy' && !attention))
+    return 'spinner';
   return 'dot';
 }
 

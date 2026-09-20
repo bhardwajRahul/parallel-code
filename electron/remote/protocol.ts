@@ -4,7 +4,14 @@
  * etc.) rather than just running/exited. Kept as a string union at this shared
  * boundary; the renderer maps its TaskAttentionState onto these values.
  */
-export type RemoteAttentionState = 'idle' | 'active' | 'needs_input' | 'error' | 'ready' | 'review';
+export type RemoteAttentionState =
+  | 'idle'
+  | 'active'
+  | 'shell_busy'
+  | 'needs_input'
+  | 'error'
+  | 'ready'
+  | 'review';
 
 /** Agent summary sent in the agents list. */
 export interface RemoteAgent {
