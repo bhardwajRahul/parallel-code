@@ -46,6 +46,7 @@ interface TaskTitleBarProps {
   task: Task;
   isActive: boolean;
   onClose: () => void;
+  onDelegate?: () => void;
   onMerge: () => void;
   onPush: () => void;
   pushing: boolean;
@@ -388,7 +389,16 @@ export function TaskTitleBar(props: TaskTitleBarProps) {
           />
         </div>
         <div class="task-action-group" role="group" aria-label="Task actions">
-          <Show when={!props.task.coordinatorMode}>
+          <Show when={props.onDelegate}>
+            <button
+              class="delegation-button"
+              onClick={() => props.onDelegate?.()}
+              title="Delegate work to a child task"
+            >
+              Delegate task…
+            </button>
+          </Show>
+          <Show when={!props.task.coordinatorMode && !props.task.delegationParent}>
             <IconButton
               icon={
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">

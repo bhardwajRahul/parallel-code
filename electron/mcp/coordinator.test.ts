@@ -1932,6 +1932,7 @@ describe('Coordinator sub-agent spawn settings', () => {
     expect(mockSpawnAgent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ command: 'claude' }),
+      expect.any(Function),
     );
   });
 
@@ -1941,6 +1942,7 @@ describe('Coordinator sub-agent spawn settings', () => {
     expect(mockSpawnAgent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ command: '/usr/local/bin/claude' }),
+      expect.any(Function),
     );
   });
 
@@ -1950,6 +1952,7 @@ describe('Coordinator sub-agent spawn settings', () => {
     expect(mockSpawnAgent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ envFile: '~/.config/parallel-code/claude.env' }),
+      expect.any(Function),
     );
   });
 
@@ -2002,6 +2005,7 @@ describe('Coordinator sub-agent spawn settings', () => {
     expect(mockSpawnAgent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ cwd: '/tmp/test' }),
+      expect.any(Function),
     );
   });
 
@@ -2018,6 +2022,7 @@ describe('Coordinator sub-agent spawn settings', () => {
         // Args are the agent args (not docker exec wrapper)
         args: expect.not.arrayContaining(['exec']),
       }),
+      expect.any(Function),
     );
     // Coordinator container name is NOT in the args (sub-task has its own container)
     const spawnArgs = mockSpawnAgent.mock.calls[0][1].args as string[];
@@ -2030,6 +2035,7 @@ describe('Coordinator sub-agent spawn settings', () => {
     expect(mockSpawnAgent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ command: 'claude' }),
+      expect.any(Function),
     );
     const spawnCall = mockSpawnAgent.mock.calls[0][1] as { dockerMode?: boolean; args: string[] };
     expect(spawnCall.dockerMode).toBeUndefined();

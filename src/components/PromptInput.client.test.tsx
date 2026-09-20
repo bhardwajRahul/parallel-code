@@ -1,7 +1,10 @@
+import { clearStagedNotification } from '../store/tasks';
+import { invoke } from '../lib/ipc';
+import { IPC } from '../../electron/ipc/channels';
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PromptInput } from './PromptInput';
-import { registerAction, registerFocusFn } from '../store/store';
+import { registerAction, registerFocusFn, sendPrompt } from '../store/store';
 
 const { storeMock, setTaskPromptDraft, taskUsesAgentChat } = vi.hoisted(() => ({
   storeMock: { tasks: {} as Record<string, unknown> },
@@ -134,4 +137,88 @@ describe('PromptInput draft persistence', () => {
 
     expect(textarea.value).toBe('');
   });
+});
+
+it('never auto-sends an ordinary parent completion summary or replaces its draft', async () => {
+  vi.useFakeTimers();
+  vi.mocked(sendPrompt).mockClear();
+  storeMock.tasks = {
+    'task-ordinary': { id: 'task-ordinary', agentIds: ['agent-1'], promptDraft: 'my draft' },
+  };
+  const container = document.createElement('div');
+  document.body.append(container);
+  const cleanup = render(
+    () => (
+      <PromptInput
+        taskId="task-ordinary"
+        taskName="Ordinary"
+        agentId="agent-1"
+        coordinatorMode={false}
+        controlledBy="coordinator"
+        stagedNotification={{
+          batchId: 'batch',
+          notificationIds: ['n'],
+          text: 'Child finished',
+          autoFireAt: 0,
+          userEdited: false,
+        }}
+      />
+    ),
+    container,
+  );
+  try {
+    await vi.advanceTimersByTimeAsync(65_000);
+    expect(sendPrompt).not.toHaveBeenCalled();
+    expect(container.querySelector('textarea')?.value).toBe('my draft');
+    expect(container.textContent).not.toContain('Staged for auto-send');
+    expect(container.textContent).not.toMatch(/Auto-sending|Queued|Sending when coordinator/);
+    expect(container.querySelector('textarea')?.style.padding).toBe('6px 36px 6px 10px');
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
+});
+
+it('keeps an ordinary parent review summary when the user sends an unrelated prompt', async () => {
+  vi.mocked(invoke).mockClear();
+  vi.mocked(clearStagedNotification).mockClear();
+  storeMock.tasks = {
+    'ordinary-send': { id: 'ordinary-send', agentIds: ['agent-1'], promptDraft: 'My follow-up' },
+  };
+  const container = document.createElement('div');
+  document.body.append(container);
+  disposers.push(
+    render(
+      () => (
+        <PromptInput
+          taskId="ordinary-send"
+          taskName="Ordinary"
+          agentId="agent-1"
+          coordinatorMode={false}
+          stagedNotification={{
+            batchId: 'result',
+            notificationIds: ['child'],
+            text: 'Child ready for review',
+            autoFireAt: 0,
+            userEdited: false,
+          }}
+        />
+      ),
+      container,
+    ),
+  );
+  container
+    .querySelector('textarea')
+    ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await waitFor(() => container.querySelector('textarea')?.value === '');
+  expect(clearStagedNotification).not.toHaveBeenCalled();
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.some(
+        ([channel]) =>
+          channel === IPC.MCP_CoordinatorNotificationAck ||
+          channel === IPC.MCP_CoordinatorRestageAfterUserSend,
+      ),
+  ).toBe(false);
 });

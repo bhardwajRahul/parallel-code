@@ -1,3 +1,7 @@
+import type {
+  IntegrationPolicy,
+  SessionCapabilities,
+} from '../../electron/shared/delegation-types';
 import type { CanvasTaskLink, CanvasTaskSource } from '../lib/canvas-task-links';
 import type {
   AgentDef,
@@ -75,6 +79,8 @@ export interface TerminalBookmark {
 }
 
 export interface Project {
+  allowAgentTaskCreation?: boolean;
+  allowPeerAccess?: boolean;
   id: string;
   name: string;
   path: string;
@@ -125,6 +131,9 @@ export interface DocumentSessionRef {
 }
 
 export interface Agent {
+  capabilities?: SessionCapabilities;
+  sessionInstanceId?: string;
+  requireResumeSuccess?: boolean;
   /** Runtime launch capability; never inferred from the selected CLI. */
   canvasTools?: boolean;
   chatState?: import('../../electron/shared/agent-chat-types').AgentChatState;
@@ -257,6 +266,9 @@ export interface Task {
   promptDraft?: string;
   terminalInputPending?: boolean;
   terminalInputPendingFromQuestion?: boolean;
+  delegationParent?: boolean;
+  delegationPaused?: boolean;
+  integrationPolicy?: IntegrationPolicy;
   // Coordinator fields
   coordinatorMode?: boolean;
   propagateSkipPermissions?: boolean;
@@ -348,6 +360,9 @@ export interface PersistedTask {
   stepsEnabled?: boolean;
   branchAdoptedFrom?: string;
   branchOfferDismissed?: string;
+  delegationParent?: boolean;
+  delegationPaused?: boolean;
+  integrationPolicy?: IntegrationPolicy;
   // Coordinator fields
   coordinatorMode?: boolean;
   propagateSkipPermissions?: boolean;

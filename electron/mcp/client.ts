@@ -49,6 +49,10 @@ export class MCPClient {
     return (await res.json()) as T;
   }
 
+  async callSessionTool(name: string, params: Record<string, unknown>): Promise<unknown> {
+    return this.request<unknown>('POST', '/api/session/tools', { name, params });
+  }
+
   async createTask(opts: {
     name: string;
     prompt: string;

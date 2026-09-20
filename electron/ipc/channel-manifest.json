@@ -1,5 +1,7 @@
 {
   "AgentChat": "agent_chat",
+  "DelegationRequest": "delegation_request",
+  "DelegationChanged": "delegation_changed",
   "SpawnAgent": "spawn_agent",
   "WriteToAgent": "write_to_agent",
   "ResizeAgent": "resize_agent",

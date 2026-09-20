@@ -14,7 +14,7 @@ import {
   writeSubTaskMcpConfig,
   writeSubTaskMcpConfigSync,
 } from './config.js';
-import { buildMcpLaunchArgs } from './agent-args.js';
+import { buildMcpLaunchArgs, isCodexCommand, type ParallelCodeMcpConfig } from './agent-args.js';
 import { validateBranchName } from './validation.js';
 import { atomicWriteFileSync } from './atomic.js';
 import { ReplayCache } from './replay-cache.js';
@@ -67,6 +67,7 @@ import type { VerificationRun } from '../ipc/shared-types.js';
 import { info as logInfo, warn as logWarn } from '../log.js';
 import type {
   CoordinatedTask,
+  IntegrationPolicy,
   PendingNotification,
   CoordinatorState,
   ApiTaskSummary,
@@ -79,6 +80,7 @@ import type {
   WaitForSignalDoneResult,
 } from './types.js';
 import { IPC } from '../ipc/channels.js';
+import type { SessionCapabilities } from '../shared/delegation-types.js';
 
 const DEFAULT_WAIT_TIMEOUT_MS = 300_000; // 5 minutes
 const PROMPT_WRITE_DELAY_MS = 50;
@@ -188,6 +190,18 @@ export class Coordinator {
   private queuedPromptFlushTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private bracketedPasteAgentIds = new Set<string>();
   private closingTaskIds = new Set<string>();
+  private integratingTaskIds = new Set<string>();
+  private sessionMcpProvider?: (
+    task: CoordinatedTask,
+  ) => { token: string; sessionCapabilities: SessionCapabilities } | undefined;
+
+  setSessionMcpProvider(
+    provider: (
+      task: CoordinatedTask,
+    ) => { token: string; sessionCapabilities: SessionCapabilities } | undefined,
+  ): void {
+    this.sessionMcpProvider = provider;
+  }
   private activeSignalWaitCounts = new Map<string, number>();
   // Agents that have delivered at least one hook event this session. Hooks own
   // idle/running transitions for these; the output-regex path only feeds
@@ -244,8 +258,10 @@ export class Coordinator {
           if (firstAnyResolver) {
             // Suppress the exit notification — the signal waiter receives the
             // exit info as its return value (mirrors the signalDone path).
-            this.suppressPendingNotificationForTask(task);
-            task.reviewNotificationQueued = true;
+            if (this.coordinators.get(coordinatorId)?.automaticNotifications !== false) {
+              this.suppressPendingNotificationForTask(task);
+              task.reviewNotificationQueued = true;
+            }
             const remaining = this.countRemaining(coordinatorId);
             // The resolver IS `complete` from waitForSignalDone — it handles
             // finishSignalWait, replay-cache write, and timer cleanup itself.
@@ -719,10 +735,12 @@ export class Coordinator {
       }
       // Preserve existing doneToken; generate a fresh one if not yet set (e.g. older persisted task).
       if (!task.doneToken) task.doneToken = randomBytes(24).toString('base64url');
+      const session = this.sessionMcpProvider?.(task);
       const mcpConfig = buildSubTaskMcpConfig({
         serverPath,
         serverUrl,
-        subtaskToken,
+        subtaskToken: session?.token ?? subtaskToken,
+        sessionCapabilities: session?.sessionCapabilities,
         taskId: task.id,
         doneToken: task.doneToken,
       });
@@ -817,7 +835,10 @@ export class Coordinator {
   private stageBatch(coordinator: CoordinatorState, delayOverrideMs?: number): void {
     const pending = coordinator.pendingNotifications;
     if (pending.length === 0) return;
-    if (this.hasActiveSignalWaiter(coordinator.taskId)) {
+    if (
+      coordinator.automaticNotifications !== false &&
+      this.hasActiveSignalWaiter(coordinator.taskId)
+    ) {
       logWarn('coordinator.notification', 'stageBatch skipped', {
         coordinatorTaskId: coordinator.taskId,
         reason: 'active_signal_wait',
@@ -846,7 +867,7 @@ export class Coordinator {
     const delay = delayOverrideMs ?? defaultDelay;
     const autoFireAt = Date.now() + delay;
 
-    const text = this.formatNotificationText(pending);
+    const text = this.formatNotificationText(pending, coordinator.automaticNotifications !== false);
 
     logWarn('coordinator.notification', 'stageBatch emitted', {
       coordinatorTaskId: coordinator.taskId,
@@ -863,8 +884,10 @@ export class Coordinator {
       notificationIds,
       text,
       autoFireAt,
+      automaticNotifications: coordinator.automaticNotifications !== false,
     });
 
+    if (coordinator.automaticNotifications === false) return;
     if (coordinator.restageTimer) clearTimeout(coordinator.restageTimer);
     coordinator.restageTimer = setTimeout(() => {
       coordinator.restageTimer = null;
@@ -874,8 +897,10 @@ export class Coordinator {
     }, this.COORDINATOR_RESTAMP_DELAY_MS);
   }
 
-  private formatNotificationText(pending: PendingNotification[]): string {
-    const header = `[Sub-task update — ${pending.length} task(s) completed]`;
+  private formatNotificationText(pending: PendingNotification[], automatic = true): string {
+    const header = automatic
+      ? `[Sub-task update — ${pending.length} task(s) completed]`
+      : `[Child task updates — ${pending.length}]`;
     const lines = pending.map((n) => {
       const status =
         n.state === 'landed'
@@ -891,9 +916,11 @@ export class Coordinator {
       return line + warn;
     });
     const allLanded = pending.every((n) => n.state === 'landed');
-    const footer = allLanded
-      ? 'Sub-tasks have merged their branches and cleaned up. If there are items remaining on the backlog, spawn the next batch.'
-      : "Please review each completed task: check its diff, confirm the work looks correct, then commit and merge what's ready. If there are items remaining on the backlog, spawn the next batch.";
+    const footer = !automatic
+      ? 'Inspect the child result and verification. Integration requires explicit user review and approval.'
+      : allLanded
+        ? 'Sub-tasks have merged their branches and cleaned up. If there are items remaining on the backlog, spawn the next batch.'
+        : "Please review each completed task: check its diff, confirm the work looks correct, then commit and merge what's ready. If there are items remaining on the backlog, spawn the next batch.";
     return [header, '', ...lines, '', footer].join('\n');
   }
 
@@ -905,8 +932,13 @@ export class Coordinator {
     projectRoot?: string;
     agentCommand?: string;
     agentArgs?: string[];
+    agentEnvFile?: string;
     skipPermissions?: boolean;
     baseBranch?: string;
+    snapshotCommit?: string;
+    integrationPolicy?: IntegrationPolicy;
+    launchGuard?: () => void | Promise<void>;
+    nativeLaunchGuard?: () => void;
   }): Promise<CoordinatedTask> {
     const coordinatorId =
       opts.coordinatorTaskId !== REST_COORDINATOR_SENTINEL
@@ -924,6 +956,19 @@ export class Coordinator {
         `Unknown coordinator: ${coordinatorId}. Ensure the coordinator task is registered before creating sub-tasks.`,
       );
     }
+
+    const epoch = coordinatorState.launchEpoch ?? 0;
+    const assertNativeLaunch = () => {
+      this.assertParentAdmission(coordinatorId, epoch);
+      opts.nativeLaunchGuard?.();
+      this.assertParentAdmission(coordinatorId, epoch);
+    };
+    const assertLaunch = async () => {
+      this.assertParentAdmission(coordinatorId, epoch);
+      await opts.launchGuard?.();
+      this.assertParentAdmission(coordinatorId, epoch);
+    };
+    await assertLaunch();
 
     // Hard concurrency gate — the preamble instructs the model to stay under
     // the limit, but instructions drift; this enforces it.
@@ -959,10 +1004,115 @@ export class Coordinator {
         coordinatorId,
         coordinatorState,
         onInserted: releaseReservation,
+        assertLaunch,
+        assertNativeLaunch,
       });
     } finally {
       releaseReservation();
     }
+  }
+
+  private assertParentAdmission(parentId: string, epoch?: number): CoordinatorState {
+    const parent = this.coordinators.get(parentId);
+    if (!parent || parent.lifecycle === 'closing' || parent.lifecycle === 'closed') {
+      throw new Error('The parent task is closing or unavailable.');
+    }
+    if (parent.paused || (epoch !== undefined && epoch !== (parent.launchEpoch ?? 0))) {
+      throw new Error(
+        'Child launches are paused or this launch was canceled. Resume explicitly to launch again.',
+      );
+    }
+    return parent;
+  }
+
+  stopChildren(parentId: string): void {
+    const parent = this.coordinators.get(parentId);
+    if (!parent) throw new Error('Parent task not registered.');
+    parent.paused = true;
+    parent.launchEpoch = (parent.launchEpoch ?? 0) + 1;
+    for (const task of this.tasks.values()) {
+      if (task.coordinatorTaskId !== parentId) continue;
+      this.clearPromptDeliveryState(task.id);
+      task.pendingPrompts = undefined;
+      this.controlMap.set(task.id, 'human');
+      killAgent(task.agentId);
+    }
+  }
+
+  resumeChildren(parentId: string): void {
+    const parent = this.coordinators.get(parentId);
+    if (!parent || parent.lifecycle === 'closing' || parent.lifecycle === 'closed') {
+      throw new Error('Parent task unavailable.');
+    }
+    parent.paused = false;
+  }
+
+  /** Reserve before a restored/stopped child is spawned; release in the caller's finally. */
+  reserveChildRestart(taskId: string): (() => void) & { assertAllowed: () => void } {
+    const task = this.tasks.get(taskId);
+    if (!task) return Object.assign(() => {}, { assertAllowed: () => {} });
+    const parent = this.assertParentAdmission(task.coordinatorTaskId);
+    const epoch = parent.launchEpoch ?? 0;
+    const assertAllowed = () => {
+      this.assertParentAdmission(task.coordinatorTaskId, epoch);
+      if (
+        this.tasks.get(taskId) !== task ||
+        this.integratingTaskIds.has(taskId) ||
+        this.closingTaskIds.has(taskId)
+      ) {
+        throw new Error('Child restart was canceled or integration is in progress.');
+      }
+    };
+    if (this.integratingTaskIds.has(taskId)) throw new Error('Task integration is in progress.');
+    // Replacing an existing PTY does not consume an additional task slot.
+    if (task.status !== 'exited' && task.status !== 'error')
+      return Object.assign(() => {}, { assertAllowed });
+    const parentId = task.coordinatorTaskId;
+    const pending = this.pendingCreateCounts.get(parentId) ?? 0;
+    const limit = clampCoordinatorConcurrentTasks(
+      parent.maxConcurrentSubTasks ?? DEFAULT_COORDINATOR_CONCURRENT_TASKS,
+    );
+    if (this.countInFlightSubTasks(parentId) + pending >= limit)
+      throw new Error('Child concurrency limit reached.');
+    this.pendingCreateCounts.set(parentId, pending + 1);
+    let released = false;
+    return Object.assign(
+      () => {
+        if (released) return;
+        released = true;
+        const remaining = (this.pendingCreateCounts.get(parentId) ?? 1) - 1;
+        if (remaining > 0) this.pendingCreateCounts.set(parentId, remaining);
+        else this.pendingCreateCounts.delete(parentId);
+      },
+      { assertAllowed },
+    );
+  }
+
+  /** Detach first; the caller persists these IDs before removing the parent's worktree. */
+  detachChildren(parentId: string): string[] {
+    const children = [...this.tasks.values()].filter((task) => task.coordinatorTaskId === parentId);
+    if (
+      (this.pendingCreateCounts.get(parentId) ?? 0) > 0 ||
+      children.some((task) => task.status === 'creating')
+    ) {
+      throw new Error(
+        'A child launch is still settling. Retry closing after it finishes or is canceled.',
+      );
+    }
+    if (children.some((task) => this.integratingTaskIds.has(task.id))) {
+      throw new Error(
+        'A child is being integrated. Wait for integration before closing the parent.',
+      );
+    }
+    const parent = this.coordinators.get(parentId);
+    if (parent) {
+      parent.lifecycle = 'closing';
+      parent.paused = true;
+      parent.launchEpoch = (parent.launchEpoch ?? 0) + 1;
+    }
+    this.deregisterCoordinator(parentId);
+    for (const task of children) this.removeCoordinatedTask(task.id);
+    return children.map((task) => task.id);
   }
 
   private countInFlightSubTasks(coordinatorId: string): number {
@@ -983,16 +1133,22 @@ export class Coordinator {
       projectRoot?: string;
       agentCommand?: string;
       agentArgs?: string[];
+      agentEnvFile?: string;
+      skipPermissions?: boolean;
       baseBranch?: string;
+      snapshotCommit?: string;
+      integrationPolicy?: IntegrationPolicy;
     },
     ctx: {
       coordinatorId: string;
       coordinatorState: CoordinatorState;
       /** Called once the task is registered in this.tasks. */
       onInserted: () => void;
+      assertLaunch: () => Promise<void>;
+      assertNativeLaunch: () => void;
     },
   ): Promise<CoordinatedTask> {
-    const { coordinatorId, coordinatorState, onInserted } = ctx;
+    const { coordinatorId, coordinatorState, onInserted, assertLaunch, assertNativeLaunch } = ctx;
     const root = opts.projectRoot ?? coordinatorState.projectRoot ?? this.projectRoot;
     const projId = opts.projectId ?? coordinatorState.projectId ?? this.projectId;
     if (!root || !projId) throw new Error('No project configured for coordinator');
@@ -1004,6 +1160,22 @@ export class Coordinator {
       validateBranchName(baseBranch, 'baseBranch');
     }
 
+    if (opts.snapshotCommit && !/^[a-f0-9]{40,64}$/i.test(opts.snapshotCommit)) {
+      throw new Error('Invalid snapshot commit.');
+    }
+    if (opts.snapshotCommit) {
+      if (!coordinatorState.worktreePath || !baseBranch)
+        throw new Error('The parent snapshot is unavailable.');
+      const [head, branch] = await Promise.all([
+        execAsync('git', ['rev-parse', 'HEAD'], { cwd: coordinatorState.worktreePath }),
+        this.currentBranch(coordinatorState.worktreePath),
+      ]);
+      if (execStdout(head).trim() !== opts.snapshotCommit || branch !== baseBranch) {
+        throw new Error('The parent branch or commit changed. Refresh the assignment snapshot.');
+      }
+    }
+    await assertLaunch();
+    // Keep the integration branch separate from the immutable creation snapshot.
     // Create worktree + branch via existing backend
     const result = await createBackendTask(
       opts.name,
@@ -1011,6 +1183,7 @@ export class Coordinator {
       ['.claude', 'node_modules'],
       'task',
       baseBranch,
+      ...(opts.snapshotCommit ? [opts.snapshotCommit] : []),
     );
 
     // Re-check after async gap — deregisterCoordinator may have run while we awaited.
@@ -1039,13 +1212,14 @@ export class Coordinator {
       projectRoot: root,
       branchName: result.branch_name,
       baseBranch,
+      integrationPolicy: opts.integrationPolicy ?? 'automatic',
       worktreePath: result.worktree_path,
       agentId,
       coordinatorTaskId: coordinatorId,
       status: 'creating',
       exitCode: null,
       initialPrompt: opts.prompt
-        ? buildSubTaskPreamble(this.coordinators.get(coordinatorId)?.verifyCommand) + opts.prompt
+        ? buildSubTaskPreamble(coordinatorState.verifyCommand, opts.integrationPolicy) + opts.prompt
         : undefined,
       dockerContainerName: this.coordinators.get(coordinatorId)?.dockerContainerName ?? null,
     };
@@ -1075,6 +1249,7 @@ export class Coordinator {
         worktreePath: result.worktree_path,
         agentCommand,
         queue: this.preambleWriteQueue,
+        integrationPolicy: task.integrationPolicy,
       });
       task.preambleFileExistedBefore = preambleInjection.existedBefore;
 
@@ -1088,10 +1263,12 @@ export class Coordinator {
         const { serverUrl, subtaskToken, serverPath } = mcpServerInfoForTask;
         const doneToken = randomBytes(24).toString('base64url');
         task.doneToken = doneToken;
+        const session = this.sessionMcpProvider?.(task);
         const mcpConfig = buildSubTaskMcpConfig({
           serverPath,
           serverUrl,
-          subtaskToken,
+          subtaskToken: session?.token ?? subtaskToken,
+          sessionCapabilities: session?.sessionCapabilities,
           taskId: task.id,
           doneToken,
         });
@@ -1105,10 +1282,12 @@ export class Coordinator {
       const agentArgs = opts.agentArgs ?? coordinatorState.spawnDefaults.args;
       const baseArgs = [
         ...agentArgs,
-        ...(coordinatorState.propagateSkipPermissions ? getSkipPermissionsArgs(agentCommand) : []),
+        ...((opts.skipPermissions ?? coordinatorState.propagateSkipPermissions)
+          ? getSkipPermissionsArgs(agentCommand)
+          : []),
       ];
       const mcpArgs = subTaskMcpConfig
-        ? buildMcpLaunchArgs(agentCommand, subTaskMcpConfigPath, subTaskMcpConfig)
+        ? this.buildTaskMcpLaunchArgs(agentCommand, subTaskMcpConfigPath, subTaskMcpConfig)
         : [];
       const agentFinalArgs = [...baseArgs, ...mcpArgs];
 
@@ -1117,28 +1296,33 @@ export class Coordinator {
       // sub-task container, rather than killing processes inside the coordinator).
       const channelId = randomUUID();
 
-      await spawnAgent(this.win, {
-        taskId: task.id,
-        agentId,
-        command: agentCommand,
-        args: agentFinalArgs,
-        cwd: result.worktree_path,
-        env: {},
-        envFile: coordinatorState.agentEnvFile,
-        cols: 120,
-        rows: 40,
-        ...(dockerContainerName
-          ? {
-              dockerMode: true,
-              dockerImage: coordinatorState.dockerImage ?? undefined,
-              // Mount parent dir so the sub-task can reach the coordinator's
-              // .parallel-code/ dir (which holds the per-sub-task MCP config).
-              // resolveWorktreeGitDirMount adds the main .git dir mount.
-              dockerMountWorktreeParent: true,
-            }
-          : {}),
-        onOutput: { __CHANNEL_ID__: channelId },
-      });
+      await assertLaunch();
+      await spawnAgent(
+        this.win,
+        {
+          taskId: task.id,
+          agentId,
+          command: agentCommand,
+          args: agentFinalArgs,
+          cwd: result.worktree_path,
+          env: {},
+          envFile: opts.agentEnvFile ?? coordinatorState.agentEnvFile,
+          cols: 120,
+          rows: 40,
+          ...(dockerContainerName
+            ? {
+                dockerMode: true,
+                dockerImage: coordinatorState.dockerImage ?? undefined,
+                // Mount parent dir so the sub-task can reach the coordinator's
+                // .parallel-code/ dir (which holds the per-sub-task MCP config).
+                // resolveWorktreeGitDirMount adds the main .git dir mount.
+                dockerMountWorktreeParent: true,
+              }
+            : {}),
+          onOutput: { __CHANNEL_ID__: channelId },
+        },
+        assertNativeLaunch,
+      );
 
       // Subscribe for output monitoring
       subscribeToAgent(agentId, outputCb);
@@ -1163,13 +1347,15 @@ export class Coordinator {
         worktreePath: task.worktreePath,
         agentId: task.agentId,
         coordinatorTaskId: task.coordinatorTaskId,
+        integrationPolicy: task.integrationPolicy,
+        baseBranch: task.baseBranch,
         mcpConfigPath: subTaskMcpConfigPath,
         prompt: task.initialPrompt,
         preambleFileExistedBefore: task.preambleFileExistedBefore,
         agentCommand: agentCommand,
         agentArgs: notifyAgentArgs,
         mcpLaunchArgs: mcpArgs,
-        skipPermissions: coordinatorState.propagateSkipPermissions,
+        skipPermissions: opts.skipPermissions ?? coordinatorState.propagateSkipPermissions,
       });
 
       return task;
@@ -1198,6 +1384,7 @@ export class Coordinator {
       branchName: t.branchName,
       status: t.status,
       coordinatorTaskId: t.coordinatorTaskId,
+      integrationPolicy: t.integrationPolicy,
       signalDoneAt: t.signalDoneAt?.toISOString(),
       verification: t.verification,
       landingState: t.landingState,
@@ -1219,6 +1406,7 @@ export class Coordinator {
       agentId: task.agentId,
       status: task.status,
       coordinatorTaskId: task.coordinatorTaskId,
+      integrationPolicy: task.integrationPolicy,
       exitCode: task.exitCode,
       pendingPrompt: task.pendingPrompts?.[0],
       pendingPrompts: task.pendingPrompts ? [...task.pendingPrompts] : undefined,
@@ -1816,8 +2004,30 @@ export class Coordinator {
   }
 
   async landSelf(taskId: string, input: LandSelfInput): Promise<ApiLandSelfResult> {
+    return this.withTaskIntegration(taskId, () => this.landSelfUnchecked(taskId, input));
+  }
+
+  private async withTaskIntegration<T>(taskId: string, run: () => Promise<T>): Promise<T> {
+    if (this.integratingTaskIds.has(taskId) || this.closingTaskIds.has(taskId)) {
+      throw new Error('Task integration or cleanup is already in progress.');
+    }
+    this.integratingTaskIds.add(taskId);
+    try {
+      return await run();
+    } finally {
+      this.integratingTaskIds.delete(taskId);
+    }
+  }
+
+  private async landSelfUnchecked(
+    taskId: string,
+    input: LandSelfInput,
+  ): Promise<ApiLandSelfResult> {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
+
+    if (task.integrationPolicy === 'review')
+      throw new Error('This result requires user review and approval before integration.');
 
     if (!this.coordinators.has(task.coordinatorTaskId)) {
       const reason = `Cannot self-land orphaned task: coordinator ${task.coordinatorTaskId} is not registered`;
@@ -1927,8 +2137,21 @@ export class Coordinator {
     taskId: string,
     opts?: { squash?: boolean; message?: string; cleanup?: boolean; skipVerification?: boolean },
   ): Promise<{ mainBranch: string; linesAdded: number; linesRemoved: number }> {
+    return this.withTaskIntegration(taskId, () => this.mergeTaskUnchecked(taskId, opts));
+  }
+
+  private async mergeTaskUnchecked(
+    taskId: string,
+    opts?: { squash?: boolean; message?: string; cleanup?: boolean; skipVerification?: boolean },
+  ): Promise<{ mainBranch: string; linesAdded: number; linesRemoved: number }> {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
+    if (task.integrationPolicy === 'review')
+      throw new Error(
+        'This result requires explicit user approval through the desktop review action.',
+      );
+    if (!this.coordinators.has(task.coordinatorTaskId))
+      throw new Error('The parent is unavailable; integration is disabled.');
     this.assertTaskCanBeMerged(task);
 
     // Strip injected preamble files before staging so they don't land in history,
@@ -1971,6 +2194,85 @@ export class Coordinator {
     };
   }
 
+  async getReviewSnapshot(taskId: string): Promise<{
+    expectedCommit: string;
+    expectedTargetBranch: string;
+    expectedTargetCommit: string;
+    diff: string;
+  }> {
+    const task = this.tasks.get(taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+    const parent = this.coordinators.get(task.coordinatorTaskId);
+    if (!parent?.worktreePath || !task.baseBranch || parent.lifecycle === 'closing') {
+      throw new Error('The parent integration target is unavailable.');
+    }
+    const [child, target, branch] = await Promise.all([
+      execAsync('git', ['rev-parse', 'HEAD'], { cwd: task.worktreePath }),
+      execAsync('git', ['rev-parse', 'HEAD'], { cwd: parent.worktreePath }),
+      this.currentBranch(parent.worktreePath),
+    ]);
+    if (branch !== task.baseBranch)
+      throw new Error('The parent branch changed. Review the integration target first.');
+    return {
+      expectedCommit: execStdout(child).trim(),
+      expectedTargetBranch: task.baseBranch,
+      expectedTargetCommit: execStdout(target).trim(),
+      diff: (await this.getTaskDiff(taskId)).diff,
+    };
+  }
+
+  /** Desktop-only entry point: agents must never receive a route to this method. */
+  async approveAndMergeTask(
+    taskId: string,
+    approval: {
+      expectedCommit: string;
+      expectedTargetBranch: string;
+      expectedTargetCommit: string;
+    },
+  ): Promise<{ mainBranch: string; linesAdded: number; linesRemoved: number }> {
+    return this.withTaskIntegration(taskId, async () => {
+      const task = this.tasks.get(taskId);
+      if (!task) throw new Error(`Task not found: ${taskId}`);
+      this.assertTaskCanBeMerged(task);
+      const parent = this.coordinators.get(task.coordinatorTaskId);
+      if (
+        !parent?.worktreePath ||
+        parent.lifecycle === 'closing' ||
+        task.baseBranch !== approval.expectedTargetBranch
+      ) {
+        throw new Error('The integration target changed or is unavailable. Review again.');
+      }
+      // Remove uncommitted runtime guidance only. Never stage or commit reviewed results.
+      await stripPreambleFromBranch(task);
+      if ((await this.statusPaths(task.worktreePath)).length) {
+        throw new Error(
+          'The child has uncommitted changes. Commit the intended result and review again.',
+        );
+      }
+      await this.verifyBeforeLanding(task);
+      const result = await gitMergeTask(
+        task.projectRoot,
+        task.branchName,
+        false,
+        null,
+        false,
+        task.baseBranch,
+        task.worktreePath,
+        parent.worktreePath,
+        approval,
+      );
+      // Keep the integrated result visible; cleanup is a separate explicit action.
+      task.landingState = 'reviewed';
+      this.syncLandingState(task);
+      this.suppressPendingNotificationForTask(task, true);
+      return {
+        mainBranch: result.main_branch,
+        linesAdded: result.lines_added,
+        linesRemoved: result.lines_removed,
+      };
+    });
+  }
+
   private assertTaskCanBeMerged(task: CoordinatedTask): void {
     if (
       task.landingState === 'landed_pending_review' ||
@@ -2010,6 +2312,7 @@ export class Coordinator {
   }
 
   async closeTask(taskId: string): Promise<void> {
+    if (this.integratingTaskIds.has(taskId)) throw new Error('Task integration is in progress.');
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
     await this.cleanupTask(taskId);
@@ -2024,7 +2327,7 @@ export class Coordinator {
     const task = this.tasks.get(taskId);
     if (!task) return;
 
-    this.suppressPendingNotificationForTask(task);
+    this.suppressPendingNotificationForTask(task, true);
 
     this.clearAgentOutputState(task);
     this.resolveIdleWaiters(taskId, 'removed');
@@ -2042,7 +2345,7 @@ export class Coordinator {
     const task = this.tasks.get(taskId);
     if (!task) return;
     this.closingTaskIds.add(taskId);
-    this.suppressPendingNotificationForTask(task);
+    this.suppressPendingNotificationForTask(task, true);
 
     this.unsubscribeAgentOutput(task.agentId);
     // A verify run still going would keep writing into the worktree we delete.
@@ -2125,6 +2428,7 @@ export class Coordinator {
     agentId: string;
     coordinatorTaskId: string;
     controlledBy?: 'coordinator' | 'human';
+    integrationPolicy?: IntegrationPolicy;
     signalDoneAt?: string;
     signalDoneConsumed?: boolean;
     verification?: SubtaskVerification;
@@ -2172,6 +2476,7 @@ export class Coordinator {
       projectRoot: opts.projectRoot,
       branchName: opts.branchName,
       baseBranch: opts.baseBranch,
+      integrationPolicy: opts.integrationPolicy ?? 'automatic',
       worktreePath: opts.worktreePath,
       agentId: opts.agentId,
       coordinatorTaskId: opts.coordinatorTaskId,
@@ -2240,6 +2545,45 @@ export class Coordinator {
     }
   }
 
+  /** Called after IPC installs the new launch identity, before replacing its PTY. */
+  refreshSessionMcp(
+    taskId: string,
+    agentCommand: string,
+  ): { mcpLaunchArgs?: string[]; mcpConfigPath?: string } {
+    const task = this.tasks.get(taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+    return {
+      mcpLaunchArgs: this.rewriteHydratedSubtaskMcpConfig(
+        task,
+        task.coordinatorTaskId,
+        task.mcpConfigPath,
+        agentCommand,
+      ),
+      mcpConfigPath: task.mcpConfigPath,
+    };
+  }
+
+  private buildTaskMcpLaunchArgs(
+    command: string,
+    configPath: string | undefined,
+    config: ParallelCodeMcpConfig,
+  ): string[] {
+    const server = config.mcpServers['parallel-code'];
+    if (isCodexCommand(command) && server.args.includes('--session-profile')) {
+      if (!configPath) throw new Error('A private MCP credential file is required for this child.');
+      return buildMcpLaunchArgs(command, configPath, {
+        mcpServers: {
+          'parallel-code': {
+            ...server,
+            args: [...server.args, '--token-file', configPath],
+            env: {},
+          },
+        },
+      });
+    }
+    return buildMcpLaunchArgs(command, configPath, config);
+  }
+
   private rewriteHydratedSubtaskMcpConfig(
     task: CoordinatedTask,
     coordinatorTaskId: string,
@@ -2250,17 +2594,27 @@ export class Coordinator {
     if (!serverInfo) return undefined;
     const { serverUrl, subtaskToken, serverPath } = serverInfo;
     if (!task.doneToken) task.doneToken = randomBytes(24).toString('base64url');
+    const session = this.sessionMcpProvider?.(task);
     const mcpConfig = buildSubTaskMcpConfig({
       serverPath,
       serverUrl,
-      subtaskToken,
+      subtaskToken: session?.token ?? subtaskToken,
+      sessionCapabilities: session?.sessionCapabilities,
       taskId: task.id,
       doneToken: task.doneToken,
     });
+    if (session && !mcpConfigPath) {
+      mcpConfigPath = getSubTaskMcpConfigPath(
+        this.coordinators.get(coordinatorTaskId)?.dockerContainerName,
+        serverPath,
+        task.id,
+      );
+      task.mcpConfigPath = mcpConfigPath;
+    }
     if (mcpConfigPath) {
       writeSubTaskMcpConfigSync(mcpConfigPath, mcpConfig);
     }
-    return buildMcpLaunchArgs(agentCommand ?? 'claude', mcpConfigPath, mcpConfig);
+    return this.buildTaskMcpLaunchArgs(agentCommand ?? 'claude', mcpConfigPath, mcpConfig);
   }
 
   isRegisteredCoordinator(coordinatorTaskId: string): boolean {
@@ -2271,6 +2625,11 @@ export class Coordinator {
     coordinatorTaskId: string,
     projectId: string,
     opts?: {
+      projectRoot?: string;
+      spawnDefaults?: { command: string; args: string[] };
+      agentEnvFile?: string;
+      automaticNotifications?: boolean;
+      paused?: boolean;
       branchName?: string;
       worktreePath?: string;
       skipPermissions?: boolean;
@@ -2297,12 +2656,15 @@ export class Coordinator {
       taskId: coordinatorTaskId,
       lifecycle: 'starting',
       projectId,
-      projectRoot: this.projectRoot ?? '',
+      projectRoot: opts?.projectRoot ?? this.projectRoot ?? '',
       branchName: opts?.branchName,
       worktreePath: opts?.worktreePath,
       mcpServerInfo: null,
-      spawnDefaults: { ...this.coordinatorSpawnDefaults },
-      agentEnvFile: this.coordinatorAgentEnvFile,
+      spawnDefaults: { ...(opts?.spawnDefaults ?? this.coordinatorSpawnDefaults) },
+      agentEnvFile: opts?.agentEnvFile ?? this.coordinatorAgentEnvFile,
+      automaticNotifications: opts?.automaticNotifications ?? true,
+      paused: opts?.paused ?? false,
+      launchEpoch: 0,
       pendingNotifications: [],
       stagedBatches: new Map(),
       ackedBatchIds: [],
@@ -2335,6 +2697,13 @@ export class Coordinator {
   }
 
   deregisterCoordinator(coordinatorTaskId: string): void {
+    if (
+      [...this.tasks.values()].some(
+        (task) =>
+          task.coordinatorTaskId === coordinatorTaskId && this.integratingTaskIds.has(task.id),
+      )
+    )
+      throw new Error('Child integration is in progress.');
     const coordinator = this.coordinators.get(coordinatorTaskId);
     if (!coordinator) return;
     coordinator.lifecycle = 'closing';
@@ -2466,7 +2835,12 @@ export class Coordinator {
 
   rescheduleRestageTimer(coordinatorTaskId: string): void {
     const coordinator = this.coordinators.get(coordinatorTaskId);
-    if (!coordinator || coordinator.pendingNotifications.length === 0) return;
+    if (
+      !coordinator ||
+      coordinator.automaticNotifications === false ||
+      coordinator.pendingNotifications.length === 0
+    )
+      return;
     if (this.hasActiveSignalWaiter(coordinatorTaskId)) {
       logWarn('coordinator.notification', 'restage skipped', {
         coordinatorTaskId,
@@ -2537,6 +2911,12 @@ export class Coordinator {
     return this.coordinators.size > 0;
   }
 
+  hasActiveLegacyCoordinator(): boolean {
+    return [...this.coordinators.values()].some(
+      (parent) => parent.automaticNotifications !== false,
+    );
+  }
+
   signalDone(taskId: string): boolean {
     const task = this.tasks.get(taskId);
     if (!task) return false;
@@ -2550,8 +2930,10 @@ export class Coordinator {
     const firstAnyResolver = anyResolvers?.length ? anyResolvers.shift() : undefined;
     if (firstAnyResolver) {
       task.signalDoneConsumed = true;
-      // Suppress before finishSignalWait so it doesn't re-stage
-      this.suppressPendingNotificationForTask(task);
+      // Ordinary parents keep a visible review queue even while their agent waits.
+      if (this.coordinators.get(coordinatorId)?.automaticNotifications === false) {
+        this.maybeQueueReviewNotification(task, 'idle', task.exitCode ?? null, 5_000);
+      } else this.suppressPendingNotificationForTask(task);
       const remaining = this.countRemaining(coordinatorId);
       // Resolver `complete` from waitForSignalDone handles finishSignalWait.
       firstAnyResolver({
@@ -2613,9 +2995,9 @@ export class Coordinator {
     this.stageBatch(coordinator);
   }
 
-  private suppressPendingNotificationForTask(task: CoordinatedTask): void {
+  private suppressPendingNotificationForTask(task: CoordinatedTask, explicitAction = false): void {
     const coordinator = this.coordinators.get(task.coordinatorTaskId);
-    if (!coordinator) return;
+    if (!coordinator || (!explicitAction && coordinator.automaticNotifications === false)) return;
 
     const toRemove = coordinator.pendingNotifications.filter((n) => n.taskId === task.id);
     if (toRemove.length === 0) return;
@@ -2679,7 +3061,9 @@ export class Coordinator {
         task.signalDoneConsumed = true;
         // Suppress the staged UI notification that was queued when signalDone ran
         // without an active waiter — otherwise it will auto-fire as a duplicate.
-        this.suppressPendingNotificationForTask(task);
+        if (this.coordinators.get(coordinatorTaskId)?.automaticNotifications !== false) {
+          this.suppressPendingNotificationForTask(task);
+        }
         this.notifyRenderer(IPC.MCP_TaskStateSync, {
           taskId: task.id,
           signalDoneConsumed: true,
@@ -2696,6 +3080,12 @@ export class Coordinator {
         return Promise.resolve(result);
       }
     }
+
+    if (
+      this.coordinators.get(coordinatorTaskId)?.automaticNotifications === false &&
+      this.countRemaining(coordinatorTaskId) === 0
+    )
+      return Promise.resolve({ remaining: 0 });
 
     this.beginSignalWait(coordinatorTaskId);
     logWarn('coordinator.signal_wait', 'wait_for_signal_done start', {
@@ -2764,7 +3154,7 @@ export class Coordinator {
       (this.activeSignalWaitCounts.get(coordinatorTaskId) ?? 0) + 1,
     );
     const coordinator = this.coordinators.get(coordinatorTaskId);
-    if (coordinator) {
+    if (coordinator && coordinator.automaticNotifications !== false) {
       this.clearStagedNotificationForCoordinator(coordinator);
     }
   }

@@ -135,3 +135,23 @@ it('removes tracked credential files on exit and quit, tolerating files already 
   removeAllCanvasConfigs();
   expect(fs.existsSync(configPath)).toBe(false);
 });
+
+it('launches ordinary session tools without the legacy canvas-only restriction', () => {
+  const args = prepareCanvasMcpArgs({
+    ...options(),
+    sessionCapabilities: { profile: 'ordinary', canCreate: true, peers: true },
+  });
+  const config = JSON.parse(fs.readFileSync(args[1], 'utf8'));
+  expect(config.mcpServers['parallel-code'].args).toEqual([
+    path.join(directory, 'server.cjs'),
+    '--url',
+    'http://127.0.0.1:7777',
+    '--task-id',
+    'task-1',
+    '--session-profile',
+    'ordinary',
+    '--allow-create',
+    '--peer-tools',
+  ]);
+  expect(config.mcpServers['parallel-code'].env.PARALLEL_CODE_MCP_TOKEN).toBe('test-token');
+});

@@ -30,6 +30,7 @@ import {
 import { parseMindMapUpdate, type MindMapDocument, type MindMapUpdate } from '../shared/mindmap.js';
 import { parseReasoningUpdate } from '../shared/reasoning-feed.js';
 import { parseCanvasView, type CanvasView } from '../shared/canvas-view.js';
+import type { SessionCaller, SessionCapabilities } from '../shared/delegation-types.js';
 import type { ReasoningDocument } from '../shared/reasoning.js';
 import type { ReasoningUpdate } from '../shared/reasoning-state.js';
 import type { Coordinator } from '../mcp/coordinator.js';
@@ -241,8 +242,14 @@ const MIME: Record<string, string> = {
 interface RemoteServer {
   /** Stop transport; explicit desktop disconnect also revokes remembered phones. */
   stop: (forgetDevices?: boolean) => Promise<void>;
-  registerCanvasAgent: (taskId: string, agentId: string, isActive?: () => boolean) => string;
+  registerCanvasAgent: (
+    taskId: string,
+    agentId: string,
+    isActive?: () => boolean,
+    session?: { sessionInstanceId: string; capabilities: SessionCapabilities },
+  ) => string;
   unregisterCanvasAgent: (agentId: string) => void;
+  getSessionAgents: () => SessionCaller[];
   hasCanvasAgents: () => boolean;
   /** Move the listener to another interface; rejects and keeps the old one when the new
    *  bind fails, or rejects with a dead handle (`listening` false) when neither binds. */
@@ -817,6 +824,11 @@ export function startRemoteServer(opts: {
     lastLine: string;
   };
   getCoordinator: () => Coordinator | null;
+  callSessionTool?: (
+    caller: SessionCaller,
+    name: string,
+    params: Record<string, unknown>,
+  ) => Promise<unknown>;
   /** List projects the mobile "New Task" screen can target (renderer-backed). */
   getProjects?: () => Promise<RemoteProject[]>;
   /** Create a top-level task on behalf of a paired phone (renderer-backed). */
@@ -853,7 +865,12 @@ export function startRemoteServer(opts: {
 
   const canvasAgents = new Map<
     string,
-    { taskId: string; token: Buffer; isActive?: () => boolean }
+    {
+      taskId: string;
+      token: Buffer;
+      isActive?: () => boolean;
+      session?: { sessionInstanceId: string; capabilities: SessionCapabilities };
+    }
   >();
   const canvasActive = ([agentId, owner]: [
     string,
@@ -1094,6 +1111,50 @@ export function startRemoteServer(opts: {
         return;
       }
       // Canvas credentials have no access to task control, terminals or device pairing.
+      if (url.pathname === '/api/session/tools') {
+        const owner = canvasOwner(extractRawToken(req));
+        if (tokenClass !== 'canvas' || !owner?.[1].session || !canvasActive(owner))
+          return jsonEnd(403, { error: 'This session has no coordination capabilities.' });
+        if (req.method !== 'POST') return jsonEnd(405, { error: 'Method not allowed' });
+        if (!opts.callSessionTool) return jsonEnd(503, { error: 'Coordination unavailable' });
+        const [agentId, record] = owner;
+        const session = record.session;
+        if (!session) return jsonEnd(403, { error: 'Session unavailable' });
+        const release = acquireCanvasSlot(`session:${agentId}`);
+        if (!release) return jsonEnd(429, { error: 'Too many concurrent session requests' });
+        void readJsonBody(req, 1_000_000)
+          .then(async (body) => {
+            if (
+              typeof body.name !== 'string' ||
+              !body.params ||
+              typeof body.params !== 'object' ||
+              Array.isArray(body.params)
+            )
+              return jsonEnd(400, { error: 'Invalid session tool request' });
+            if (canvasAgents.get(agentId) !== record || !canvasActive(owner))
+              return jsonEnd(403, { error: 'Session expired' });
+            const result = await opts.callSessionTool?.(
+              { taskId: record.taskId, agentId, ...session },
+              body.name,
+              body.params as Record<string, unknown>,
+            );
+            jsonEnd(200, result);
+          })
+          .catch((err: unknown) => {
+            const status =
+              err &&
+              typeof err === 'object' &&
+              'statusCode' in err &&
+              typeof err.statusCode === 'number'
+                ? err.statusCode
+                : 400;
+            jsonEnd(status, {
+              error: err instanceof Error ? err.message : 'Session request failed',
+            });
+          })
+          .finally(release);
+        return;
+      }
       if (tokenClass === 'canvas') return jsonEnd(403, { error: 'forbidden' });
 
       // --- Device pairing (mobile → paired elevation) ---
@@ -1741,13 +1802,23 @@ export function startRemoteServer(opts: {
     unregisterCanvasAgent: (agentId) => {
       canvasAgents.delete(agentId);
     },
-    registerCanvasAgent: (taskId, agentId, isActive) => {
+    registerCanvasAgent: (taskId, agentId, isActive, session) => {
       const existing = canvasAgents.get(agentId);
-      if (existing?.taskId === taskId) return existing.token.toString();
+      if (
+        existing?.taskId === taskId &&
+        existing.session?.sessionInstanceId === session?.sessionInstanceId
+      )
+        return existing.token.toString();
       const secret = randomBytes(24).toString('base64url');
-      canvasAgents.set(agentId, { taskId, token: Buffer.from(secret), isActive });
+      canvasAgents.set(agentId, { taskId, token: Buffer.from(secret), isActive, session });
       return secret;
     },
+    getSessionAgents: () =>
+      [...canvasAgents].flatMap(([agentId, record]) =>
+        record.session && canvasActive([agentId, record])
+          ? [{ agentId, taskId: record.taskId, ...record.session }]
+          : [],
+      ),
     hasCanvasAgents: () => [...canvasAgents].some(canvasActive),
     token,
     subtaskToken,

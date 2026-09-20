@@ -69,6 +69,7 @@ async function loadPersistedAgent(def: AgentDef): Promise<AgentDef> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockInvoke.mockResolvedValue(undefined);
   setStore('projects', []);
   setStore('lastProjectId', null);
   setStore('lastAgentId', null);
@@ -1682,3 +1683,91 @@ it('round-trips canvas task links for active and collapsed tasks without revivin
   const saved = JSON.parse(call?.[1].json);
   for (const id of ['task-1', 'task-2']) expect(saved.tasks[id].canvasTaskLinks).toEqual(links);
 });
+
+it('restores parent authority before its child and round-trips delegation policy', async () => {
+  const parent = { ...persistedTask(agentDef()), delegationParent: true, delegationPaused: true };
+  const child = {
+    ...persistedTask(agentDef()),
+    id: 'child-authority',
+    coordinatedBy: parent.id,
+    integrationPolicy: 'review' as const,
+  };
+  mockInvoke.mockResolvedValueOnce(
+    JSON.stringify({
+      projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: '' }],
+      taskOrder: [parent.id, child.id],
+      collapsedTaskOrder: [],
+      tasks: { 'child-authority': child, [parent.id]: parent },
+    }),
+  );
+  await loadState();
+  const registrations = mockInvoke.mock.calls.filter(
+    ([channel, args]) => channel === IPC.DelegationRequest && args?.action === 'register',
+  );
+  expect(registrations.map(([, args]) => args.task.taskId)).toEqual([parent.id, child.id]);
+  expect(store.tasks[parent.id].delegationParent).toBe(true);
+  expect(store.tasks[parent.id].delegationPaused).toBe(true);
+  expect(store.tasks[child.id].integrationPolicy).toBe('review');
+  await saveState();
+  const save = mockInvoke.mock.calls.findLast(([channel]) => channel === IPC.SaveAppState);
+  expect(JSON.parse(save?.[1].json).tasks[child.id].integrationPolicy).toBe('review');
+});
+
+it('restores a child with a missing parent independently without losing its work', async () => {
+  const child = {
+    ...persistedTask(agentDef()),
+    id: 'orphan-restore',
+    coordinatedBy: 'missing-parent',
+    integrationPolicy: 'review',
+    mcpConfigPath: '/stale/config.json',
+  };
+  mockInvoke.mockResolvedValueOnce(
+    JSON.stringify({
+      projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: '' }],
+      taskOrder: [child.id],
+      collapsedTaskOrder: [],
+      tasks: { [child.id]: child },
+    }),
+  );
+  await loadState();
+  expect(store.tasks[child.id]).toMatchObject({
+    worktreePath: child.worktreePath,
+    delegationPaused: true,
+  });
+  expect(store.tasks[child.id].coordinatedBy).toBeUndefined();
+  expect(store.tasks[child.id].mcpConfigPath).toBeUndefined();
+  expect(store.tasks[child.id].integrationPolicy).toBeUndefined();
+  const registration = mockInvoke.mock.calls.find(
+    ([channel, args]) => channel === IPC.DelegationRequest && args?.action === 'register',
+  );
+  expect(registration?.[1].task.parentTaskId).toBeUndefined();
+});
+
+it.each([
+  { directMode: true, expected: 'direct' },
+  { directMode: false, expected: 'worktree' },
+])(
+  'normalizes legacy task isolation before registering authority: $expected',
+  async ({ directMode, expected }) => {
+    const legacy = {
+      ...persistedTask(agentDef()),
+      id: 'legacy-authority',
+      gitIsolation: undefined,
+      directMode,
+    };
+    mockInvoke.mockResolvedValueOnce(
+      JSON.stringify({
+        projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: '' }],
+        taskOrder: [legacy.id],
+        collapsedTaskOrder: [],
+        tasks: { [legacy.id]: legacy },
+      }),
+    );
+    await loadState();
+    const registration = mockInvoke.mock.calls.find(
+      ([channel, args]) => channel === IPC.DelegationRequest && args?.action === 'register',
+    );
+    expect(registration?.[1].task.gitIsolation).toBe(expected);
+    expect(store.tasks[legacy.id].gitIsolation).toBe(expected);
+  },
+);

@@ -1941,6 +1941,7 @@ export async function mergeTask(
   baseBranch?: string,
   worktreePath?: string,
   mergeWorktreePath?: string,
+  approval?: { expectedCommit: string; expectedTargetBranch: string; expectedTargetCommit: string },
 ): Promise<{ main_branch: string; lines_added: number; lines_removed: number }> {
   const lockKey = await detectRepoLockKey(projectRoot).catch(() => projectRoot);
 
@@ -2011,9 +2012,39 @@ export async function mergeTask(
       }
     };
 
+    // User approval binds the exact committed result and destination. Check under
+    // the same repository lock as the merge, after verification and checkout.
+    if (approval) {
+      if (
+        !/^[a-f0-9]{40,64}$/i.test(approval.expectedCommit) ||
+        !/^[a-f0-9]{40,64}$/i.test(approval.expectedTargetCommit)
+      ) {
+        throw new Error('Invalid review commit.');
+      }
+      const [childHead, childRef, targetHead, targetBranch, childStatus] = await Promise.all([
+        exec('git', ['rev-parse', 'HEAD'], { cwd: checkWorktreePath }),
+        exec('git', ['rev-parse', '--verify', `refs/heads/${branchName}`], { cwd: projectRoot }),
+        exec('git', ['rev-parse', 'HEAD'], { cwd: mergeRoot }),
+        getCurrentBranchName(mergeRoot),
+        exec('git', ['status', '--porcelain'], { cwd: checkWorktreePath }),
+      ]);
+      if (
+        mainBranch !== approval.expectedTargetBranch ||
+        targetBranch !== approval.expectedTargetBranch ||
+        childHead.stdout.trim() !== approval.expectedCommit ||
+        childRef.stdout.trim() !== approval.expectedCommit ||
+        targetHead.stdout.trim() !== approval.expectedTargetCommit ||
+        childStatus.stdout.trim()
+      ) {
+        throw new Error(
+          'The reviewed result or integration target changed. Review again before merging.',
+        );
+      }
+    }
+    const mergeRef = approval?.expectedCommit ?? branchName;
     if (squash) {
       try {
-        await exec('git', ['merge', '--squash', '--', branchName], { cwd: mergeRoot });
+        await exec('git', ['merge', '--squash', '--', mergeRef], { cwd: mergeRoot });
       } catch (e) {
         await exec('git', ['reset', '--hard', 'HEAD'], { cwd: mergeRoot }).catch((recoverErr) =>
           console.warn('git reset --hard failed during squash recovery:', recoverErr),
@@ -2033,7 +2064,7 @@ export async function mergeTask(
       }
     } else {
       try {
-        await exec('git', ['merge', '--', branchName], { cwd: mergeRoot });
+        await exec('git', ['merge', '--', mergeRef], { cwd: mergeRoot });
       } catch (e) {
         await exec('git', ['merge', '--abort'], { cwd: mergeRoot }).catch((recoverErr) =>
           console.warn('git merge --abort failed:', recoverErr),

@@ -8,7 +8,10 @@ import { TilingLayout } from './TilingLayout';
 import { IPC } from '../../electron/ipc/channels';
 
 vi.mock('../lib/ipc', () => ({
-  invoke: vi.fn(async (channel: IPC) => (channel === IPC.GetCoverageSummary ? null : [])),
+  invoke: vi.fn(async (channel: IPC) => {
+    if (channel === IPC.DelegationRequest) return { attempts: [], messages: [], paused: false };
+    return channel === IPC.GetCoverageSummary ? null : [];
+  }),
 }));
 vi.mock('../documents/DocumentWorkspacePanel', () => ({ DocumentWorkspacePanel: () => null }));
 vi.mock('./TerminalView', () => ({ TerminalView: () => null }));

@@ -4,7 +4,8 @@ import path from 'node:path';
 import { buildMcpLaunchArgs, isCodexCommand, type ParallelCodeMcpConfig } from './agent-args.js';
 import { atomicWriteFileSync } from './atomic.js';
 import { appendGitInfoExcludeBlock } from '../ipc/git-exclude.js';
-import { getMCPRemoteServerUrl } from './config.js';
+import { getMCPRemoteServerUrl, sessionCapabilityArgs } from './config.js';
+import type { SessionCapabilities } from '../shared/delegation-types.js';
 
 /** Explicit MCP launch configuration belongs to the user (or coordinator). */
 export function canConfigureCanvasMcp(command: string, args: string[]): boolean {
@@ -75,7 +76,7 @@ function launchConfig(
   };
 }
 
-/** Ordinary agent sessions use the same server binary, restricted to canvas tools. */
+/** Ordinary sessions share the server binary with an explicit launch-time tool profile. */
 export function prepareCanvasMcpArgs(opts: {
   command: string;
   taskId: string;
@@ -85,6 +86,7 @@ export function prepareCanvasMcpArgs(opts: {
   port: number;
   token: string;
   dockerMode?: boolean;
+  sessionCapabilities?: SessionCapabilities;
 }): string[] {
   for (const id of [opts.taskId, opts.agentId])
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id)) throw new Error('Invalid canvas session ID.');
@@ -119,7 +121,9 @@ export function prepareCanvasMcpArgs(opts: {
           getMCPRemoteServerUrl(opts.port, opts.dockerMode ? 'canvas' : undefined),
           '--task-id',
           opts.taskId,
-          '--canvas-only',
+          ...(opts.sessionCapabilities
+            ? sessionCapabilityArgs(opts.sessionCapabilities)
+            : ['--canvas-only']),
         ],
         env: { PARALLEL_CODE_MCP_TOKEN: opts.token },
       },

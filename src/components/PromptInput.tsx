@@ -432,6 +432,7 @@ export function PromptInput(props: PromptInputProps) {
   // --- Staged coordinator notification auto-fire ---
   let autoFireInterval: number | undefined;
   function executeAutoFire(staged: NonNullable<typeof props.stagedNotification>) {
+    if (!props.coordinatorMode) return;
     if (autoFireInterval !== undefined) {
       clearInterval(autoFireInterval);
       autoFireInterval = undefined;
@@ -465,7 +466,7 @@ export function PromptInput(props: PromptInputProps) {
       autoFireInterval = undefined;
     }
 
-    if (!notification) return;
+    if (!notification || !props.coordinatorMode) return;
     if (notification.userEdited) {
       logWarn('autofire', 'notification staged but userEdited=true — skipping', {
         taskId: props.taskId,
@@ -586,7 +587,13 @@ export function PromptInput(props: PromptInputProps) {
       [() => props.controlledBy, () => props.stagedNotification] as const,
       ([cb, staged], prev) => {
         const prevCb = prev?.[0];
-        if (cb === 'coordinator' && prevCb === 'human' && staged && !staged.userEdited) {
+        if (
+          props.coordinatorMode &&
+          cb === 'coordinator' &&
+          prevCb === 'human' &&
+          staged &&
+          !staged.userEdited
+        ) {
           const tail = stripAnsi(untrack(() => getAgentOutputTail(props.agentId)));
           const tick = processAutoFireTick({
             staged,
@@ -614,7 +621,7 @@ export function PromptInput(props: PromptInputProps) {
   // Uses the parent-provided nowMs signal if available (avoids a duplicate interval).
   const autoFireCountdownText = () => {
     const notification = props.stagedNotification;
-    if (!notification || notification.userEdited) return null;
+    if (!props.coordinatorMode || !notification || notification.userEdited) return null;
     const now = props.nowMs ? props.nowMs() : Date.now();
     if (hasUserPromptDraft(notification)) return 'Queued — waiting for your draft';
     if (store.tasks[props.taskId]?.terminalInputPending) {
@@ -691,7 +698,7 @@ export function PromptInput(props: PromptInputProps) {
   let textareaRef: HTMLTextAreaElement | undefined;
 
   function hasUserPromptDraft(staged = props.stagedNotification): boolean {
-    return hasUserPromptDraftText(text(), staged?.text);
+    return hasUserPromptDraftText(text(), props.coordinatorMode ? staged?.text : undefined);
   }
 
   onMount(() => {
@@ -828,7 +835,7 @@ export function PromptInput(props: PromptInputProps) {
         invoke(IPC.MCP_CoordinatedTaskPromptDelivered, { taskId: props.taskId }).catch(() => {});
       }
       // If the user manually sent the staged notification text exactly, ack it
-      const staged = props.stagedNotification;
+      const staged = props.coordinatorMode ? props.stagedNotification : undefined;
       if (staged && !staged.userEdited && val === staged.text) {
         const ackTaskId = props.taskId;
         invoke(IPC.MCP_CoordinatorNotificationAck, {
@@ -867,7 +874,13 @@ export function PromptInput(props: PromptInputProps) {
       }}
     >
       <div style={{ position: 'relative', flex: '1', display: 'flex' }}>
-        <Show when={!!props.stagedNotification && !props.stagedNotification.userEdited}>
+        <Show
+          when={
+            props.coordinatorMode &&
+            !!props.stagedNotification &&
+            !props.stagedNotification.userEdited
+          }
+        >
           <div
             style={{
               position: 'absolute',
@@ -920,12 +933,16 @@ export function PromptInput(props: PromptInputProps) {
             flex: '1',
             background: theme.bgInput,
             border:
-              props.stagedNotification && !props.stagedNotification.userEdited
+              props.coordinatorMode &&
+              props.stagedNotification &&
+              !props.stagedNotification.userEdited
                 ? `1px solid ${theme.accent}60`
                 : `1px solid ${theme.border}`,
             'border-radius': 'var(--radius-lg)',
             padding:
-              props.stagedNotification && !props.stagedNotification.userEdited
+              props.coordinatorMode &&
+              props.stagedNotification &&
+              !props.stagedNotification.userEdited
                 ? '20px 36px 6px 10px'
                 : '6px 36px 6px 10px',
             color: theme.fg,
@@ -972,6 +989,7 @@ export function PromptInput(props: PromptInputProps) {
         </button>
         <Show
           when={
+            props.coordinatorMode &&
             !!props.stagedNotification?.userEdited &&
             (props.stagedNotification?.hiddenCompletionCount ?? 0) > 0
           }

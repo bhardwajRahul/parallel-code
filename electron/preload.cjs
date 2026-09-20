@@ -4,6 +4,8 @@ const { contextBridge, ipcRenderer, webFrame, webUtils } = require('electron');
 // Electron sandboxed preloads cannot require arbitrary local JSON files.
 const ALLOWED_CHANNELS = new Set([
   'agent_chat',
+  'delegation_request',
+  'delegation_changed',
   'browser_command',
   'browser_bounds',
   'browser_state',

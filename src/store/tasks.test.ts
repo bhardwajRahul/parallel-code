@@ -929,6 +929,7 @@ describe('createTask coordinator base branch prompt', () => {
     mockAgents = {};
     mockTaskOrder = [];
     vi.mocked(getProjectPath).mockReturnValue('/repo');
+    mockProjects = [{ id: 'proj-1', path: '/repo' }];
     vi.mocked(getProjectBranchPrefix).mockReturnValue('task');
     vi.mocked(isProjectMissing).mockReturnValue(false);
     mockInvoke.mockImplementation((channel: string) => {
@@ -1031,6 +1032,7 @@ describe('createTask does not mutate defaultStepsEnabled', () => {
     mockTaskOrder = [];
     mockDefaultStepsEnabled = false;
     vi.mocked(getProjectPath).mockReturnValue('/repo');
+    mockProjects = [{ id: 'proj-1', path: '/repo' }];
     vi.mocked(getProjectBranchPrefix).mockReturnValue('task');
     vi.mocked(isProjectMissing).mockReturnValue(false);
     mockInvoke.mockImplementation((channel: string) => {
@@ -1088,6 +1090,7 @@ describe('createTask assigns the first pane a session id', () => {
     mockAgents = {};
     mockTaskOrder = [];
     vi.mocked(getProjectPath).mockReturnValue('/repo');
+    mockProjects = [{ id: 'proj-1', path: '/repo' }];
     vi.mocked(getProjectBranchPrefix).mockReturnValue('task');
     vi.mocked(isProjectMissing).mockReturnValue(false);
     mockInvoke.mockImplementation((channel: string) => {
@@ -1112,6 +1115,29 @@ describe('createTask assigns the first pane a session id', () => {
     });
     return mockTasks['task-1'];
   }
+
+  it('waits for authority acknowledgment before inserting a task that can spawn', async () => {
+    const original = mockInvoke.getMockImplementation();
+    let release: (() => void) | undefined;
+    const registered = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockInvoke.mockImplementation((channel: string, args: unknown) => {
+      if (channel === IPC.DelegationRequest) return registered;
+      return original?.(channel, args);
+    });
+    const creating = createWith('claude');
+    await vi.waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith(
+        IPC.DelegationRequest,
+        expect.objectContaining({ action: 'register' }),
+      ),
+    );
+    expect(mockTasks['task-1']).toBeUndefined();
+    release?.();
+    await creating;
+    expect(mockTasks['task-1']).toBeDefined();
+  });
 
   it('gives the first Claude pane an id of its own', async () => {
     const task = await createWith('claude');
@@ -1581,7 +1607,7 @@ describe('closeTask — IPC cleanup ordering', () => {
     expect(removeIdx).toBeGreaterThan(ipcIdx);
   });
 
-  it('MCP_CoordinatorDeregistered rejection is swallowed and coordinator is still removed', async () => {
+  it('closes a parent through one backend lifecycle operation', async () => {
     vi.mocked(getCoordinatorChildren).mockReturnValue({ active: [], collapsed: [] });
     mockTasks['coord-1'] = {
       agentIds: ['agent-coord'],
@@ -1591,19 +1617,26 @@ describe('closeTask — IPC cleanup ordering', () => {
       projectId: 'proj-1',
     };
     mockInvoke.mockImplementation((channel: string) => {
-      if (channel === IPC.MCP_CoordinatorDeregistered) {
-        return Promise.reject(new Error('deregister failed'));
-      }
+      if (channel === IPC.DelegationRequest) return Promise.resolve({ detachedChildIds: [] });
       return Promise.resolve(undefined);
     });
 
     await closeTask('coord-1');
 
+    expect(mockInvoke).toHaveBeenCalledWith(IPC.DelegationRequest, {
+      action: 'closeParent',
+      taskId: 'coord-1',
+      deleteBranch: true,
+    });
+    expect(mockInvoke).not.toHaveBeenCalledWith(IPC.MCP_CoordinatorDeregistered, expect.anything());
     // removeTaskFromStore marks 'removing' synchronously; setTimeout deletion is not awaited
     expect(mockTasks['coord-1']?.closingStatus).toBe('removing');
   });
 
   it('detaches coordinator children without clearing backend review state', async () => {
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === IPC.DelegationRequest ? { detachedChildIds: ['child-1'] } : undefined,
+    );
     vi.mocked(getCoordinatorChildren).mockReturnValue({ active: ['child-1'], collapsed: [] });
     mockTasks['coord-1'] = {
       agentIds: ['agent-coord'],
@@ -1645,6 +1678,7 @@ describe('recordTaskMerged counts merges with cleanup, not closures', () => {
     harness.reset(harness.state());
     mockInvoke.mockResolvedValue(undefined);
     vi.mocked(getProjectPath).mockReturnValue('/repo');
+    mockProjects = [{ id: 'proj-1', path: '/repo' }];
   });
 
   it('closing an unmerged task does NOT increment the counter', async () => {

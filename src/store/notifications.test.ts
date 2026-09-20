@@ -24,9 +24,10 @@ const core = vi.hoisted(() => ({
 const ipcHandlers = new Map<string, (data: unknown) => void>();
 const activeHandlerCounts = new Map<string, number>();
 
-vi.mock('solid-js/store', async () => {
+vi.mock('solid-js/store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('solid-js/store')>();
   const { mockSolidStoreProduce } = await import('./test-helpers');
-  return mockSolidStoreProduce();
+  return { ...actual, ...mockSolidStoreProduce() };
 });
 
 vi.mock('./core', async () => {
@@ -45,6 +46,7 @@ vi.mock('./core', async () => {
 vi.mock('../lib/ipc', () => ({ invoke: vi.fn() }));
 vi.mock('../../electron/ipc/channels', () => ({
   IPC: {
+    DelegationChanged: 'delegation_changed',
     MCP_TaskCreated: 'mcp_task_created',
     MCP_TaskClosed: 'mcp_task_closed',
     MCP_CoordinatorNotificationStaged: 'mcp_coordinator_notification_staged',

@@ -688,7 +688,11 @@ export function applyAgentHookLaunch(
   return withClaudeHookSettings(command, args.args, agentHookRuntime.claudeSettingsPath);
 }
 
-export async function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): Promise<void> {
+export async function spawnAgent(
+  win: BrowserWindow,
+  args: SpawnAgentArgs,
+  beforeSpawn?: () => void,
+): Promise<void> {
   if (handingOff.has(args.agentId)) throw new Error('Wait for the view switch to finish.');
   const channelId = args.onOutput.__CHANNEL_ID__;
   const command = args.command || resolveUserShell();
@@ -772,6 +776,8 @@ export async function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): Prom
     dockerMode: args.dockerMode === true,
   });
 
+  // Trusted main-process admission runs after asynchronous setup, immediately before launch.
+  beforeSpawn?.();
   const proc = pty.spawn(spawnSpec.spawnCommand, spawnSpec.spawnArgs, {
     name: 'xterm-256color',
     cols: args.cols,

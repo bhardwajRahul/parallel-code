@@ -1,3 +1,5 @@
+import { registerTaskAuthority, delegationRequest, applyDelegationChange } from './delegation';
+import type { DelegationChanged, IntegrationPolicy } from '../../electron/shared/delegation-types';
 import { produce } from 'solid-js/store';
 import { isAgentChat } from './agent-chat';
 import { invoke, Channel } from '../lib/ipc';
@@ -411,6 +413,7 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
     def: agentDef,
   });
 
+  await registerTaskAuthority(task, agentDef);
   initTaskInStore(taskId, task, agent, projectId, agentDef);
 
   saveState(); // fire-and-forget — errors handled internally
@@ -468,6 +471,7 @@ export async function createImportedTask(opts: CreateImportedTaskOptions): Promi
     def: agentDef,
   });
 
+  await registerTaskAuthority(task, agentDef);
   initTaskInStore(id, task, agent, projectId, agentDef);
   saveState();
   return id;
@@ -479,23 +483,24 @@ export async function createImportedTask(opts: CreateImportedTaskOptions): Promi
  */
 export function getCoordinatorCloseWarning(taskId: string): string | null {
   const task = store.tasks[taskId];
-  if (!task?.coordinatorMode) return null;
+  if (!task) return null;
   const children = getCoordinatorChildren(taskId);
   const count = children.active.length + children.collapsed.length;
   if (count === 0) return null;
-  return `This coordinator has ${count} active sub-task(s). Closing it will detach them — they will become standalone tasks and continue running independently.`;
+  return `This task has ${count} child task(s). Closing it will detach them — they will become standalone tasks and continue running independently.`;
 }
 
 export async function closeTask(taskId: string): Promise<void> {
   const task = store.tasks[taskId];
   if (!task || task.closingStatus === 'closing' || task.closingStatus === 'removing') return;
 
-  const childIdsToDetach: string[] = task.coordinatorMode
-    ? (() => {
-        const children = getCoordinatorChildren(taskId);
-        return [...children.active, ...children.collapsed];
-      })()
-    : [];
+  const childIdsToDetach: string[] =
+    task.coordinatorMode || task.delegationParent
+      ? (() => {
+          const children = getCoordinatorChildren(taskId);
+          return [...children.active, ...children.collapsed];
+        })()
+      : [];
 
   const agentIds = [...task.agentIds];
   const shellAgentIds = [...task.shellAgentIds];
@@ -513,6 +518,16 @@ export async function closeTask(taskId: string): Promise<void> {
   invoke(IPC.StopPlanWatcher, { taskId }).catch(console.error);
 
   try {
+    if (task.coordinatorMode || task.delegationParent || childIdsToDetach.length > 0) {
+      const result = await delegationRequest<{ detachedChildIds: string[] }>({
+        action: 'closeParent',
+        taskId,
+        deleteBranch,
+      });
+      applyDelegationChange({ taskId, detachedChildIds: result.detachedChildIds });
+      removeTaskFromStore(taskId, [...agentIds, ...shellAgentIds]);
+      return;
+    }
     // Kill agents
     for (const agentId of agentIds) {
       await invoke(IPC.KillAgent, { agentId }).catch(console.error);
@@ -543,15 +558,6 @@ export async function closeTask(taskId: string): Promise<void> {
       });
     }
 
-    // Agents are dead — deregister the coordinator so no more MCP tool calls succeed.
-    // Done after kills (not before) so a failed close leaves the backend registered
-    // and the coordinator agent can still make tool calls until it's actually gone.
-    if (task.coordinatorMode) {
-      await invoke(IPC.MCP_CoordinatorDeregistered, { coordinatorTaskId: taskId }).catch((err) =>
-        console.warn('[MCP] Failed to deregister coordinator:', err),
-      );
-    }
-
     // Notify backend to clean up this task from its coordinator's state map.
     if (task.coordinatedBy) {
       await invoke(IPC.MCP_CoordinatedTaskClosed, {
@@ -560,26 +566,8 @@ export async function closeTask(taskId: string): Promise<void> {
       }).catch((err) => console.warn('[MCP] Failed to notify coordinator of task close:', err));
     }
 
-    // Backend cleanup succeeded — detach children then remove coordinator from UI.
-    if (childIdsToDetach.length > 0) {
-      setStore(
-        produce((s) => {
-          for (const childId of childIdsToDetach) {
-            if (s.tasks[childId]) {
-              s.tasks[childId].coordinatedBy = undefined;
-              // Unlock the textarea — control bar disappears when coordinatedBy
-              // is cleared, so the task must also be unlocked.
-              s.tasks[childId].controlledBy = undefined;
-              // Clear stale coordinator wiring — the backend registry no longer
-              // knows about these tasks, so MCP tools would fail.
-              s.tasks[childId].mcpConfigPath = undefined;
-              s.tasks[childId].mcpStartupStatus = undefined;
-              s.tasks[childId].mcpStartupError = undefined;
-            }
-          }
-        }),
-      );
-    }
+    await delegationRequest({ action: 'unregister', taskId });
+
     removeTaskFromStore(taskId, [...agentIds, ...shellAgentIds]);
   } catch (err) {
     // Backend cleanup failed — show error, allow retry
@@ -699,6 +687,7 @@ export async function mergeTask(
         coordinatorTaskId: task.coordinatedBy,
       }).catch((err) => console.warn('[MCP] Failed to notify coordinator of task close:', err));
     }
+    await delegationRequest({ action: 'unregister', taskId });
     removeTaskFromStore(taskId, [...agentIds, ...shellAgentIds]);
   }
 }
@@ -1028,7 +1017,7 @@ export function hasDirectTask(projectId: string): boolean {
 export async function collapseTask(taskId: string): Promise<void> {
   const task = store.tasks[taskId];
   if (!task || task.collapsed || task.closingStatus) return;
-  if (task.coordinatorMode) return;
+  if (task.coordinatorMode || task.delegationParent) return;
   // Coordinated children must not be collapsed — the backend coordinator registry
   // still holds the old agentId, so clearing agentIds here breaks send_prompt and
   // idle detection. Block collapse entirely for tasks managed by a coordinator.
@@ -1203,6 +1192,8 @@ interface MCPTaskCreatedEvent {
   worktreePath: string;
   agentId: string;
   coordinatorTaskId: string;
+  baseBranch?: string;
+  integrationPolicy?: IntegrationPolicy;
   prompt?: string;
   mcpConfigPath?: string;
   preambleFileExistedBefore?: boolean;
@@ -1219,6 +1210,11 @@ export function initMCPListeners(): () => void {
   activeMCPListenersCleanup?.();
 
   const cleanups: Array<() => void> = [];
+  cleanups.push(
+    window.electron.ipcRenderer.on(IPC.DelegationChanged, (data: unknown) => {
+      applyDelegationChange(data as DelegationChanged);
+    }),
+  );
 
   cleanups.push(
     window.electron.ipcRenderer.on(IPC.MCP_TaskCreated, (data: unknown) => {
@@ -1233,6 +1229,8 @@ export function initMCPListeners(): () => void {
           worktreePath: evt.worktreePath,
           agentId: evt.agentId,
         }),
+        baseBranch: evt.baseBranch ?? store.tasks[evt.coordinatorTaskId]?.branchName,
+        integrationPolicy: evt.integrationPolicy,
         coordinatedBy: evt.coordinatorTaskId,
         controlledBy: 'coordinator',
         // Coordinated initial assignments are delivered by the backend because
@@ -1274,6 +1272,8 @@ export function initMCPListeners(): () => void {
         produce((s) => {
           if (s.tasks[evt.taskId]) return; // idempotent — ignore duplicate events
           s.tasks[evt.taskId] = task;
+          if (s.tasks[evt.coordinatorTaskId])
+            s.tasks[evt.coordinatorTaskId].delegationParent = true;
           s.agents[evt.agentId] = agent;
           s.taskOrder.push(evt.taskId);
           created = true;
@@ -1401,6 +1401,9 @@ export function initMCPListeners(): () => void {
     window.electron.ipcRenderer.on(IPC.MCP_TaskStateSync, (data: unknown) => {
       const evt = data as {
         taskId: string;
+        delegationParent?: boolean;
+        delegationPaused?: boolean;
+        integrationPolicy?: IntegrationPolicy;
         signalDoneReceived?: boolean;
         signalDoneAt?: string;
         signalDoneConsumed?: boolean;
@@ -1420,6 +1423,12 @@ export function initMCPListeners(): () => void {
         mcpStartupError?: string | null;
       };
       if (store.tasks[evt.taskId]) {
+        if (evt.delegationParent !== undefined)
+          setStore('tasks', evt.taskId, 'delegationParent', evt.delegationParent);
+        if (evt.delegationPaused !== undefined)
+          setStore('tasks', evt.taskId, 'delegationPaused', evt.delegationPaused);
+        if (evt.integrationPolicy !== undefined)
+          setStore('tasks', evt.taskId, 'integrationPolicy', evt.integrationPolicy);
         const hasLandingStateUpdate =
           evt.verification !== undefined ||
           evt.landingState !== undefined ||
@@ -1605,6 +1614,7 @@ export function retryTaskMcpStartup(taskId: string): Promise<void> {
       baseBranch: task.baseBranch,
       worktreePath: task.worktreePath,
       coordinatorTaskId: task.coordinatedBy,
+      integrationPolicy: task.integrationPolicy,
       controlledBy: task.controlledBy,
       agentId: task.agentIds[0],
       signalDoneAt: task.signalDoneAt,
@@ -1623,7 +1633,10 @@ export function retryTaskMcpStartup(taskId: string): Promise<void> {
       })
       .catch((err: unknown) => markTaskMcpError(taskId, String(err)));
   }
-  return Promise.resolve();
+  const agent = task.agentIds[0] ? store.agents[task.agentIds[0]]?.def : undefined;
+  return registerTaskAuthority(task, agent)
+    .then(() => markTaskMcpReady(taskId))
+    .catch((error: unknown) => markTaskMcpError(taskId, String(error)));
 }
 
 export function setTaskControl(taskId: string, who: 'coordinator' | 'human'): void {

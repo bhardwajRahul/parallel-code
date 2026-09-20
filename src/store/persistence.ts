@@ -1,3 +1,4 @@
+import { delegationRequest, taskAuthorityInput } from './delegation';
 import { restoreCanvasTaskLinks } from '../lib/canvas-task-links';
 import { restoreMindMap } from '../graph/model';
 import { produce } from 'solid-js/store';
@@ -285,6 +286,9 @@ function toPersistedTask(task: Task, agentDefs: AgentDef[], collapsed?: boolean)
     branchAdoptedFrom: task.branchAdoptedFrom,
     branchOfferDismissed: task.branchOfferDismissed,
     ...(collapsed ? { collapsed: true } : {}),
+    delegationParent: task.delegationParent,
+    delegationPaused: task.delegationPaused,
+    integrationPolicy: task.integrationPolicy,
     coordinatorMode: task.coordinatorMode,
     propagateSkipPermissions: task.propagateSkipPermissions,
     maxConcurrentTasks: task.maxConcurrentTasks,
@@ -600,6 +604,8 @@ export async function loadState(): Promise<void> {
   // Also migrate defaultDirectMode -> defaultGitIsolation
   for (const p of projects) {
     if (!p.color) p.color = randomPastelColor();
+    p.allowAgentTaskCreation = p.allowAgentTaskCreation === true;
+    p.allowPeerAccess = p.allowPeerAccess === true;
     if (typeof p.coverageReportPath === 'string') {
       const trimmed = p.coverageReportPath.trim();
       p.coverageReportPath = trimmed ? trimmed : undefined;
@@ -628,6 +634,57 @@ export async function loadState(): Promise<void> {
       if (pt && !pt.projectId) {
         pt.projectId = id;
       }
+    }
+  }
+
+  // Restore acknowledged authority before store insertion can mount and spawn terminals.
+  for (const project of projects) {
+    await delegationRequest({
+      action: 'projectPolicy',
+      policy: {
+        projectId: project.id,
+        allowAgentTaskCreation: project.allowAgentTaskCreation === true,
+        allowPeerAccess: project.allowPeerAccess === true,
+      },
+    }).catch((error: unknown) => console.warn('Could not restore project permissions:', error));
+  }
+  const detachedRestores: string[] = [];
+  for (const task of Object.values(raw.tasks)) {
+    const legacy = task as PersistedTask & { directMode?: boolean };
+    task.gitIsolation = legacy.gitIsolation ?? (legacy.directMode ? 'direct' : 'worktree');
+    if (!task.coordinatedBy || raw.tasks[task.coordinatedBy]) continue;
+    detachedRestores.push(task.name);
+    task.coordinatedBy = undefined;
+    task.controlledBy = undefined;
+    task.mcpConfigPath = undefined;
+    task.integrationPolicy = undefined;
+    task.delegationPaused = true;
+  }
+  const authorityErrors = new Map<string, string>();
+  const authorityTasks = Object.values(raw.tasks).sort(
+    (a, b) => Number(!!a.coordinatedBy) - Number(!!b.coordinatedBy),
+  );
+  for (const task of authorityTasks) {
+    const project = projects.find((p) => p.id === task.projectId);
+    if (!project || project.kind === 'document') continue;
+    const agent = task.agentDefs?.[0] ?? task.agentDef ?? undefined;
+    try {
+      await delegationRequest({
+        action: 'register',
+        task: taskAuthorityInput(
+          task,
+          project,
+          agent,
+          agent &&
+            raw.agentEnvFiles &&
+            typeof raw.agentEnvFiles === 'object' &&
+            typeof (raw.agentEnvFiles as Record<string, unknown>)[agent.id] === 'string'
+            ? (raw.agentEnvFiles as Record<string, string>)[agent.id]
+            : undefined,
+        ),
+      });
+    } catch (error) {
+      authorityErrors.set(task.id, String(error));
     }
   }
 
@@ -900,6 +957,14 @@ export async function loadState(): Promise<void> {
           stepsEnabled: pt.stepsEnabled,
           branchAdoptedFrom: validBranch(pt.branchAdoptedFrom, pt.branchName),
           branchOfferDismissed: validBranch(pt.branchOfferDismissed),
+          delegationParent: pt.delegationParent === true,
+          delegationPaused: pt.delegationPaused === true,
+          integrationPolicy:
+            pt.integrationPolicy === 'review'
+              ? 'review'
+              : pt.integrationPolicy === 'automatic'
+                ? 'automatic'
+                : undefined,
           coordinatorMode: pt.coordinatorMode,
           propagateSkipPermissions: pt.propagateSkipPermissions,
           maxConcurrentTasks: restoredMaxConcurrentTasks(pt.maxConcurrentTasks),
@@ -1036,6 +1101,14 @@ export async function loadState(): Promise<void> {
             : undefined,
           savedAgentDef: agentDefs[0],
           savedAgentDefs: agentDefs.length > 0 ? agentDefs : undefined,
+          delegationParent: pt.delegationParent === true,
+          delegationPaused: pt.delegationPaused === true,
+          integrationPolicy:
+            pt.integrationPolicy === 'review'
+              ? 'review'
+              : pt.integrationPolicy === 'automatic'
+                ? 'automatic'
+                : undefined,
           coordinatorMode: pt.coordinatorMode,
           propagateSkipPermissions: pt.propagateSkipPermissions,
           maxConcurrentTasks: restoredMaxConcurrentTasks(pt.maxConcurrentTasks),
@@ -1084,6 +1157,16 @@ export async function loadState(): Promise<void> {
       }
     }),
   );
+
+  if (detachedRestores.length > 0) {
+    showNotification(
+      `Restored ${detachedRestores.join(', ')} as independent tasks because their parent is missing. Work is preserved; child launches are paused.`,
+    );
+  }
+  for (const [taskId, error] of authorityErrors) {
+    if (store.tasks[taskId])
+      showNotification(`Delegation unavailable for ${store.tasks[taskId].name}: ${error}`);
+  }
 
   // Restored agents are considered running; reflect that immediately in task status dots.
   for (const agentId of restoredRunningAgentIds) {
