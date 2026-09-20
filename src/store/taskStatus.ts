@@ -15,6 +15,7 @@ import {
 import { warn as logWarn, info as logInfo, errMessage } from '../lib/log';
 import { adoptTaskBranch } from './task-branch';
 import { clearAgentHookStatus, getAgentHookStatus } from './agentHookStatus';
+import { getPrChecks } from './pr-checks-state';
 import {
   chunkContainsAgentPrompt,
   getAgentPromptReadiness,
@@ -896,8 +897,13 @@ export function clearAgentActivity(agentId: string): void {
 
 function isTaskReady(taskId: string): boolean {
   const git = store.taskGitStatus[taskId];
+  const prChecks = getPrChecks(taskId);
   return Boolean(
-    isGitStatusUsable(git) && git.has_committed_changes && !git.has_uncommitted_changes,
+    isGitStatusUsable(git) &&
+    git.has_committed_changes &&
+    !git.has_uncommitted_changes &&
+    prChecks?.overall !== 'failure' &&
+    !prChecks?.failing,
   );
 }
 

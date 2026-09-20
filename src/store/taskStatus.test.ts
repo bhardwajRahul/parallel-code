@@ -7,6 +7,7 @@ let mockActiveTaskId: string | null = null;
 let mockTasks: Record<string, unknown> = {};
 let mockAgents: Record<string, unknown> = {};
 let mockTaskGitStatus: Record<string, unknown> = {};
+let mockPrChecks: Record<string, { overall: string; failing: number }> = {};
 const core = vi.hoisted(() => ({
   harness: undefined as
     | MockStoreHarness<{
@@ -58,6 +59,10 @@ vi.mock('./core', async () => {
 // Mock IPC so tryAutoTrust's invoke call doesn't hit Electron.
 vi.mock('../lib/ipc', () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('./pr-checks-state', () => ({
+  getPrChecks: (taskId: string) => mockPrChecks[taskId],
 }));
 
 // Stub SolidJS reactive primitives — tests run outside a reactive root.
@@ -136,6 +141,7 @@ beforeEach(() => {
   mockTasks = {};
   mockAgents = {};
   mockTaskGitStatus = {};
+  mockPrChecks = {};
 });
 
 afterEach(() => {
@@ -843,6 +849,26 @@ describe('task attention state', () => {
     expect(getTaskAttentionState('task-1')).toBe('ready');
     expect(getTaskDotStatus('task-1')).toBe('ready');
     expect(taskNeedsAttention('task-1')).toBe(false);
+  });
+
+  it.each([
+    { overall: 'failure', failing: 1 },
+    { overall: 'failure', failing: 0 },
+    { overall: 'pending', failing: 1 },
+  ])('does not report ready for a CI failure ($overall, $failing failing)', (prChecks) => {
+    setMockTask('task-1', { agentIds: ['agent-1'] });
+    setMockAgent('agent-1', { status: 'running' });
+    vi.setSystemTime(new Date('2026-05-10T10:00:00Z'));
+    mockTaskGitStatus['task-1'] = {
+      has_committed_changes: true,
+      has_uncommitted_changes: false,
+      current_branch: 'task/example',
+      refreshedAt: Date.now(),
+    };
+    mockPrChecks['task-1'] = prChecks;
+
+    expect(getTaskAttentionState('task-1')).toBe('idle');
+    expect(getTaskDotStatus('task-1')).toBe('waiting');
   });
 
   it('does not report ready from a stale git status snapshot', () => {
