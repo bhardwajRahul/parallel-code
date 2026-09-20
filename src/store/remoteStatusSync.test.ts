@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { remoteOutputPreview } from './remoteStatusSync';
+import { remoteChatPreview, remoteOutputPreview } from './remoteStatusSync';
 
 const resetNotice = 'You have 1 usage limit reset available. Run /usage to use one.';
 
@@ -65,5 +65,31 @@ describe('remote task output previews', () => {
   it('leaves the preview empty when only terminal chrome is available', () => {
     expect(remoteOutputPreview(`${resetNotice}\nq q q\n›`)).toBe('');
     expect(remoteOutputPreview('')).toBe('');
+  });
+});
+
+describe('remote chat previews', () => {
+  it('shows the last line of the latest reply', () => {
+    expect(
+      remoteChatPreview({
+        status: 'working',
+        requests: [],
+        items: [
+          { id: '1', kind: 'assistant', text: 'Looking.\n\nFixed the test.\n' },
+          { id: '2', kind: 'tool', text: 'npm test' },
+          { id: '3', kind: 'assistant', text: '  ' },
+        ],
+      }),
+    ).toBe('Fixed the test.');
+  });
+  it('is empty before the agent replies', () => {
+    expect(remoteChatPreview(undefined)).toBe('');
+    expect(
+      remoteChatPreview({
+        status: 'ready',
+        requests: [],
+        items: [{ id: '1', kind: 'user', text: 'Hi' }],
+      }),
+    ).toBe('');
   });
 });

@@ -591,3 +591,79 @@ textarea.mobile-input {
 .mobile-terminal .xterm-composition-view {
   pointer-events: none;
 }
+
+/* The desktop chat view, themed from the phone palette. It reads the desktop's
+   theme variables, which the phone page does not otherwise define. */
+.mobile-chat {
+  --fg: #e0eaf3;
+  --fg-muted: var(--mobile-muted);
+  --border: var(--mobile-border);
+  --border-focus: var(--mobile-accent);
+  --accent: var(--mobile-accent);
+  --accent-hover: #8fe0ff;
+  --accent-text: #031018;
+  --link: var(--mobile-accent);
+  --success: #2fd198;
+  --error: #ff5f73;
+  --warning: #ffc569;
+  --diff-add-bg: rgba(47, 209, 152, 0.1);
+  --diff-remove-bg: rgba(255, 95, 115, 0.1);
+  --bg-elevated: var(--mobile-panel);
+  --task-panel-bg: var(--mobile-bg);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --chat-border: var(--border);
+  --chat-accent: var(--accent);
+  --chat-surface: color-mix(in srgb, var(--fg) 5%, var(--task-panel-bg));
+  --chat-surface-strong: color-mix(in srgb, var(--fg) 10%, var(--task-panel-bg));
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.mobile-chat .chat-ui {
+  flex: 1;
+}
+/* Touch overrides. The chat's desktop sizing assumes a mouse: actions that appear
+   on hover never would, its 24–32px controls sit below the 44px the rest of this
+   UI uses, and iOS zooms the page into any field set under 16px. The extra
+   `.chat-ui` outranks chat.css, which loads later with the lazy chat chunk. */
+.mobile-chat .chat-ui :is(textarea, input, select) {
+  font-size: 16px;
+}
+.mobile-chat .chat-ui .chat-composer textarea {
+  min-height: 44px;
+}
+.mobile-chat .chat-ui .chat-message-actions {
+  opacity: 1;
+}
+.mobile-chat .chat-ui .chat-copy,
+.mobile-chat .chat-ui .chat-composer :is(.chat-send, .chat-stop) {
+  width: 44px;
+  height: 44px;
+}
+.mobile-chat
+  .chat-ui
+  :is(
+    .chat-toolbar button,
+    .chat-interrupt,
+    .chat-review,
+    .chat-file button,
+    .chat-queue button,
+    .chat-options button,
+    .chat-model-selectors select
+  ) {
+  min-height: 44px;
+  padding-inline: 10px;
+}
+.mobile-chat .chat-ui :is(.chat-toolbar button, .chat-interrupt, .chat-review, .chat-queue button) {
+  font-size: 13px;
+}
+/* Enter and Shift+Enter are keyboard shortcuts a phone keyboard does not offer. */
+.mobile-chat .chat-ui .chat-composer-hint {
+  display: none;
+}

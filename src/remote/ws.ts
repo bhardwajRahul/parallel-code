@@ -1,7 +1,8 @@
 import { createSignal } from 'solid-js';
 import { createStore, reconcile } from 'solid-js/store';
 import { getToken, clearToken, getPairedToken, clearPairedToken } from './auth';
-import type { ServerMessage, RemoteAgent } from '../../electron/remote/protocol';
+import type { ServerMessage, RemoteAgent, RemoteChatAction } from '../../electron/remote/protocol';
+import type { AgentChatState } from '../../electron/shared/agent-chat-types';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -32,8 +33,10 @@ function failPendingInputs(): void {
 
 type OutputListener = (data: string) => void;
 type ScrollbackListener = (data: string, cols: number, rows: number) => void;
+type ChatListener = (state: AgentChatState) => void;
 const outputListeners = new Map<string, Set<OutputListener>>();
 const scrollbackListeners = new Map<string, Set<ScrollbackListener>>();
+const chatListeners = new Map<string, Set<ChatListener>>();
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -95,6 +98,7 @@ export function connect(): void {
     for (const [agentId, set] of outputListeners) {
       if (set.size > 0) send({ type: 'subscribe', agentId });
     }
+    for (const agentId of chatListeners.keys()) send({ type: 'chat-subscribe', agentId });
   };
 
   ws.onmessage = (event) => {
@@ -130,6 +134,10 @@ export function connect(): void {
         listeners?.forEach((fn) => fn(msg.data));
         break;
       }
+
+      case 'chat-state':
+        chatListeners.get(msg.agentId)?.forEach((fn) => fn(msg.state));
+        break;
 
       case 'scrollback': {
         const listeners = scrollbackListeners.get(msg.agentId);
@@ -226,11 +234,31 @@ export function sendInput(
   data: string,
   { submit = false, prefixKey }: SendInputOptions = {},
 ): Promise<void> {
+  if (data.length > 4096)
+    return Promise.reject(new Error('This message is too long. Shorten it and try again.'));
+  return request({
+    type: 'input',
+    agentId,
+    data,
+    submit,
+    ...(prefixKey ? { prefixKey } : {}),
+  });
+}
+
+/** Run a conversation action on a desktop chat; needs a paired phone. */
+export function sendChatAction(
+  agentId: string,
+  action: RemoteChatAction,
+  params: Record<string, unknown> = {},
+): Promise<void> {
+  return request({ type: 'chat-action', agentId, action, params });
+}
+
+/** Send a message the server confirms with an input-result for its requestId. */
+function request(msg: Record<string, unknown>): Promise<void> {
   if (!canControl() || ws?.readyState !== WebSocket.OPEN) {
     return Promise.reject(new Error('Reconnect before sending. Your draft has been kept.'));
   }
-  if (data.length > 4096)
-    return Promise.reject(new Error('This message is too long. Shorten it and try again.'));
   const requestId = String(++nextInputId);
   return new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -243,14 +271,7 @@ export function sendInput(
     }, 10000);
     pendingInputs.set(requestId, { resolve, reject, timer });
     try {
-      send({
-        type: 'input',
-        agentId,
-        data,
-        requestId,
-        submit,
-        ...(prefixKey ? { prefixKey } : {}),
-      });
+      send({ ...msg, requestId });
     } catch {
       clearTimeout(timer);
       pendingInputs.delete(requestId);
@@ -292,5 +313,23 @@ export function onScrollback(agentId: string, fn: ScrollbackListener): () => voi
     const set = scrollbackListeners.get(agentId);
     set?.delete(fn);
     if (set?.size === 0) scrollbackListeners.delete(agentId);
+  };
+}
+
+/** Follow a desktop chat. The first listener subscribes; the last one to leave unsubscribes. */
+export function watchChat(agentId: string, fn: ChatListener): () => void {
+  let listeners = chatListeners.get(agentId);
+  if (!listeners) {
+    listeners = new Set();
+    chatListeners.set(agentId, listeners);
+    send({ type: 'chat-subscribe', agentId });
+  }
+  listeners.add(fn);
+  return () => {
+    const set = chatListeners.get(agentId);
+    set?.delete(fn);
+    if (set?.size !== 0) return;
+    chatListeners.delete(agentId);
+    send({ type: 'chat-unsubscribe', agentId });
   };
 }

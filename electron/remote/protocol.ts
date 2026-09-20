@@ -1,3 +1,5 @@
+import type { AgentChatState } from '../shared/agent-chat-types.js';
+
 /**
  * Task attention state, mirrored from the desktop's TaskAttentionState so the
  * mobile overview can show the same richer status ("needs input", "working",
@@ -25,7 +27,19 @@ export interface RemoteAgent {
   agentName?: string;
   /** Richer, renderer-derived task status. Defaults to 'idle' when unknown. */
   attention: RemoteAttentionState;
+  /** Set for the app's built-in chat, which has no terminal to stream. */
+  kind?: 'chat';
 }
+
+/** Conversation actions a paired phone may take on a running chat. */
+export const REMOTE_CHAT_ACTIONS = [
+  'models',
+  'selectModel',
+  'send',
+  'interrupt',
+  'respond',
+] as const;
+export type RemoteChatAction = (typeof REMOTE_CHAT_ACTIONS)[number];
 
 // --- Server -> Client messages ---
 
@@ -55,6 +69,14 @@ export interface ScrollbackMessage {
   rows?: number;
 }
 
+/** The whole conversation, sent on subscribe and then at most every few hundred ms. */
+export interface ChatStateMessage {
+  type: 'chat-state';
+  agentId: string;
+  state: AgentChatState;
+}
+
+/** Answers an `input` or `chat-action` that carried a requestId. */
 export interface InputResultMessage {
   type: 'input-result';
   requestId: string;
@@ -67,6 +89,7 @@ export type ServerMessage =
   | StatusMessage
   | AgentsMessage
   | ScrollbackMessage
+  | ChatStateMessage
   | InputResultMessage;
 
 // --- Client -> Server messages ---
@@ -108,6 +131,20 @@ export interface UnsubscribeCommand {
   agentId: string;
 }
 
+export interface ChatSubscribeCommand {
+  type: 'chat-subscribe' | 'chat-unsubscribe';
+  agentId: string;
+}
+
+export interface ChatActionCommand {
+  type: 'chat-action';
+  agentId: string;
+  requestId: string;
+  action: RemoteChatAction;
+  /** Action arguments, validated by the same code as the desktop's. */
+  params: Record<string, unknown>;
+}
+
 export interface AuthCommand {
   type: 'auth';
   token: string;
@@ -119,7 +156,9 @@ export type ClientMessage =
   | ResizeCommand
   | KillCommand
   | SubscribeCommand
-  | UnsubscribeCommand;
+  | UnsubscribeCommand
+  | ChatSubscribeCommand
+  | ChatActionCommand;
 
 /** Minimal validation for incoming client messages. */
 export function parseClientMessage(raw: string): ClientMessage | null {
@@ -174,10 +213,30 @@ export function parseClientMessage(raw: string): ClientMessage | null {
         return { type: 'subscribe', agentId: msg.agentId };
       case 'unsubscribe':
         return { type: 'unsubscribe', agentId: msg.agentId };
+      case 'chat-subscribe':
+      case 'chat-unsubscribe':
+        return { type: msg.type, agentId: msg.agentId };
+      case 'chat-action':
+        return parseChatAction(msg, msg.agentId);
       default:
         return null;
     }
   } catch {
     return null;
   }
+}
+
+function parseChatAction(msg: Record<string, unknown>, agentId: string): ChatActionCommand | null {
+  if (typeof msg.requestId !== 'string' || !msg.requestId.length || msg.requestId.length > 80)
+    return null;
+  if (!REMOTE_CHAT_ACTIONS.includes(msg.action as RemoteChatAction)) return null;
+  const params = msg.params ?? {};
+  if (typeof params !== 'object' || params === null || Array.isArray(params)) return null;
+  return {
+    type: 'chat-action',
+    agentId,
+    requestId: msg.requestId,
+    action: msg.action as RemoteChatAction,
+    params: params as Record<string, unknown>,
+  };
 }

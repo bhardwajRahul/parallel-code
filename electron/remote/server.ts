@@ -27,6 +27,11 @@ import {
   type RemoteAgent,
   type RemoteAttentionState,
 } from './protocol.js';
+import {
+  createChatSubscriptions,
+  runRemoteChatAction,
+  type RemoteChatSource,
+} from './chat-bridge.js';
 import { parseMindMapUpdate, type MindMapDocument, type MindMapUpdate } from '../shared/mindmap.js';
 import { parseReasoningUpdate } from '../shared/reasoning-feed.js';
 import { parseCanvasView, type CanvasView } from '../shared/canvas-view.js';
@@ -338,6 +343,29 @@ function buildAgentList(
     }
   }
   return Array.from(byTask.values());
+}
+
+/**
+ * Add the desktop's running chats. A chat stands in for its task's terminal
+ * entry: the terminal only takes the conversation back by ending the chat.
+ */
+function withChatAgents(
+  terminals: RemoteAgent[],
+  chats: ReturnType<RemoteChatSource['list']>,
+  describe: (taskId: string) => Omit<RemoteAgent, 'agentId' | 'taskId' | 'status' | 'exitCode'>,
+): RemoteAgent[] {
+  const chatTasks = new Set(chats.map((chat) => chat.taskId));
+  return [
+    ...terminals.filter((agent) => !chatTasks.has(agent.taskId)),
+    ...chats.map(({ agentId, taskId, status }) => ({
+      ...describe(taskId),
+      agentId,
+      taskId,
+      status,
+      exitCode: null,
+      kind: 'chat' as const,
+    })),
+  ];
 }
 
 /** Read and JSON-parse a request body with a hard size cap. */
@@ -870,12 +898,25 @@ export function startRemoteServer(opts: {
   getTaskContext?: (
     taskId: string,
   ) => Pick<RemoteAgent, 'projectName' | 'agentName' | 'lastLine'> | undefined;
+  /** The desktop's built-in chats; without it phones only see terminals. */
+  chats?: RemoteChatSource;
 }): Promise<RemoteServer> {
   // Defensive default for the optional signature: every real caller wires
   // attention via mobileTaskBridge, so 'idle' is only used if a future caller
   // omits it.
   const getTaskAttention: (taskId: string) => RemoteAttentionState =
     opts.getTaskAttention ?? (() => 'idle');
+  const agentList = (): RemoteAgent[] =>
+    withChatAgents(
+      buildAgentList(opts.getTaskName, opts.getAgentStatus, getTaskAttention, opts.getTaskContext),
+      opts.chats?.list() ?? [],
+      (taskId) => ({
+        taskName: opts.getTaskName(taskId),
+        lastLine: '',
+        attention: getTaskAttention(taskId),
+        ...opts.getTaskContext?.(taskId),
+      }),
+    );
   const token = randomBytes(24).toString('base64url');
   const subtaskToken = randomBytes(24).toString('base64url');
   const mobileToken = randomBytes(24).toString('base64url');
@@ -1338,12 +1379,7 @@ export function startRemoteServer(opts: {
       }
 
       if (url.pathname === '/api/agents' && req.method === 'GET') {
-        const list = buildAgentList(
-          opts.getTaskName,
-          opts.getAgentStatus,
-          getTaskAttention,
-          opts.getTaskContext,
-        );
+        const list = agentList();
         res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': 'application/json' });
         res.end(JSON.stringify(list));
         return;
@@ -1545,6 +1581,7 @@ export function startRemoteServer(opts: {
   const clientTokenTypes = new Map<WebSocket, 'coordinator' | 'mobile' | 'paired'>();
   const pendingSubmissions = new Map<string, ReturnType<typeof setTimeout>>();
   const authTimers = new WeakMap<WebSocket, ReturnType<typeof setTimeout>>();
+  const clientChats = new WeakMap<WebSocket, ReturnType<typeof createChatSubscriptions>>();
 
   function broadcast(msg: ServerMessage): void {
     const json = JSON.stringify(msg);
@@ -1556,22 +1593,15 @@ export function startRemoteServer(opts: {
   }
 
   const unsubSpawn = onPtyEvent('spawn', () => {
-    const list = buildAgentList(
-      opts.getTaskName,
-      opts.getAgentStatus,
-      getTaskAttention,
-      opts.getTaskContext,
-    );
+    const list = agentList();
     broadcast({ type: 'agents', list });
   });
 
+  const unsubChats =
+    opts.chats?.onChange(() => broadcast({ type: 'agents', list: agentList() })) ?? (() => {});
+
   const unsubListChanged = onPtyEvent('list-changed', () => {
-    const list = buildAgentList(
-      opts.getTaskName,
-      opts.getAgentStatus,
-      getTaskAttention,
-      opts.getTaskContext,
-    );
+    const list = agentList();
     broadcast({ type: 'agents', list });
   });
 
@@ -1584,30 +1614,27 @@ export function startRemoteServer(opts: {
       clientSubs.get(client)?.delete(agentId);
     }
     setTimeout(() => {
-      const list = buildAgentList(
-        opts.getTaskName,
-        opts.getAgentStatus,
-        getTaskAttention,
-        opts.getTaskContext,
-      );
+      const list = agentList();
       broadcast({ type: 'agents', list });
     }, 100);
   });
 
   wss.on('connection', (ws, req) => {
     clientSubs.set(ws, new Map());
+    if (opts.chats)
+      clientChats.set(
+        ws,
+        createChatSubscriptions(opts.chats, (message) => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
+        }),
+      );
 
     // Support legacy URL-based auth (verifyClient accepted all connections).
     // Only coordinator token grants WS access; subtask and mobile tokens are denied.
     if (classifyToken(req) === 'coordinator') {
       authenticatedClients.add(ws);
       clientTokenTypes.set(ws, 'coordinator');
-      const list = buildAgentList(
-        opts.getTaskName,
-        opts.getAgentStatus,
-        getTaskAttention,
-        opts.getTaskContext,
-      );
+      const list = agentList();
       ws.send(JSON.stringify({ type: 'agents', list } satisfies ServerMessage));
     } else {
       // Close unauthenticated connections after 5 seconds. Distinct code from
@@ -1635,12 +1662,7 @@ export function startRemoteServer(opts: {
           clientTokenTypes.set(ws, tokenType);
           const timer = authTimers.get(ws);
           if (timer) clearTimeout(timer);
-          const list = buildAgentList(
-            opts.getTaskName,
-            opts.getAgentStatus,
-            getTaskAttention,
-            opts.getTaskContext,
-          );
+          const list = agentList();
           ws.send(JSON.stringify({ type: 'agents', list } satisfies ServerMessage));
         } else {
           ws.close(4001, 'Unauthorized');
@@ -1661,7 +1683,11 @@ export function startRemoteServer(opts: {
       // read the pairing PIN off the desktop screen. Resize (desktop owns the
       // geometry) and kill stay coordinator-only.
       const tokenType = clientTokenTypes.get(ws);
-      if (msg.type === 'input' && tokenType !== 'coordinator' && tokenType !== 'paired') {
+      if (
+        (msg.type === 'input' || msg.type === 'chat-action') &&
+        tokenType !== 'coordinator' &&
+        tokenType !== 'paired'
+      ) {
         ws.close(4003, 'Pairing required');
         return;
       }
@@ -1671,6 +1697,38 @@ export function startRemoteServer(opts: {
       }
 
       switch (msg.type) {
+        case 'chat-subscribe':
+          clientChats.get(ws)?.subscribe(msg.agentId);
+          break;
+
+        case 'chat-unsubscribe':
+          clientChats.get(ws)?.unsubscribe(msg.agentId);
+          break;
+
+        case 'chat-action': {
+          const reply = (ok: boolean, error?: string) => {
+            if (ws.readyState !== WebSocket.OPEN) return;
+            ws.send(
+              JSON.stringify({
+                type: 'input-result',
+                requestId: msg.requestId,
+                ok,
+                error,
+              } satisfies ServerMessage),
+            );
+          };
+          if (!opts.chats) {
+            reply(false, 'Chat is not available from this computer.');
+            break;
+          }
+          runRemoteChatAction(opts.chats, msg).then(
+            () => reply(true),
+            (error: unknown) =>
+              reply(false, error instanceof Error ? error.message : String(error)),
+          );
+          break;
+        }
+
         case 'input': {
           const reply = (ok: boolean, error?: string) => {
             if (msg.requestId && ws.readyState === WebSocket.OPEN) {
@@ -1813,6 +1871,7 @@ export function startRemoteServer(opts: {
           unsubscribeFromAgent(agentId, cb);
         }
       }
+      clientChats.get(ws)?.dispose();
     });
   });
 
@@ -1933,6 +1992,7 @@ export function startRemoteServer(opts: {
         unsubSpawn();
         unsubExit();
         unsubListChanged();
+        unsubChats();
         for (const client of wss.clients) client.close();
         wss.close();
         const timeout = setTimeout(() => resolve(), 5_000);
@@ -1949,6 +2009,7 @@ export function startRemoteServer(opts: {
       unsubSpawn();
       unsubExit();
       unsubListChanged();
+      unsubChats();
       wss.close();
       reject(toFriendlyListenError(err, opts.port));
     };
