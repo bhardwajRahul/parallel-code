@@ -25,8 +25,11 @@ export function Dialog(props: DialogProps) {
   const dialogId = createUniqueId();
 
   createFocusRestore(() => props.open);
+  // Only the topmost dialog traps Tab. Two live traps fight over every press:
+  // the lower one moves focus into its own panel, then the upper one sees focus
+  // outside itself and resets to its first control, so Tab never advances.
   createFocusTrap(
-    () => props.open,
+    () => props.open && isTopmost(dialogId),
     () => panelRef,
   );
 

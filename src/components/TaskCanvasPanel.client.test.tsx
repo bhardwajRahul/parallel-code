@@ -22,6 +22,7 @@ import {
 } from '../store/store';
 import type { Task } from '../store/types';
 import { TaskCanvasPanel } from './TaskCanvasPanel';
+import { createUnderstandingTour } from '../lib/create-understanding-tour';
 import { CANVAS_AUTOSAVE_IDLE_MS } from './TaskCanvasEditor';
 import type { CanvasWrite } from './TaskCanvasEditor';
 
@@ -88,6 +89,8 @@ afterEach(() => {
 });
 
 const SOURCE = '# Design\n\nKeep state in one **store**.\n';
+/** Past TOUR_MIN_DOCUMENT_CHARS, so the strip offers a tour. */
+const LONG_SOURCE = `${SOURCE}\n${'The store owns every task and its agents.\n'.repeat(60)}`;
 const PARAGRAPH_START = SOURCE.indexOf('Keep');
 
 function mockIpc(content = SOURCE) {
@@ -140,13 +143,24 @@ function baseTask(canvasPath?: string): Task {
   };
 }
 
-function mount(canvasPath?: string) {
+function mount(canvasPath?: string, tour?: { onTakeTour: (path: string) => void }) {
   const [task, setTask] = createStore<Task>(baseTask(canvasPath));
   const [active, setActive] = createSignal(true);
   const container = document.createElement('div');
   document.body.append(container);
   disposers.push(
-    render(() => <TaskCanvasPanel task={task} agentId="agent-1" isActive={active()} />, container),
+    render(
+      () => (
+        <TaskCanvasPanel
+          task={task}
+          agentId="agent-1"
+          isActive={active()}
+          understanding={tour ? createUnderstandingTour() : undefined}
+          onTakeTour={tour?.onTakeTour}
+        />
+      ),
+      container,
+    ),
   );
   return { container, setTask, setActive };
 }
@@ -536,6 +550,42 @@ describe('TaskCanvasPanel', () => {
     expect(document.activeElement).toBe(discard);
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
     expect(document.activeElement).toBe(cancel);
+  });
+
+  it('offers a tour of a long open document from the strip', async () => {
+    mockIpc(LONG_SOURCE);
+    const onTakeTour = vi.fn();
+    const { container, setTask } = mount('docs/design.md', { onTakeTour });
+    await editorLine(container, 'Keep state in one store.');
+
+    const button = container.querySelector<HTMLButtonElement>('.canvas-tour-btn');
+    expect(button?.textContent?.trim()).toBe('Take Tour');
+    button?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('docs/design.md');
+    button?.click();
+    expect(onTakeTour).toHaveBeenCalledWith('docs/design.md');
+
+    // Only file-backed tabs have something to tour.
+    setTask({ canvasTabs: [{ kind: 'reasoning' }], canvasActiveTab: 'reasoning' });
+    expect(container.querySelector('.canvas-tour-btn')).toBeNull();
+  });
+
+  it('shows no tour button without a handler', async () => {
+    mockIpc(LONG_SOURCE);
+    const { container } = mount('docs/design.md');
+    await editorLine(container, 'Keep state in one store.');
+    expect(container.querySelector('.canvas-tour-btn')).toBeNull();
+  });
+
+  it('offers no tour of a document that is quicker to read than a tour', async () => {
+    mockIpc();
+    const { container } = mount('docs/design.md', { onTakeTour: vi.fn() });
+    await editorLine(container, 'Keep state in one store.');
+    expect(container.querySelector('.canvas-tour-btn')).toBeNull();
+
+    // Growing past the threshold, as an agent writing the plan would, brings it up.
+    pushFromDisk(LONG_SOURCE);
+    await waitFor(() => container.querySelector('.canvas-tour-btn'));
   });
 
   it('shows the open file in the editor, watches it, and follows changes pushed from disk', async () => {

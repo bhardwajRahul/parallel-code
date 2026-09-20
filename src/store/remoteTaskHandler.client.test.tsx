@@ -11,6 +11,9 @@ import type { Task } from './types';
 vi.mock('../lib/ipc', () => ({ invoke: vi.fn() }));
 vi.mock('./persistence', () => ({ saveState: vi.fn(async () => undefined) }));
 
+const tourCard = { label: 'KEY DECISION', title: 'One idea', body: 'Body text.' };
+const tourPayload = { subject: 'the retry bug', gist: tourCard, cards: [tourCard] };
+
 const listeners = new Map<string, (payload: unknown) => void>();
 let stop: (() => void) | undefined;
 const task: Task = {
@@ -71,6 +74,7 @@ const canvasChannels = [
     payload: { update: { runId: 'run', expectedRevision: 1, operations: [] } },
   },
   { channel: IPC.MCP_OpenCanvasRequest, payload: { view: 'mindmap' } },
+  { channel: IPC.MCP_PublishTourRequest, payload: { payload: tourPayload } },
 ];
 
 it.each(canvasChannels)(
@@ -110,6 +114,28 @@ it('reports a stale mind map revision without the Error prefix and keeps the map
   });
   expect(fresh?.ok).toBe(true);
   expect(store.tasks.task.mindMap?.records.some((record) => record.id === 'child')).toBe(true);
+});
+
+it('publishes an agent tour for a known task and bumps its revision', async () => {
+  const first = await request(IPC.MCP_PublishTourRequest, {
+    taskId: 'task',
+    payload: tourPayload,
+  });
+  expect(first).toEqual({ reqId: 'req', ok: true, data: { ok: true }, error: undefined });
+  expect(store.tasks.task.agentTour).toEqual({ revision: 1, payload: tourPayload });
+  const second = await request(IPC.MCP_PublishTourRequest, {
+    taskId: 'task',
+    payload: { ...tourPayload, subject: 'another topic' },
+  });
+  expect(second?.ok).toBe(true);
+  expect(store.tasks.task.agentTour?.revision).toBe(2);
+  const invalid = await request(IPC.MCP_PublishTourRequest, {
+    taskId: 'task',
+    payload: { ...tourPayload, gist: 'text' },
+  });
+  expect(invalid?.ok).toBe(false);
+  expect(invalid?.error).toBe('gist must be an object.');
+  expect(store.tasks.task.agentTour?.revision).toBe(2);
 });
 
 it('opens a canvas view for a known task only', async () => {

@@ -1,6 +1,11 @@
 import { For, Show, Switch, Match, createSignal, createEffect, createUniqueId, on } from 'solid-js';
 import type { JSX } from 'solid-js';
 import { Dialog } from './Dialog';
+import {
+  ASK_CODE_CLAUDE_MODELS,
+  type AskCodeProvider,
+} from '../../electron/shared/ask-code-models';
+import { codexModels, loadCodexModels } from '../lib/codex-models';
 import { CustomThemeDialog } from './CustomThemeDialog';
 import {
   getAvailableTerminalFonts,
@@ -30,6 +35,7 @@ import {
   setDockerImage,
   setShareDockerAgentAuth,
   setAskCodeProvider,
+  setAskCodeModel,
   setMinimaxApiKey,
   setAppearanceMode,
   setLightTheme,
@@ -59,6 +65,16 @@ function ensureSelectedFont(available: string[]): string[] {
   if (available.includes(store.terminalFont)) return available;
   return [store.terminalFont, ...available];
 }
+
+/** What each code Q&A provider needs installed, for the row under the select. */
+const ASK_CODE_PROVIDER_HINTS: Record<AskCodeProvider, string> = {
+  claude:
+    'Uses the claude CLI to answer questions about selected code. Requires Claude Code to be installed.',
+  codex:
+    'Uses the codex CLI (codex exec, read-only sandbox) to answer questions about selected code. Requires Codex to be installed.',
+  minimax:
+    'Uses MiniMax M2.7 (204K context) via the OpenAI-compatible API — no Claude Code CLI required.',
+};
 
 type SettingsTab = 'general' | 'themes' | 'mcp' | 'experimental';
 type ThemeSlot = 'light' | 'dark';
@@ -313,6 +329,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
   // from defaulting to "shown" the way excluding non-checkable phases would.
   const canCheckForUpdates = () =>
     ['idle', 'checking', 'up-to-date', 'available', 'error'].includes(updateStatus().phase);
+
+  // The Codex model select is filled from the CLI's cache, read on first need.
+  createEffect(() => {
+    if (props.open && store.askCodeProvider === 'codex') loadCodexModels();
+  });
 
   // Fetch system fonts when the dialog opens
   createEffect(
@@ -624,9 +645,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 </span>
                 <select
                   value={store.askCodeProvider}
-                  onChange={(e) =>
-                    setAskCodeProvider(e.currentTarget.value as 'claude' | 'minimax')
-                  }
+                  onChange={(e) => setAskCodeProvider(e.currentTarget.value as AskCodeProvider)}
                   style={{
                     flex: '1',
                     background: theme.taskPanelBg,
@@ -640,9 +659,47 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   }}
                 >
                   <option value="claude">Claude Code (claude CLI)</option>
+                  <option value="codex">Codex (codex CLI)</option>
                   <option value="minimax">MiniMax (M2.7)</option>
                 </select>
               </label>
+              <Show when={store.askCodeProvider !== 'minimax'}>
+                <label style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
+                  <span style={{ 'font-size': '13px', color: theme.fg, 'white-space': 'nowrap' }}>
+                    Model
+                  </span>
+                  <select
+                    value={store.askCodeModel}
+                    onChange={(e) => setAskCodeModel(e.currentTarget.value)}
+                    style={{
+                      flex: '1',
+                      background: theme.taskPanelBg,
+                      border: `1px solid ${theme.border}`,
+                      'border-radius': 'var(--radius-sm)',
+                      padding: '6px 10px',
+                      color: theme.fg,
+                      'font-size': '13px',
+                      outline: 'none',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <Show
+                      when={store.askCodeProvider === 'codex'}
+                      fallback={
+                        <For each={ASK_CODE_CLAUDE_MODELS}>
+                          {(model) => <option value={model}>{model}</option>}
+                        </For>
+                      }
+                    >
+                      {/* Empty keeps whatever model the codex CLI defaults to. */}
+                      <option value="">CLI default</option>
+                      <For each={codexModels()}>
+                        {(model) => <option value={model.slug}>{model.displayName}</option>}
+                      </For>
+                    </Show>
+                  </select>
+                </label>
+              </Show>
               <Show when={store.askCodeProvider === 'minimax'}>
                 <label
                   style={{
@@ -674,9 +731,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 </label>
               </Show>
               <span style={{ 'font-size': '11px', color: theme.fgSubtle }}>
-                {store.askCodeProvider === 'minimax'
-                  ? 'Uses MiniMax M2.7 (204K context) via the OpenAI-compatible API — no Claude Code CLI required.'
-                  : 'Uses the claude CLI to answer questions about selected code. Requires Claude Code to be installed.'}
+                {ASK_CODE_PROVIDER_HINTS[store.askCodeProvider]}
               </span>
             </div>
           </div>

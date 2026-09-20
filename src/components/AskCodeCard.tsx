@@ -3,6 +3,7 @@ import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
 import { Channel, invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
+import { askCodeEnvFile } from '../../electron/shared/ask-code-models';
 import { store } from '../store/store';
 import { warn as logWarn, errMessage } from '../lib/log';
 
@@ -64,7 +65,8 @@ export function AskCodeCard(props: AskCodeCardProps) {
       cwd: props.worktreePath,
       onOutput: channel,
       provider: store.askCodeProvider,
-      envFile: store.agentEnvFiles['claude-code'],
+      model: store.askCodeModel || undefined,
+      envFile: askCodeEnvFile(store.askCodeProvider, store.agentEnvFiles),
     }).catch((err: unknown) => {
       setError(errMessage(err));
       setLoading(false);

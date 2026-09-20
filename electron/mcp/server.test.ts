@@ -371,6 +371,43 @@ describe('mind map tools', () => {
     });
     expect(client.openCanvas).toHaveBeenCalledTimes(1);
   });
+  it('publishes a tour for the session task and rejects a malformed one before transport', async () => {
+    const client = {
+      publishTour: vi.fn().mockResolvedValue({ ok: true, subject: 'the retry bug' }),
+    } as unknown as MCPClient;
+    const card = { label: 'KEY DECISION', title: 'One idea', body: 'Body text.' };
+    const tour = { subject: 'the retry bug', gist: card, cards: [card], context: 'The facts.' };
+    const context = { client, taskId: 'own-task', coordinatorId: '', canvasOnly: true };
+    expect(
+      await handleMCPToolCall(context, 'tour_publish', { ...tour, taskId: 'other' }),
+    ).not.toHaveProperty('isError');
+    expect(client.publishTour).toHaveBeenCalledWith('own-task', tour);
+    expect(await handleMCPToolCall(context, 'tour_publish', { ...tour, cards: [] })).toMatchObject({
+      isError: true,
+      content: [{ text: expect.stringContaining('cards must be an array') }],
+    });
+    expect(client.publishTour).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses tour_publish without a task-scoped session', async () => {
+    const client = { publishTour: vi.fn() } as unknown as MCPClient;
+    const card = { label: 'KEY DECISION', title: 'One idea', body: 'Body text.' };
+    const result = await handleMCPToolCall(
+      { client, taskId: '', coordinatorId: '' },
+      'tour_publish',
+      {
+        subject: 'the retry bug',
+        gist: card,
+        cards: [card],
+      },
+    );
+    expect(result).toMatchObject({
+      isError: true,
+      content: [{ text: expect.stringContaining('task-scoped MCP session') }],
+    });
+    expect(client.publishTour).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid operations before transport and exposes conflict failures', async () => {
     const client = {
       updateMindMap: vi.fn().mockRejectedValue(new Error('Read it again before editing.')),

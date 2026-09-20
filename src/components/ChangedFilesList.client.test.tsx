@@ -4,6 +4,7 @@ import { IPC } from '../../electron/ipc/channels';
 import type { ChangedFile, CoverageSummary } from '../ipc/types';
 import type { CoverageComparison } from '../lib/coverage-comparison';
 import { invoke } from '../lib/ipc';
+import type { UnderstandingTourState } from '../lib/create-understanding-tour';
 import { UNCOMMITTED_SELECTION } from './CommitNavBar';
 import { ChangedFilesList } from './ChangedFilesList';
 
@@ -124,6 +125,138 @@ describe('ChangedFilesList markdown canvas button', () => {
     await waitFor(() => container.querySelector('.file-row') !== null);
     expect(container.querySelector('.changed-files-open-canvas-btn')).toBeNull();
     expect(container.querySelector('.changed-files-open-editor-btn')).not.toBeNull();
+  });
+});
+
+describe('ChangedFilesList understand button', () => {
+  const files: ChangedFile[] = [
+    { path: 'src/example.ts', status: 'M', lines_added: 1, lines_removed: 0, committed: false },
+    { path: 'src/gone.ts', status: 'D', lines_added: 0, lines_removed: 4, committed: false },
+  ];
+
+  function showHint(button: HTMLElement): HTMLElement {
+    button.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    const hint = document.querySelector<HTMLElement>('[role="tooltip"]');
+    if (!hint) throw new Error('No tour hint shown');
+    return hint;
+  }
+
+  function mountList(options: {
+    onUnderstandClick?: (file: ChangedFile) => void;
+    onFileClick?: () => void;
+    understanding?: UnderstandingTourState;
+  }) {
+    vi.mocked(invoke).mockImplementation(((channel: string) => {
+      if (channel === IPC.GetUncommittedChangedFiles) return Promise.resolve(files);
+      return Promise.reject(new Error(`Unexpected IPC call: ${channel}`));
+    }) as typeof invoke);
+    const container = document.createElement('div');
+    document.body.append(container);
+    disposers.push(
+      render(
+        () => (
+          <ChangedFilesList
+            worktreePath="/task"
+            isActive
+            selectedCommit={UNCOMMITTED_SELECTION}
+            onUnderstandClick={options.onUnderstandClick}
+            onFileClick={options.onFileClick}
+            understanding={options.understanding}
+          />
+        ),
+        container,
+      ),
+    );
+    return container;
+  }
+
+  /** Only src/example.ts survives the D-status filter, so it owns the only button. */
+  const understandButton = (container: HTMLElement) => {
+    const button = container.querySelector<HTMLButtonElement>('.changed-files-understand-btn');
+    if (!button) throw new Error('Understand button is missing');
+    return button;
+  };
+
+  it('offers a tour on existing files only and does not open the diff', async () => {
+    const onUnderstandClick = vi.fn();
+    const onFileClick = vi.fn();
+    const container = mountList({ onUnderstandClick, onFileClick });
+
+    await waitFor(() => container.querySelector('.changed-files-understand-btn') !== null);
+
+    const buttons = container.querySelectorAll('.changed-files-understand-btn');
+    expect(buttons.length).toBe(1);
+    const button = buttons[0] as HTMLButtonElement;
+    expect(
+      button.closest('.file-row')?.querySelector('span[title="src/example.ts"]'),
+    ).not.toBeNull();
+    expect(button.getAttribute('aria-label')).toBe('Understand src/example.ts');
+    expect(button.title).toBe('');
+
+    button.click();
+    expect(onUnderstandClick).toHaveBeenCalledTimes(1);
+    expect(onUnderstandClick.mock.calls[0][0]).toMatchObject({ path: 'src/example.ts' });
+    expect(onFileClick).not.toHaveBeenCalled();
+  });
+
+  it('hides the understand button without a handler', async () => {
+    const container = mountList({});
+    await waitFor(() => container.querySelector('.file-row') !== null);
+    expect(container.querySelector('.changed-files-understand-btn')).toBeNull();
+  });
+
+  it('shows the spinner only on the row whose tour is generating', async () => {
+    const container = mountList({
+      onUnderstandClick: vi.fn(),
+      understanding: {
+        isLoading: (kind, subject) => kind === 'file' && subject === 'src/other.ts',
+        isReady: () => false,
+      },
+    });
+    await waitFor(() => container.querySelector('.changed-files-understand-btn') !== null);
+
+    const button = understandButton(container);
+    expect(button.getAttribute('aria-busy')).toBe('false');
+    expect(button.querySelector('.inline-spinner')).toBeNull();
+    expect(button.querySelector('svg')).not.toBeNull();
+    const hint = showHint(button);
+    expect(hint.textContent).toContain('src/example.ts');
+    expect(hint.textContent).toContain('reads the file and its direct imports');
+  });
+
+  it('replaces the icon with a spinner while its own tour generates', async () => {
+    const container = mountList({
+      onUnderstandClick: vi.fn(),
+      understanding: {
+        isLoading: (kind, subject) => kind === 'file' && subject === 'src/example.ts',
+        isReady: () => false,
+      },
+    });
+    await waitFor(() => container.querySelector('.changed-files-understand-btn') !== null);
+
+    const button = understandButton(container);
+    expect(button.getAttribute('aria-busy')).toBe('true');
+    expect(button.querySelector('.inline-spinner')).not.toBeNull();
+    expect(button.querySelector('svg')).toBeNull();
+    expect(showHint(button).textContent).toContain('Click to cancel.');
+  });
+
+  it('marks a finished tour as ready to open on its own row', async () => {
+    const container = mountList({
+      onUnderstandClick: vi.fn(),
+      understanding: {
+        isLoading: () => false,
+        isReady: (kind, subject) => kind === 'file' && subject === 'src/example.ts',
+      },
+    });
+    await waitFor(() => container.querySelector('.changed-files-understand-btn') !== null);
+
+    const button = understandButton(container);
+    expect(showHint(button).textContent).toContain('Click to open it.');
+    // The row keeps a ready tour visible without hover; CSS keys on this.
+    expect(button.dataset.ready).toBe('true');
+    expect(button.parentElement?.classList.contains('changed-files-understand-anchor')).toBe(true);
+    expect(button.style.color).not.toBe('');
   });
 });
 

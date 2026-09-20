@@ -22,6 +22,8 @@ interface TaskCanvasDocumentProps {
   /** Hidden tabs stay mounted so their unsaved edits survive switching. */
   active: boolean;
   onDirty: (dirty: boolean) => void;
+  /** Length of the text on screen; the strip decides whether it is worth a tour. */
+  onLength?: (chars: number) => void;
 }
 
 const textBtnStyle = (primary = false): JSX.CSSProperties => ({
@@ -79,6 +81,7 @@ export function TaskCanvasDocument(props: TaskCanvasDocumentProps) {
   });
 
   createEffect(() => props.onDirty(dirty()));
+  createEffect(() => props.onLength?.(base()?.length ?? 0));
   // A closed tab must not keep the column counted as dirty.
   onCleanup(() => props.onDirty(false));
 

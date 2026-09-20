@@ -20,6 +20,7 @@ import { useFocusRegistration } from '../lib/focus-registration';
 import type { Task } from '../store/types';
 import type { ChangedFile, CommitInfo } from '../ipc/types';
 import type { ChangeTourController } from '../lib/create-change-tour';
+import type { UnderstandingTourState } from '../lib/create-understanding-tour';
 import { getTaskDiffBaseBranch } from '../lib/load-task-diff';
 import { ChangeTourButton } from './ChangeTourButton';
 
@@ -36,6 +37,10 @@ interface TaskChangedFilesSectionProps {
   /** Shrink to a header strip: the column uses this while the list is empty. */
   compact?: boolean;
   onFileCountChange?: (count: number) => void;
+  /** Starts a guided tour of a changed file; omit to hide the row action. */
+  onUnderstandClick?: (file: ChangedFile) => void;
+  /** Lets each row's tour button show its own generating/ready state. */
+  understanding?: UnderstandingTourState;
 }
 
 export function TaskChangedFilesSection(props: TaskChangedFilesSectionProps) {
@@ -194,6 +199,8 @@ export function TaskChangedFilesSection(props: TaskChangedFilesSectionProps) {
           onFileCountChange={props.onFileCountChange}
           onOpenInEditorClick={focusChangedFilesPanel}
           onOpenMarkdownClick={openMarkdownInCanvas}
+          onUnderstandClick={props.onUnderstandClick}
+          understanding={props.understanding}
           ref={(el) => (changedFilesRef = el)}
         />
       </div>

@@ -42,6 +42,7 @@ import {
   readPlanForWorktree,
 } from './plans.js';
 import { startStepsWatcher, stopStepsWatcher, readStepsForWorktree } from './steps.js';
+import { readFileTourContext } from './understanding-context.js';
 import {
   prepareReasoningFeed,
   readReasoningFeed,
@@ -72,6 +73,7 @@ import {
 } from '../mcp/canvas-config.js';
 import type { MindMapDocument, MindMapUpdate } from '../shared/mindmap.js';
 import type { CanvasView } from '../shared/canvas-view.js';
+import type { AgentTourPayload } from '../shared/agent-tour.js';
 import { buildMcpLaunchArgs } from '../mcp/agent-args.js';
 import {
   getSymlinkCandidates,
@@ -124,6 +126,9 @@ import {
 import { spawn } from 'child_process';
 import { askAboutCode, cancelAskAboutCode } from './ask-code.js';
 import { setMinimaxApiKey } from './ask-code-minimax.js';
+import { isStructuredPurpose } from './ask-code-purpose.js';
+import { isAskCodeModel, type AskCodeProvider } from '../shared/ask-code-models.js';
+import { listCodexModels } from './codex-models.js';
 import { getSystemMonospaceFonts } from './system-fonts.js';
 import { fetchClaudeUsage } from './claude-usage.js';
 import { fetchCodexUsage } from './codex-usage.js';
@@ -325,6 +330,12 @@ function optionalWorktreePath(args: IpcArgs): string | undefined {
 function validateCommitHash(hash: unknown, label: string): void {
   if (typeof hash !== 'string') throw new Error(`${label} must be a string`);
   if (!/^[0-9a-f]{4,40}$/i.test(hash)) throw new Error(`${label} must be a valid hex commit hash`);
+}
+
+/** Anything the renderer did not name falls back to the Claude Code CLI. */
+function askCodeProvider(value: unknown): AskCodeProvider {
+  if (value === 'minimax' || value === 'codex') return value;
+  return 'claude';
 }
 
 function getOptionalDockerfilePath(value: unknown): string | undefined {
@@ -1442,14 +1453,16 @@ export function registerAllHandlers(win: BrowserWindow): void {
   });
 
   ipcMain.handle(IPC.AskAboutCode, (_e, args) => {
-    if (args.purpose !== undefined && args.purpose !== 'tour')
+    if (args.purpose !== undefined && !isStructuredPurpose(args.purpose))
       throw new Error('Invalid code Q&A purpose');
     assertString(args.requestId, 'requestId');
     assertString(args.prompt, 'prompt');
     assertString(args.onOutput?.__CHANNEL_ID__, 'channelId');
     validatePath(args.cwd, 'cwd');
-    const provider: string | undefined =
-      typeof args.provider === 'string' ? args.provider : undefined;
+    const provider = askCodeProvider(args.provider);
+    // Only a model the provider offers may become a CLI argument.
+    if (args.model !== undefined && !isAskCodeModel(provider, args.model))
+      throw new Error('Invalid code Q&A model');
     assertOptionalString(args.envFile, 'envFile');
     askAboutCode(win, {
       purpose: args.purpose,
@@ -1457,7 +1470,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
       channelId: args.onOutput.__CHANNEL_ID__,
       prompt: args.prompt,
       cwd: args.cwd,
-      provider: provider === 'minimax' ? 'minimax' : 'claude',
+      provider,
+      model: args.model,
       envFile: args.envFile,
     });
   });
@@ -1466,6 +1480,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
     assertString(args.requestId, 'requestId');
     cancelAskAboutCode(args.requestId);
   });
+
+  ipcMain.handle(IPC.ListCodexModels, () => listCodexModels());
 
   registerDocumentHandlers(win);
 
@@ -1490,6 +1506,12 @@ export function registerAllHandlers(win: BrowserWindow): void {
       throw new Error('File too large to preview (max 2 MB)');
     }
     return fs.promises.readFile(args.filePath, 'utf8');
+  });
+
+  ipcMain.handle(IPC.ReadFileTourContext, (_e, args) => {
+    validatePath(args.worktreePath, 'worktreePath');
+    assertString(args.filePath, 'filePath');
+    return readFileTourContext(args.worktreePath, args.filePath);
   });
 
   // --- Clipboard ---
@@ -1787,6 +1809,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
       callRenderer<MindMapDocument>(IPC.MCP_UpdateMindMapRequest, { taskId, update }),
     openCanvas: (taskId: string, view: CanvasView) =>
       callRenderer<{ ok: boolean }>(IPC.MCP_OpenCanvasRequest, { taskId, view }).then(() => {}),
+    publishTour: (taskId: string, payload: AgentTourPayload) =>
+      callRenderer<{ ok: boolean }>(IPC.MCP_PublishTourRequest, { taskId, payload }),
     getProjects: () => callRenderer<RemoteProject[]>(IPC.Remote_GetProjectsRequest, {}),
     createTaskFromMobile: (req: { projectId: string; name: string; prompt: string }) =>
       callRenderer<{ taskId: string }>(IPC.Remote_CreateTaskRequest, req),

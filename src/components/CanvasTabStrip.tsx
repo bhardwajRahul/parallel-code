@@ -5,6 +5,8 @@ import { canvasTabKey } from '../lib/canvas-tabs';
 import type { CanvasTab, CanvasTabKind } from '../store/types';
 import { IconButton } from './IconButton';
 import { CloseIcon, ExpandIcon, ExternalLinkIcon, PlusIcon } from './icons';
+import { UnderstandButton, tourButtonStyle } from './understanding/UnderstandButton';
+import type { UnderstandingTourController } from '../lib/create-understanding-tour';
 
 interface CanvasTabStripProps {
   tabs: CanvasTab[];
@@ -21,6 +23,9 @@ interface CanvasTabStripProps {
   onExitFullscreen: () => void;
   /** Hands the open document to whatever the system opens Markdown with. */
   onOpenInDefaultEditor: (path: string) => void;
+  /** Both present: the open document gets a Take Tour button. */
+  understanding?: UnderstandingTourController;
+  onTakeTour?: (path: string) => void;
 }
 
 /** What the "+" menu offers. */
@@ -50,6 +55,12 @@ export function CanvasTabStrip(props: CanvasTabStripProps) {
   const activePath = (): string | undefined => {
     const tab = props.tabs.find((candidate) => canvasTabKey(candidate) === props.active);
     return tab?.kind === 'markdown' ? tab.path : undefined;
+  };
+  const tourTarget = () => {
+    const path = activePath();
+    const tour = props.understanding;
+    const onTakeTour = props.onTakeTour;
+    return path && tour && onTakeTour ? { path, tour, onTakeTour } : undefined;
   };
 
   return (
@@ -156,6 +167,20 @@ export function CanvasTabStrip(props: CanvasTabStripProps) {
           >
             Exit fullscreen
           </button>
+        </Show>
+        <Show when={tourTarget()}>
+          {(target) => (
+            <UnderstandButton
+              label="Take Tour"
+              tour={target().tour}
+              kind="plan"
+              subject={target().path}
+              onClick={() => target().onTakeTour(target().path)}
+              class="btn-secondary review-plan-btn canvas-tour-btn"
+              style={tourButtonStyle}
+              modelMenu
+            />
+          )}
         </Show>
         <Show when={activePath()}>
           {(path) => (

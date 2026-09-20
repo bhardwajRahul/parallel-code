@@ -10,6 +10,7 @@ import { MCPClient } from './client.js';
 import { parseMindMapUpdate } from '../shared/mindmap.js';
 import { parseReasoningUpdate } from '../shared/reasoning-feed.js';
 import { parseCanvasView } from '../shared/canvas-view.js';
+import { parseAgentTourPayload } from '../shared/agent-tour.js';
 import {
   APP_TASK_INSTRUCTIONS,
   CANVAS_INSTRUCTIONS,
@@ -41,6 +42,7 @@ export async function handleMCPToolCall(
     'reasoning_read',
     'reasoning_update',
     'canvas_open',
+    'tour_publish',
   ].includes(name);
   if (
     sessionCapabilities &&
@@ -106,6 +108,12 @@ export async function handleMCPToolCall(
         const id = taskId || coordinatorId;
         if (!id) throw new Error('A task-scoped MCP session is required.');
         const result = await client.openCanvas(id, parseCanvasView(params));
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+      case 'tour_publish': {
+        const id = taskId || coordinatorId;
+        if (!id) throw new Error('A task-scoped MCP session is required.');
+        const result = await client.publishTour(id, parseAgentTourPayload(params));
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
       case 'mindmap_read':

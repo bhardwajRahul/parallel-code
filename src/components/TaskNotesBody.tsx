@@ -11,12 +11,21 @@ import {
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
 import { useFocusRegistration } from '../lib/focus-registration';
+import { UnderstandButton, tourButtonStyle } from './understanding/UnderstandButton';
+import {
+  planTourSubject,
+  type UnderstandingTourController,
+} from '../lib/create-understanding-tour';
 import type { Task } from '../store/types';
 
 interface TaskNotesBodyProps {
   task: Task;
   agentId: string;
   onPlanFullscreen: () => void;
+  understanding: UnderstandingTourController;
+  onPlanTour: () => void;
+  /** Opens the tour the agent published for this task, if there is one. */
+  onAgentTour?: () => void;
 }
 
 /** Inset of the floating controls from the notes panel's bottom-right corner. */
@@ -30,19 +39,6 @@ const overlayRowStyle: JSX.CSSProperties = {
   'align-items': 'center',
   gap: '6px',
   'z-index': '1',
-};
-
-// Opaque, so a long note runs behind the button rather than through it.
-const planButtonStyle: JSX.CSSProperties = {
-  padding: '4px 10px',
-  'font-size': sf(11),
-  'font-family': "'JetBrains Mono', monospace",
-  'line-height': '1',
-  background: `color-mix(in srgb, ${theme.accent} 12%, ${theme.bgInput})`,
-  color: theme.fg,
-  border: `1px solid color-mix(in srgb, ${theme.accent} 25%, ${theme.border})`,
-  'border-radius': 'var(--radius-sm)',
-  cursor: 'pointer',
 };
 
 export function TaskNotesBody(props: TaskNotesBodyProps) {
@@ -157,13 +153,39 @@ export function TaskNotesBody(props: TaskNotesBodyProps) {
             <button
               type="button"
               class="btn-secondary review-plan-btn"
-              style={planButtonStyle}
+              style={tourButtonStyle}
               title={props.task.planFileName ? `Review ${props.task.planFileName}` : 'Review plan'}
               aria-haspopup="dialog"
               onClick={() => props.onPlanFullscreen()}
             >
               Review Plan
             </button>
+            {/* Same class and style as Review Plan so the pair matches exactly. */}
+            <UnderstandButton
+              label="Take Tour"
+              tour={props.understanding}
+              kind="plan"
+              subject={planTourSubject(props.task)}
+              onClick={() => props.onPlanTour()}
+              class="btn-secondary review-plan-btn"
+              style={tourButtonStyle}
+              modelMenu
+            />
+          </Show>
+          {/* The agent publishes a tour on request; the button keeps it reachable
+              after the viewer is closed. */}
+          <Show when={props.task.agentTour}>
+            {(agentTour) => (
+              <UnderstandButton
+                label="Agent Tour"
+                tour={props.understanding}
+                kind="agent"
+                subject={agentTour().payload.subject}
+                onClick={() => props.onAgentTour?.()}
+                class="btn-secondary review-plan-btn"
+                style={tourButtonStyle}
+              />
+            )}
           </Show>
         </div>
       </div>

@@ -8,7 +8,7 @@ import { ChangeTour } from './ChangeTour';
 import { ChangeTourButton } from './ChangeTourButton';
 import { createChangeTour } from '../lib/create-change-tour';
 import { info as logInfo } from '../lib/log';
-import { setAskCodeProvider } from '../store/store';
+import { setAskCodeModel, setAskCodeProvider, store } from '../store/store';
 import {
   CHANGE_TOUR_TIMEOUT_MS,
   CHANGE_TOUR_PROMPT_LIMIT,
@@ -33,8 +33,16 @@ vi.mock('../lib/ipc', () => ({
 }));
 vi.mock('../store/store', async () => {
   const { createStore } = await import('solid-js/store');
-  const [store, setStore] = createStore({ askCodeProvider: 'minimax', agentEnvFiles: {} });
-  return { store, setAskCodeProvider: (provider: string) => setStore('askCodeProvider', provider) };
+  const [store, setStore] = createStore({
+    askCodeProvider: 'minimax',
+    askCodeModel: 'sonnet',
+    agentEnvFiles: {},
+  });
+  return {
+    store,
+    setAskCodeProvider: (provider: string) => setStore('askCodeProvider', provider),
+    setAskCodeModel: (model: string) => setStore('askCodeModel', model),
+  };
 });
 vi.mock('../lib/log', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/log')>()),
@@ -48,6 +56,7 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
   setAskCodeProvider('minimax');
+  setAskCodeModel('sonnet');
 });
 const diff = 'diff --git a/file.ts b/file.ts\n@@ -1 +1 @@\n-old\n+new\n';
 
@@ -108,13 +117,37 @@ const largeDiff = ['file.ts', 'second.ts', 'third.ts']
   .join('');
 
 describe('guided tour', () => {
+  it('picks the tour model from the chevron beside Generate tour', () => {
+    const { host } = mount();
+    const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Tour model"]');
+    const controls = host.querySelector('.change-tour-hover');
+    if (!trigger || !controls) throw new Error('Missing model chevron');
+    // The chevron is outside the hover anchor, so the help popover gives way to
+    // the menu instead of standing over it.
+    controls.dispatchEvent(new MouseEvent('mouseenter'));
+    expect(document.querySelector('[role="tooltip"]')).not.toBeNull();
+    trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+    trigger.click();
+    // No backend answers the Codex model list here, so that group stays empty.
+    expect(document.querySelector('[role="menu"]')?.textContent).toContain('No Codex models found');
+    const opus = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].find(
+      (item) => item.textContent?.trim() === 'opus',
+    );
+    opus?.click();
+    expect(store.askCodeProvider).toBe('claude');
+    expect(store.askCodeModel).toBe('opus');
+  });
+
   it('explains generation and the configured model on hover/focus without generating', () => {
     const { host } = mount();
     const button = host.querySelector('button');
-    if (!button?.parentElement) throw new Error('Missing generate control');
+    const controls = button?.closest('.change-tour-hover');
+    if (!button || !controls) throw new Error('Missing generate control');
     expect(button.textContent).toBe('Generate tour');
-    expect(host.querySelectorAll('button')).toHaveLength(1);
-    button.parentElement.dispatchEvent(new MouseEvent('mouseenter'));
+    // The action and the model chevron beside it, and nothing else.
+    expect(host.querySelectorAll('button')).toHaveLength(2);
+    controls.dispatchEvent(new MouseEvent('mouseenter'));
     expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('MiniMax-M2.7');
     expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
       'Sends the selected tour diff',

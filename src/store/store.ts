@@ -29,6 +29,7 @@ export {
   removeCustomAgent,
   setAgentEnvFile,
 } from './agents';
+export { publishAgentTour } from './agent-tour';
 export {
   openCanvasDocument,
   openCanvasBrowser,
@@ -169,6 +170,7 @@ export {
   setDockerAvailable,
   setShareDockerAgentAuth,
   setAskCodeProvider,
+  setAskCodeModel,
   setMinimaxApiKey,
   setWindowState,
   setDefaultStepsEnabled,

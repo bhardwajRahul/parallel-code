@@ -69,6 +69,83 @@ export function RedoIcon(props: IconProps): JSX.Element {
   );
 }
 
+/** Stroke arrows for step-by-step navigation; see also Undo/Redo above. */
+export function ChevronLeftIcon(props: IconProps): JSX.Element {
+  return (
+    <SvgIcon {...props}>
+      <path
+        d="M10 3.5 5.5 8l4.5 4.5"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </SvgIcon>
+  );
+}
+
+export function ChevronDownIcon(props: IconProps): JSX.Element {
+  return (
+    <SvgIcon {...props}>
+      <path
+        d="M3.5 6 8 10.5 12.5 6"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </SvgIcon>
+  );
+}
+
+export function ChevronRightIcon(props: IconProps): JSX.Element {
+  return (
+    <SvgIcon {...props}>
+      <path
+        d="M6 3.5 10.5 8 6 12.5"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </SvgIcon>
+  );
+}
+
+export function ArrowRightIcon(props: IconProps): JSX.Element {
+  return (
+    <SvgIcon {...props}>
+      <path
+        d="M2.5 8h11m0 0-4-4m4 4-4 4"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </SvgIcon>
+  );
+}
+
+/** Stacked plates: one more level down than what is on screen. */
+export function LayersIcon(props: IconProps): JSX.Element {
+  return (
+    <SvgIcon {...props}>
+      <path
+        d="M8 1.5 14 4.25 8 7 2 4.25 8 1.5ZM2 8l6 2.75L14 8M2 11.5l6 2.75 6-2.75"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </SvgIcon>
+  );
+}
+
 export function AlertIcon(props: IconProps): JSX.Element {
   return (
     <SvgIcon {...props}>

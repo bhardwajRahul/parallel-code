@@ -21,6 +21,8 @@ import { useFocusRegistration } from '../lib/focus-registration';
 import { openFileInEditor } from '../lib/shell';
 import { errMessage } from '../lib/log';
 import type { CanvasTab, Task } from '../store/types';
+import type { UnderstandingTourController } from '../lib/create-understanding-tour';
+import { TOUR_MIN_DOCUMENT_CHARS } from '../../electron/shared/understanding-limits';
 import { ConfirmDialog } from './ConfirmDialog';
 import { CanvasFilePicker } from './CanvasFilePicker';
 import { CanvasTabStrip } from './CanvasTabStrip';
@@ -36,6 +38,9 @@ interface TaskCanvasPanelProps {
   isActive: boolean;
   reasoning?: JSX.Element;
   mindmap?: JSX.Element;
+  /** Both present: open documents get a Take Tour button in the strip. */
+  understanding?: UnderstandingTourController;
+  onTakeTour?: (path: string) => void;
 }
 
 /**
@@ -58,6 +63,8 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
   });
   const [pickerOpen, setPickerOpen] = createSignal(false);
   const [dirtyTabs, setDirtyTabs] = createSignal<Record<string, boolean>>({});
+  /** Characters per document tab key, so short documents get no tour button. */
+  const [tabChars, setTabChars] = createSignal<Record<string, number>>({});
   // The tab a close was asked for while it had unsaved edits; null for the column.
   const [confirmClose, setConfirmClose] = createSignal<string | null | false>(false);
   const [fullscreen, setFullscreen] = createSignal(false);
@@ -112,6 +119,12 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
 
   const setDirty = (key: string, dirty: boolean) =>
     setDirtyTabs((d) => (d[key] === dirty ? d : { ...d, [key]: dirty }));
+  const setChars = (key: string, chars: number) =>
+    setTabChars((c) => (c[key] === chars ? c : { ...c, [key]: chars }));
+  const activeDocumentIsLong = () => {
+    const key = active();
+    return key !== undefined && (tabChars()[key] ?? 0) >= TOUR_MIN_DOCUMENT_CHARS;
+  };
 
   function requestCloseTab(key: string): void {
     if (dirtyTabs()[key]) setConfirmClose(key);
@@ -247,6 +260,8 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
           onEnterFullscreen={enterFullscreen}
           onExitFullscreen={() => setFullscreen(false)}
           onOpenInDefaultEditor={openDefaultEditor}
+          understanding={props.understanding}
+          onTakeTour={activeDocumentIsLong() ? props.onTakeTour : undefined}
         />
         <Show when={pickerOpen()}>
           <CanvasFilePicker
@@ -297,6 +312,7 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
                     path={tab().path}
                     active={active() === key}
                     onDirty={(dirty) => setDirty(key, dirty)}
+                    onLength={(chars) => setChars(key, chars)}
                   />
                 }
               >

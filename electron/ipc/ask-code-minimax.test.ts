@@ -1,5 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CHANGE_TOUR_PROMPT_LIMIT } from '../shared/change-tour-limits.js';
+import {
+  UNDERSTANDING_MAX_OUTPUT_CHARS,
+  UNDERSTANDING_PROMPT_LIMIT,
+} from '../shared/understanding-limits.js';
+
+/** Purposes that ask MiniMax for one JSON object, with their own budget and prompt. */
+const STRUCTURED_PURPOSES = [
+  {
+    purpose: 'tour',
+    promptLimit: CHANGE_TOUR_PROMPT_LIMIT,
+    systemPrompt:
+      'Return exactly one JSON object matching the requested tour schema. No markdown, commentary, or additional JSON objects.',
+  },
+  {
+    purpose: 'understand',
+    promptLimit: UNDERSTANDING_PROMPT_LIMIT,
+    systemPrompt:
+      'Return exactly one JSON object matching the requested understanding tour schema. No markdown, commentary, or additional JSON objects.',
+  },
+] as const;
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -78,37 +98,56 @@ describe('askAboutCodeMinimax', () => {
     ).toThrow(/Prompt too long/);
   });
 
-  it('accepts a full tour prompt without raising the inline Q&A limit', async () => {
+  it.each(STRUCTURED_PURPOSES)(
+    'accepts a full $purpose prompt without raising the inline Q&A limit',
+    async ({ purpose, promptLimit, systemPrompt }) => {
+      const { win, messages } = makeMockWin();
+      const prompt = 'x'.repeat(promptLimit);
+      mockFetch.mockResolvedValueOnce(makeStreamResponse('data: [DONE]\n\n'));
+      askAboutCodeMinimax(win, {
+        requestId: `large-${purpose}`,
+        channelId: 'test',
+        prompt,
+        purpose,
+      });
+      await waitForDone(messages);
+      const body = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string) as {
+        messages: { content: string }[];
+        max_tokens: number;
+      };
+      expect(body.messages[1].content).toBe(prompt);
+      expect(body.messages[0].content).toBe(systemPrompt);
+      // Derived from the card caps, so raising a cap cannot silently truncate a
+      // tour the validator would have accepted.
+      expect(body.max_tokens).toBe(Math.ceil(UNDERSTANDING_MAX_OUTPUT_CHARS / 3));
+    },
+  );
+
+  it.each(STRUCTURED_PURPOSES)(
+    'rejects a $purpose larger than its dedicated allowance before fetching',
+    ({ purpose, promptLimit }) => {
+      const { win } = makeMockWin();
+      expect(() =>
+        askAboutCodeMinimax(win, {
+          requestId: `too-large-${purpose}`,
+          channelId: 'test',
+          prompt: 'x'.repeat(promptLimit + 1),
+          purpose,
+        }),
+      ).toThrow(/Prompt too long/);
+      expect(mockFetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps the short token allowance for inline questions', async () => {
     const { win, messages } = makeMockWin();
-    const prompt = 'x'.repeat(CHANGE_TOUR_PROMPT_LIMIT);
     mockFetch.mockResolvedValueOnce(makeStreamResponse('data: [DONE]\n\n'));
-    askAboutCodeMinimax(win, {
-      requestId: 'large-tour',
-      channelId: 'test',
-      prompt,
-      purpose: 'tour',
-    });
+    askAboutCodeMinimax(win, { requestId: 'inline', channelId: 'test', prompt: 'Explain' });
     await waitForDone(messages);
     const body = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string) as {
-      messages: { content: string }[];
+      max_tokens: number;
     };
-    expect(body.messages[1].content).toBe(prompt);
-    expect(body.messages[0].content).toBe(
-      'Return exactly one JSON object matching the requested tour schema. No markdown, commentary, or additional JSON objects.',
-    );
-  });
-
-  it('rejects a tour larger than its dedicated allowance before fetching', () => {
-    const { win } = makeMockWin();
-    expect(() =>
-      askAboutCodeMinimax(win, {
-        requestId: 'too-large-tour',
-        channelId: 'test',
-        prompt: 'x'.repeat(CHANGE_TOUR_PROMPT_LIMIT + 1),
-        purpose: 'tour',
-      }),
-    ).toThrow(/Prompt too long/);
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(body.max_tokens).toBe(2048);
   });
 
   it('sends chunk messages for each SSE delta', async () => {

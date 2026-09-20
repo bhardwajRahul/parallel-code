@@ -1,5 +1,5 @@
 import { expectDefined } from '../store/test-helpers';
-import { createSignal, type ComponentProps } from 'solid-js';
+import { Show, createSignal, type ComponentProps } from 'solid-js';
 import { render } from 'solid-js/web';
 import { createStore } from 'solid-js/store';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -8,10 +8,23 @@ import {
   openCanvasReasoning,
   openCanvasMindMap,
   activateCanvasTab,
+  showNotification,
   toggleFocusMode,
 } from '../store/store';
+import { GIST_LABEL } from '../lib/understanding-tour';
 import type { Task } from '../store/types';
 import type { DiffViewerDialog } from './DiffViewerDialog';
+import type { TaskNotesBody } from './TaskNotesBody';
+import type { UnderstandingTourDialog } from './UnderstandingTourDialog';
+
+// Understanding tours stream through Channel, so the panel's ipc mock provides one.
+const channels = vi.hoisted(
+  () =>
+    [] as {
+      onmessage: ((message: { type: string; text?: string; exitCode?: number }) => void) | null;
+      dispose: () => void;
+    }[],
+);
 
 vi.mock('../store/store', () => {
   const [store, setStore] = createStore({
@@ -21,6 +34,8 @@ vi.mock('../store/store', () => {
     showPromptInput: true,
     taskGitStatus: {},
     taskViewportVisibility: {},
+    askCodeProvider: 'minimax',
+    agentEnvFiles: {},
   });
   return {
     store,
@@ -48,7 +63,16 @@ vi.mock('../store/store', () => {
   };
 });
 vi.mock('../lib/theme', () => ({ theme: {} }));
-vi.mock('../lib/ipc', () => ({ invoke: vi.fn() }));
+vi.mock('../lib/ipc', () => ({
+  invoke: vi.fn(() => Promise.resolve(undefined)),
+  Channel: class {
+    onmessage = null;
+    dispose = vi.fn();
+    constructor() {
+      channels.push(this);
+    }
+  },
+}));
 vi.mock('./TaskAITerminal', () => ({
   TaskAITerminal: (props: { onReview?: (path?: string) => void }) => (
     <div class="test-terminal">
@@ -94,7 +118,36 @@ vi.mock('./EditProjectDialog', () => ({ EditProjectDialog: () => null }));
 vi.mock('./TaskTitleBar', () => ({ TaskTitleBar: () => null }));
 vi.mock('./TaskBranchInfoBar', () => ({ TaskBranchInfoBar: () => null }));
 vi.mock('./TaskBranchAdoptionBanner', () => ({ TaskBranchAdoptionBanner: () => null }));
-vi.mock('./TaskNotesBody', () => ({ TaskNotesBody: () => <textarea class="test-notes" /> }));
+vi.mock('./TaskNotesBody', () => ({
+  TaskNotesBody: (props: ComponentProps<typeof TaskNotesBody>) => (
+    <div>
+      <textarea class="test-notes" />
+      <button class="test-plan-tour" onClick={() => props.onPlanTour()}>
+        Take Tour
+      </button>
+      <Show when={props.task.agentTour}>
+        <button class="test-agent-tour" onClick={() => props.onAgentTour?.()}>
+          Agent Tour
+        </button>
+      </Show>
+    </div>
+  ),
+}));
+vi.mock('./UnderstandingTourDialog', () => ({
+  UnderstandingTourDialog: (props: ComponentProps<typeof UnderstandingTourDialog>) => (
+    <div
+      class="test-understanding"
+      data-open={props.open}
+      data-subject={props.tour.subject()}
+      data-kind={props.tour.kind() ?? ''}
+      data-gist={props.tour.tour()?.cards[props.tour.step()]?.title ?? ''}
+    >
+      <button class="test-understanding-close" onClick={() => props.onClose()}>
+        Close
+      </button>
+    </div>
+  ),
+}));
 vi.mock('./TaskChangedFilesSection', () => ({ TaskChangedFilesSection: () => null }));
 vi.mock('./TaskShellSection', () => ({ TaskShellSection: () => null }));
 vi.mock('./CanvasFilePicker', () => ({ CanvasFilePicker: () => null }));
@@ -115,7 +168,30 @@ afterEach(() => {
   toggleFocusMode(false);
   dispose?.();
   document.body.replaceChildren();
+  channels.length = 0;
+  vi.mocked(showNotification).mockClear();
 });
+
+const tourCard = (title: string, label = 'KEY DECISION') => ({
+  label,
+  title,
+  body: 'Body text.',
+  tone: 'neutral',
+});
+const TOUR_JSON = JSON.stringify({
+  gist: tourCard('Gist title', GIST_LABEL),
+  cards: [tourCard('One'), tourCard('Two')],
+});
+
+/** Drains the microtask queue the tour controller awaits. */
+async function flush() {
+  for (let i = 0; i < 8; i += 1) await Promise.resolve();
+}
+
+function finishTourStream() {
+  channels[0]?.onmessage?.({ type: 'chunk', text: TOUR_JSON });
+  channels[0]?.onmessage?.({ type: 'done', exitCode: 0 });
+}
 
 it.each([undefined, 'landed_pending_review'] as const)(
   'opens chat review for active and landed tasks (%s) and resets stale commit filters',
@@ -243,3 +319,130 @@ it.each(['reasoning', 'mindmap'] as const)(
     toggleFocusMode(false);
   },
 );
+
+function mountPlanTask() {
+  const [task, setTask] = createStore<Task>({
+    id: 'task',
+    name: 'Task',
+    projectId: 'project',
+    agentIds: [],
+    shellAgentIds: [],
+    notes: '',
+    gitIsolation: 'worktree',
+    branchName: 'task-branch',
+    worktreePath: '/tmp/task',
+    lastPrompt: '',
+    planContent: '# Plan',
+    planFileName: 'plan.md',
+  });
+  const container = document.createElement('div');
+  document.body.append(container);
+  dispose = render(() => <TaskPanel task={task} isActive />, container);
+  return {
+    setTask,
+    container,
+    click: (selector: string) =>
+      expectDefined(container.querySelector<HTMLButtonElement>(selector)).click(),
+    tourState: () =>
+      expectDefined(container.querySelector<HTMLElement>('.test-understanding')).dataset,
+  };
+}
+
+it('generates a plan tour in the background and opens it on the next click', async () => {
+  const { click, tourState } = mountPlanTask();
+
+  expect(tourState().subject).toBe('');
+  expect(tourState().open).toBe('false');
+
+  click('.test-plan-tour');
+  await flush();
+  // Generation runs behind the panel: the dialog stays closed.
+  expect(tourState().subject).toBe('plan.md');
+  expect(tourState().kind).toBe('plan');
+  expect(tourState().open).toBe('false');
+  expect(showNotification).not.toHaveBeenCalled();
+
+  finishTourStream();
+  await flush();
+  expect(showNotification).toHaveBeenCalledWith('Tour ready: plan.md');
+  expect(tourState().open).toBe('false');
+
+  click('.test-plan-tour');
+  expect(tourState().open).toBe('true');
+});
+
+it('reports a failed tour without opening the dialog', async () => {
+  const { click, tourState } = mountPlanTask();
+
+  click('.test-plan-tour');
+  await flush();
+  channels[0]?.onmessage?.({ type: 'chunk', text: 'not json' });
+  channels[0]?.onmessage?.({ type: 'done', exitCode: 0 });
+  await flush();
+
+  expect(tourState().open).toBe('false');
+  expect(vi.mocked(showNotification).mock.calls[0][0]).toContain('Tour failed:');
+});
+
+it('opens a tour the agent published and keeps it reachable after closing', () => {
+  const card = { label: 'KEY DECISION', title: 'One idea', body: 'Body text.' };
+  const payload = {
+    subject: 'the retry bug',
+    gist: { ...card, title: 'Retries hide the failure' },
+    cards: [card],
+    context: 'The agent read the retry loop.',
+  };
+  const { setTask, click, tourState, container } = mountPlanTask();
+
+  expect(container.querySelector('.test-agent-tour')).toBeNull();
+  setTask('agentTour', { revision: 1, payload });
+  expect(tourState().open).toBe('true');
+  expect(tourState().kind).toBe('agent');
+  expect(tourState().subject).toBe('the retry bug');
+  expect(tourState().gist).toBe('Retries hide the failure');
+  // Publishing calls no provider, so nothing streams and nothing is notified as failed.
+  expect(channels).toHaveLength(0);
+  expect(showNotification).toHaveBeenCalledWith('Tour ready: the retry bug');
+
+  click('.test-understanding-close');
+  expect(tourState().open).toBe('false');
+  click('.test-agent-tour');
+  expect(tourState().open).toBe('true');
+  expect(tourState().gist).toBe('Retries hide the failure');
+});
+
+it('reports a published tour with a card the validator rejects', () => {
+  const { setTask, tourState } = mountPlanTask();
+  setTask('agentTour', {
+    revision: 1,
+    payload: {
+      subject: 'the retry bug',
+      gist: { label: 'GIST', title: 'Title', body: 'Body.' },
+      cards: [{ label: 'KEY', title: 'One idea', body: '' }],
+    },
+  });
+  expect(tourState().open).toBe('false');
+  expect(vi.mocked(showNotification).mock.calls[0][0]).toContain('Tour rejected:');
+});
+
+// A plan tour survives diff navigation: its identity is the task, not the diff.
+it('keeps a plan tour while browsing commits and drops it when the task changes', async () => {
+  const { setTask, click, tourState } = mountPlanTask();
+
+  click('.test-plan-tour');
+  await flush();
+  finishTourStream();
+  await flush();
+  click('.test-plan-tour');
+  expect(tourState().subject).toBe('plan.md');
+  expect(tourState().open).toBe('true');
+
+  click('.test-diff-select');
+  expect(tourState().subject).toBe('plan.md');
+  expect(tourState().open).toBe('true');
+
+  setTask('id', 'task-2');
+  expect(tourState().subject).toBe('');
+  expect(tourState().kind).toBe('');
+  expect(tourState().open).toBe('false');
+});

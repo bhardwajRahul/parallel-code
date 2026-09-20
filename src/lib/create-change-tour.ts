@@ -1,6 +1,7 @@
 import { createSignal, onCleanup } from 'solid-js';
 import { Channel, invoke } from './ipc';
 import { IPC } from '../../electron/ipc/channels';
+import { askCodeEnvFile } from '../../electron/shared/ask-code-models';
 import { CHANGE_TOUR_TIMEOUT_MS } from '../../electron/shared/change-tour-limits';
 import { store } from '../store/store';
 import { errMessage, info as logInfo, warn as logWarn } from './log';
@@ -99,7 +100,8 @@ export function createChangeTour() {
     const files = input.files;
     const worktreePath = input.worktreePath;
     const provider = store.askCodeProvider;
-    const envFile = store.agentEnvFiles['claude-code'];
+    const model = store.askCodeModel || undefined;
+    const envFile = askCodeEnvFile(provider, store.agentEnvFiles);
     const collected: TourStop[] = [];
     function generatePart(index: number) {
       setProgress(
@@ -209,6 +211,7 @@ export function createChangeTour() {
         cwd: worktreePath,
         onOutput: channel,
         provider,
+        model,
         envFile,
       }).catch((error) => {
         if (!active) return;

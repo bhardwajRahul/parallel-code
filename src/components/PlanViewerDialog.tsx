@@ -31,6 +31,8 @@ interface PlanViewerDialogProps {
   taskId?: string;
   agentId?: string;
   worktreePath?: string;
+  /** Starts a guided tour of this plan; omit to hide the action. */
+  onTakeTour?: () => void;
 }
 
 /** Compile review annotations into a prompt string for the agent. */
@@ -78,6 +80,7 @@ export function PlanViewerDialog(props: PlanViewerDialogProps) {
           planFileName={props.planFileName}
           worktreePath={props.worktreePath}
           onClose={props.onClose}
+          onTakeTour={props.onTakeTour}
         />
       </ReviewProvider>
     </Dialog>
@@ -89,6 +92,7 @@ interface PlanViewerContentProps {
   planFileName: string;
   worktreePath?: string;
   onClose: () => void;
+  onTakeTour?: () => void;
 }
 
 /** Inner content rendered inside ReviewProvider so it can call useReview(). */
@@ -307,6 +311,26 @@ function PlanViewerContent(props: PlanViewerContentProps) {
         <ReviewCommentsButton />
 
         <span style={{ flex: '1' }} />
+
+        <Show when={props.onTakeTour}>
+          <button
+            class="plan-take-tour-btn"
+            onClick={() => props.onTakeTour?.()}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: theme.fgMuted,
+              cursor: 'pointer',
+              padding: '4px 6px',
+              'font-size': sf(11),
+              'border-radius': 'var(--radius-xs)',
+            }}
+            title="Guided tour of the plan"
+            aria-haspopup="dialog"
+          >
+            Take Tour
+          </button>
+        </Show>
 
         <Show when={props.worktreePath}>
           <button

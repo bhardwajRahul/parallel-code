@@ -11,6 +11,7 @@ import { themeToCss } from '../lib/custom-theme';
 import type { PersistedWindowState, TaskViewportVisibility } from './types';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
+import { defaultAskCodeModel, type AskCodeProvider } from '../../electron/shared/ask-code-models';
 
 // Set to true after loadCustomThemes() resolves. Sanitization of persisted slot
 // IDs is skipped until then so the startup reactive effect cannot null them out
@@ -250,8 +251,16 @@ export function setDockerImage(image: string): void {
   setStore('dockerImage', image || 'parallel-code-agent:latest');
 }
 
-export function setAskCodeProvider(provider: 'claude' | 'minimax'): void {
+export function setAskCodeProvider(provider: AskCodeProvider): void {
+  if (provider === store.askCodeProvider) return;
   setStore('askCodeProvider', provider);
+  // Model names do not carry across providers — a Claude alias is not a Codex
+  // slug — so the new provider starts on its own default until one is picked.
+  setStore('askCodeModel', defaultAskCodeModel(provider));
+}
+
+export function setAskCodeModel(model: string): void {
+  setStore('askCodeModel', model);
 }
 
 export function setMinimaxApiKey(key: string): void {

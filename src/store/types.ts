@@ -2,6 +2,7 @@ import type {
   IntegrationPolicy,
   SessionCapabilities,
 } from '../../electron/shared/delegation-types';
+import type { AgentTourPayload } from '../../electron/shared/agent-tour';
 import type { CanvasTaskLink, CanvasTaskSource } from '../lib/canvas-task-links';
 import type {
   AgentDef,
@@ -12,6 +13,7 @@ import type {
   WorktreeStatus,
 } from '../ipc/types';
 import type { ChatPermissionMode, ChatSession } from '../../electron/shared/agent-chat-types';
+import type { AskCodeProvider } from '../../electron/shared/ask-code-models';
 import type { DockerSource } from '../lib/docker';
 import type { LookPreset, AppearanceMode } from '../lib/look';
 import type { KeyBinding } from '../lib/keybindings';
@@ -250,6 +252,12 @@ export interface Task {
   reasoningProfile?: ReasoningProfile;
   /** Runtime-only: bypass setup when this agent session opens the graph from chat. */
   reasoningCanvasRequest?: { agentId: string; generation: number };
+  /**
+   * Runtime-only: the tour the agent last published through `tour_publish`. The
+   * revision bumps on every publish so the panel opens the viewer again even
+   * when the payload is unchanged. Not persisted.
+   */
+  agentTour?: { revision: number; payload: AgentTourPayload };
   reasoningWorkspaces?: Record<string, ReasoningWorkspace>;
   /** Column shown without a tab (the user asked for it). Not persisted. */
   canvasOpen?: boolean;
@@ -435,7 +443,8 @@ export interface PersistedState {
   editorCommand?: string;
   dockerImage?: string;
   shareDockerAgentAuth?: boolean;
-  askCodeProvider?: 'claude' | 'minimax';
+  askCodeProvider?: AskCodeProvider;
+  askCodeModel?: string;
   customAgents?: AgentDef[];
   agentEnvFiles?: Record<string, string>;
   keybindingMigrationDismissed?: boolean;
@@ -556,7 +565,9 @@ export interface AppStore {
   dockerImage: string;
   dockerAvailable: boolean;
   shareDockerAgentAuth: boolean;
-  askCodeProvider: 'claude' | 'minimax';
+  askCodeProvider: AskCodeProvider;
+  /** CLI model alias or slug used for code Q&A and tours; empty lets the CLI choose. */
+  askCodeModel: string;
   newTaskDropUrl: string | null;
   newTaskPrefillPrompt: {
     prompt: string;

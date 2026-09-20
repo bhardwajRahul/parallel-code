@@ -6,6 +6,11 @@ import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import { isChatPermissionMode, restoreChatSessions } from '../../electron/shared/agent-chat-types';
 import { isSessionId } from '../../electron/shared/session-record';
+import {
+  defaultAskCodeModel,
+  isAskCodeModel,
+  type AskCodeProvider,
+} from '../../electron/shared/ask-code-models';
 import { store, setStore } from './core';
 import { startRemoteAccess } from './remote';
 import { effectiveAgentId } from './agent-select';
@@ -353,6 +358,10 @@ export async function saveState(): Promise<void> {
     editorCommand: store.editorCommand || undefined,
     dockerImage: store.dockerImage !== 'parallel-code-agent:latest' ? store.dockerImage : undefined,
     askCodeProvider: store.askCodeProvider !== 'claude' ? store.askCodeProvider : undefined,
+    askCodeModel:
+      store.askCodeModel !== defaultAskCodeModel(store.askCodeProvider)
+        ? store.askCodeModel
+        : undefined,
     customAgents: store.customAgents.length > 0 ? [...store.customAgents] : undefined,
     agentEnvFiles:
       Object.keys(store.agentEnvFiles).length > 0 ? { ...store.agentEnvFiles } : undefined,
@@ -547,6 +556,7 @@ interface LegacyPersistedState {
   editorCommand?: unknown;
   dockerImage?: unknown;
   askCodeProvider?: unknown;
+  askCodeModel?: unknown;
   minimaxApiKey?: unknown;
   customAgents?: unknown;
   agentEnvFiles?: unknown;
@@ -871,7 +881,14 @@ export async function loadState(): Promise<void> {
           ? rawDockerImage.trim()
           : 'parallel-code-agent:latest';
 
-      s.askCodeProvider = raw.askCodeProvider === 'minimax' ? 'minimax' : 'claude';
+      const provider: AskCodeProvider =
+        raw.askCodeProvider === 'minimax' || raw.askCodeProvider === 'codex'
+          ? raw.askCodeProvider
+          : 'claude';
+      s.askCodeProvider = provider;
+      s.askCodeModel = isAskCodeModel(provider, raw.askCodeModel)
+        ? raw.askCodeModel
+        : defaultAskCodeModel(provider);
 
       // Restore custom agents
       if (Array.isArray(raw.customAgents)) {

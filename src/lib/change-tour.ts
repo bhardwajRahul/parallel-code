@@ -1,4 +1,5 @@
 import { parseUnifiedDiff, type FileDiff } from './unified-diff-parser';
+import { readSingleJsonObject } from './tour-json';
 import { CHANGE_TOUR_PROMPT_LIMIT } from '../../electron/shared/change-tour-limits';
 
 export interface TourStop {
@@ -116,65 +117,8 @@ export function buildChangeTourPrompts(taskName: string, rawDiff: string): strin
   return chunks.map((context) => buildPrompt(taskName, context, true));
 }
 
-/** Accept prose/code fences around one tour, without repairing malformed JSON
- * or accidentally accepting only the first of several generated tours. */
-function readTourJson(response: string): unknown {
-  const text = response
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/, '');
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    // Providers occasionally wrap otherwise valid JSON in commentary.
-  }
-  const candidates: unknown[] = [];
-  let start = -1;
-  let depth = 0;
-  let quoted = false;
-  let escaped = false;
-  for (let index = 0; index < text.length; index++) {
-    const char = text[index];
-    if (start < 0) {
-      if (char !== '{' && char !== '[') continue;
-      start = index;
-      depth = 1;
-      continue;
-    }
-    if (quoted) {
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === '"') quoted = false;
-      continue;
-    }
-    if (char === '"') quoted = true;
-    else if (char === '{' || char === '[') depth++;
-    else if (char === '}' || char === ']') depth--;
-    if (depth !== 0) continue;
-    try {
-      const candidate: unknown = JSON.parse(text.slice(start, index + 1));
-      if (candidate && typeof candidate === 'object' && 'stops' in candidate)
-        candidates.push(candidate);
-    } catch {
-      // Markdown links and prose can also contain brackets. Only treat a
-      // malformed tour-shaped object as a failure, not surrounding commentary.
-      if (/"stops"\s*:/.test(text.slice(start, index + 1))) {
-        throw new Error('The provider returned malformed tour JSON. Please retry the tour.');
-      }
-    }
-    start = -1;
-  }
-  if (start >= 0 && /"stops"\s*:/.test(text.slice(start))) {
-    throw new Error('The provider returned incomplete tour JSON. Please retry the tour.');
-  }
-  if (candidates.length !== 1) {
-    throw new Error('The provider did not return a single complete tour. Please retry the tour.');
-  }
-  return candidates[0];
-}
-
 export function parseChangeTour(response: string, files: FileDiff[]): TourStop[] {
-  const data = readTourJson(response);
+  const data = readSingleJsonObject(response, 'stops');
   if (
     !data ||
     typeof data !== 'object' ||

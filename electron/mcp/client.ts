@@ -3,6 +3,7 @@
 
 import type { MindMapDocument, MindMapUpdate } from '../shared/mindmap.js';
 import type { CanvasView } from '../shared/canvas-view.js';
+import type { AgentTourPayload } from '../shared/agent-tour.js';
 import type { ReasoningDocument } from '../shared/reasoning.js';
 import type { ReasoningUpdate } from '../shared/reasoning-state.js';
 import { randomUUID } from 'crypto';
@@ -135,6 +136,13 @@ export class MCPClient {
 
   async openCanvas(taskId: string, view: CanvasView): Promise<{ ok: true; view: CanvasView }> {
     return this.taskOwnerRequest('POST', `/api/canvas/${encodeURIComponent(taskId)}`, { view });
+  }
+
+  async publishTour(
+    taskId: string,
+    payload: AgentTourPayload,
+  ): Promise<{ ok: true; subject: string }> {
+    return this.taskOwnerRequest('POST', `/api/tours/${encodeURIComponent(taskId)}`, payload);
   }
 
   async signalDone(taskId: string): Promise<void> {

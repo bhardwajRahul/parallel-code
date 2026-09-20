@@ -4,6 +4,7 @@
 // and reply with the resulting task id. See electron/ipc/register.ts for the
 // main-side bridge.
 
+import { publishAgentTour } from './agent-tour';
 import { getTaskMindMap, openCanvasViewFromAgent, updateTaskMindMapFromAgent } from './canvas';
 import { getTaskReasoning, updateTaskReasoningFromAgent } from './reasoning';
 import { store } from './core';
@@ -227,12 +228,26 @@ export function startRemoteTaskHandlers(): () => void {
       }
     },
   );
+  const offPublishTour = window.electron.ipcRenderer.on(
+    IPC.MCP_PublishTourRequest,
+    (data: unknown) => {
+      if (!data || typeof data !== 'object') return;
+      const req = data as GetNotesRequest & { payload: unknown };
+      try {
+        publishAgentTour(req.taskId, req.payload);
+        reply(req.reqId, true, { ok: true });
+      } catch (error) {
+        reply(req.reqId, false, undefined, errMessage(error));
+      }
+    },
+  );
   return () => {
     offReadReasoning();
     offUpdateReasoning();
     offReadMap();
     offUpdateMap();
     offOpenCanvas();
+    offPublishTour();
     offProjects();
     offCreate();
     offGetNotes();

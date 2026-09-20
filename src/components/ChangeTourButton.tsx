@@ -10,7 +10,8 @@ import {
   type BelowAnchor,
 } from '../lib/floating';
 import { store } from '../store/store';
-import { ASK_CODE_MODELS } from '../../electron/shared/ask-code-models';
+import { askCodeLabel } from './understanding/ask-code-label';
+import { TourModelMenu } from './understanding/TourModelMenu';
 
 export function ChangeTourButton(props: {
   tour: ChangeTourController;
@@ -64,107 +65,117 @@ export function ChangeTourButton(props: {
   return (
     <Show when={!props.disabled || props.tour.loading() || ready()}>
       <div class="change-tour-footer">
-        <div
-          ref={controls}
-          onMouseEnter={openHelp}
-          onMouseLeave={() => {
-            if (!controls?.contains(document.activeElement)) help.clear();
-          }}
-          onFocusIn={openHelp}
-          onFocusOut={(event) => {
-            if (!(event.relatedTarget instanceof Node) || !controls?.contains(event.relatedTarget))
-              closeHelp();
-          }}
-        >
-          <button
-            class="change-tour-action"
-            disabled={props.disabled && !props.tour.loading() && !ready()}
-            aria-busy={props.tour.loading()}
-            aria-describedby={helpOpen() ? helpId : undefined}
-            title={
-              props.tour.loading()
-                ? 'Cancel tour generation'
-                : props.tour.error() || (ready() ? 'Start guided tour' : undefined)
-            }
-            onClick={(event) => {
-              event.stopPropagation();
-              closeHelp();
-              if (props.tour.loading()) props.tour.cancel();
-              else props.onClick();
+        {/* The chevron picks the model this tour and every code question use. It
+            stays outside the hover anchor, so reaching for it does not raise the
+            help popover over the menu it is about to open. */}
+        <div class="change-tour-row">
+          <div
+            class="change-tour-hover"
+            ref={controls}
+            onMouseEnter={openHelp}
+            onMouseLeave={() => {
+              if (!controls?.contains(document.activeElement)) help.clear();
+            }}
+            onFocusIn={openHelp}
+            onFocusOut={(event) => {
+              if (
+                !(event.relatedTarget instanceof Node) ||
+                !controls?.contains(event.relatedTarget)
+              )
+                closeHelp();
             }}
           >
-            <Show
-              when={props.tour.loading()}
-              fallback={
-                <Show
-                  when={ready()}
-                  fallback={
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.25"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      aria-hidden="true"
-                    >
-                      <circle cx="4" cy="3" r="1.5" />
-                      <circle cx="12" cy="13" r="1.5" />
-                      <path d="M5.5 3h5a2.5 2.5 0 0 1 0 5h-5a2.5 2.5 0 0 0 0 5h5" />
-                    </svg>
-                  }
-                >
-                  <span
-                    aria-label="Tour ready"
-                    style={{
-                      color: theme.success,
-                      width: '14px',
-                      'flex-shrink': '0',
-                      'text-align': 'center',
-                    }}
+            <button
+              class="change-tour-action"
+              disabled={props.disabled && !props.tour.loading() && !ready()}
+              aria-busy={props.tour.loading()}
+              aria-describedby={helpOpen() ? helpId : undefined}
+              title={
+                props.tour.loading()
+                  ? 'Cancel tour generation'
+                  : props.tour.error() || (ready() ? 'Start guided tour' : undefined)
+              }
+              onClick={(event) => {
+                event.stopPropagation();
+                closeHelp();
+                if (props.tour.loading()) props.tour.cancel();
+                else props.onClick();
+              }}
+            >
+              <Show
+                when={props.tour.loading()}
+                fallback={
+                  <Show
+                    when={ready()}
+                    fallback={
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.25"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <circle cx="4" cy="3" r="1.5" />
+                        <circle cx="12" cy="13" r="1.5" />
+                        <path d="M5.5 3h5a2.5 2.5 0 0 1 0 5h-5a2.5 2.5 0 0 0 0 5h5" />
+                      </svg>
+                    }
                   >
-                    ✓
+                    <span
+                      aria-label="Tour ready"
+                      style={{
+                        color: theme.success,
+                        width: '14px',
+                        'flex-shrink': '0',
+                        'text-align': 'center',
+                      }}
+                    >
+                      ✓
+                    </span>
+                  </Show>
+                }
+              >
+                <span class="inline-spinner" aria-hidden="true" />
+              </Show>
+              <span class="change-tour-action-label">
+                {props.tour.loading()
+                  ? props.tour.progress()
+                  : ready()
+                    ? 'Start tour'
+                    : props.tour.error()
+                      ? 'Retry tour'
+                      : 'Generate tour'}
+                <Show when={props.tour.loading()}>
+                  <span style={{ display: 'block', color: theme.fgMuted, 'font-size': sf(11) }}>
+                    {props.tour.progress() === 'Reading changes…'
+                      ? 'Preparing tour'
+                      : props.tour.receiving()
+                        ? 'Receiving response'
+                        : 'Waiting for provider'}{' '}
+                    · {props.tour.elapsedSeconds()}s
                   </span>
                 </Show>
-              }
-            >
-              <span class="inline-spinner" aria-hidden="true" />
-            </Show>
-            <span class="change-tour-action-label">
-              {props.tour.loading()
-                ? props.tour.progress()
-                : ready()
-                  ? 'Start tour'
-                  : props.tour.error()
-                    ? 'Retry tour'
-                    : 'Generate tour'}
-              <Show when={props.tour.loading()}>
-                <span style={{ display: 'block', color: theme.fgMuted, 'font-size': sf(11) }}>
-                  {props.tour.progress() === 'Reading changes…'
-                    ? 'Preparing tour'
-                    : props.tour.receiving()
-                      ? 'Receiving response'
-                      : 'Waiting for provider'}{' '}
-                  · {props.tour.elapsedSeconds()}s
-                </span>
-              </Show>
-            </span>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d={props.tour.loading() ? 'm4 4 8 8M12 4l-8 8' : 'M3 8h10m-4-4 4 4-4 4'} />
-            </svg>
-          </button>
+              </span>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d={props.tour.loading() ? 'm4 4 8 8M12 4l-8 8' : 'M3 8h10m-4-4 4 4-4 4'} />
+              </svg>
+            </button>
+          </div>
+          <TourModelMenu class="change-tour-model" />
         </div>
         <Show when={helpOpen()}>
           <Portal>
@@ -201,9 +212,8 @@ export function ChangeTourButton(props: {
               </p>
               <p style={{ margin: '8px 0' }}>
                 <strong>Uses: </strong>
-                {store.askCodeProvider === 'minimax'
-                  ? `MiniMax · ${ASK_CODE_MODELS.minimax}`
-                  : `Claude Code · ${ASK_CODE_MODELS.claude} (CLI model alias)`}
+                {askCodeLabel(store.askCodeProvider, store.askCodeModel)}
+                {store.askCodeProvider === 'claude' ? ' (CLI model alias)' : ''}
               </p>
               <p style={{ margin: '8px 0 0', color: theme.fgMuted }}>
                 Sends the selected tour diff to this provider. Does not modify files or verify

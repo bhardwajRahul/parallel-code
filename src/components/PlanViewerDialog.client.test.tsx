@@ -140,3 +140,40 @@ describe('PlanViewerDialog inline review flow', () => {
     expect(document.body.textContent).toContain('First paragraph.\nSecond paragraph.');
   });
 });
+
+describe('PlanViewerDialog tour action', () => {
+  function renderViewer(onTakeTour?: () => void) {
+    const host = document.createElement('div');
+    document.body.append(host);
+    disposers.push(
+      render(
+        () => (
+          <PlanViewerDialog
+            open
+            onClose={() => undefined}
+            planContent={'# Plan\n\nFirst paragraph.'}
+            planFileName="plan.md"
+            worktreePath="/worktree-a"
+            onTakeTour={onTakeTour}
+          />
+        ),
+        host,
+      ),
+    );
+  }
+
+  it('starts a plan tour from the header', () => {
+    const onTakeTour = vi.fn();
+    renderViewer(onTakeTour);
+
+    const button = document.querySelector<HTMLButtonElement>('.plan-take-tour-btn');
+    expect(button?.textContent?.trim()).toBe('Take Tour');
+    button?.click();
+    expect(onTakeTour).toHaveBeenCalledOnce();
+  });
+
+  it('hides the header action without a handler', () => {
+    renderViewer();
+    expect(document.querySelector('.plan-take-tour-btn')).toBeNull();
+  });
+});

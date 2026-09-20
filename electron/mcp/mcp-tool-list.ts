@@ -1,6 +1,8 @@
 import type { SessionCapabilities } from '../shared/delegation-types.js';
 import { graphOperationsSchema } from '../shared/graph-schema.js';
 import { canvasViews } from '../shared/canvas-view.js';
+import { AGENT_TOUR_LIMITS } from '../shared/agent-tour.js';
+import { TOUR_CARD_LIMITS, TOUR_TONES } from '../shared/understanding-limits.js';
 import { semanticNodeKinds, reasoningStatuses } from '../shared/graph.js';
 import type { ReasoningUpdate } from '../shared/reasoning-state.js';
 /** Pure tool-list logic — extracted so it can be unit-tested without starting the MCP server. */
@@ -132,6 +134,39 @@ export const CANVAS_VIEW_TOOLS: ToolDef[] = [
       type: 'object',
       required: ['view'],
       properties: { view: { enum: [...canvasViews] } },
+    },
+  },
+];
+
+const caps = TOUR_CARD_LIMITS;
+
+export const TOUR_TOOLS: ToolDef[] = [
+  {
+    name: 'tour_publish',
+    description:
+      'Publish a guided tour of your own explanation and open it for the user immediately. ' +
+      'Use it when the user asks to be walked through, presented, shown or explained something "as a tour", for example "can you present me this problem as a tour?". You write the cards yourself; no separate model is called. ' +
+      'The reader is a person deciding, not documenting: compress, omit anything that would not change a decision, and put one idea on each card. ' +
+      '"gist" comes first and is the whole explanation in one card, so a reader who stops there still gets the point; the last spine card is the bottom line. ' +
+      `Send between ${caps.minCards} and ${caps.maxCards} cards in "cards"; the whole tour must read in 30 seconds to 2 minutes. ` +
+      `A card is {label, title, body, tone, whyItMatters?, refs?, diagram?}: label a short uppercase tag (at most ${caps.label} characters), title a noun phrase of at most ${caps.title} characters, body plain prose or short bullets in Markdown of at most ${caps.body} characters, whyItMatters at most ${caps.whyItMatters} characters. ` +
+      `tone is one of ${TOUR_TONES.join(', ')}. refs are up to ${caps.refs} hints of {filePath (repository-relative), line?}; never invent one. diagram is {kind: "text" or "mermaid", source} and only when it beats prose (text source at most ${caps.textDiagram} characters, mermaid at most ${caps.mermaidDiagram}). ` +
+      `Optional "context" (at most ${AGENT_TOUR_LIMITS.context} characters) is the material the app replays to answer the reader's follow-up questions inside the viewer, so include the key facts the cards summarise, not just the cards again. ` +
+      `"subject" names what the tour is about, at most ${AGENT_TOUR_LIMITS.subject} characters. Cards that break a cap are rejected outright.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        subject: { type: 'string', maxLength: AGENT_TOUR_LIMITS.subject },
+        gist: { type: 'object' },
+        cards: {
+          type: 'array',
+          minItems: caps.minCards,
+          maxItems: caps.maxCards,
+          items: { type: 'object' },
+        },
+        context: { type: 'string', maxLength: AGENT_TOUR_LIMITS.context },
+      },
+      required: ['subject', 'gist', 'cards'],
     },
   },
 ];
@@ -437,7 +472,7 @@ export function selectTools(
   canvasOnly = false,
   capabilities?: SessionCapabilities,
 ): ToolDef[] {
-  const canvasTools = [...MINDMAP_TOOLS, ...REASONING_TOOLS, ...CANVAS_VIEW_TOOLS];
+  const canvasTools = [...MINDMAP_TOOLS, ...REASONING_TOOLS, ...CANVAS_VIEW_TOOLS, ...TOUR_TOOLS];
   if (capabilities) {
     const taskTools =
       capabilities.profile === 'ordinary'

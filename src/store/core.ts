@@ -71,6 +71,7 @@ export const [store, setStore] = createStore<AppStore>({
   dockerAvailable: false,
   shareDockerAgentAuth: false,
   askCodeProvider: 'claude',
+  askCodeModel: 'sonnet',
   newTaskDropUrl: null,
   newTaskPrefillPrompt: null,
   missingProjectIds: {},

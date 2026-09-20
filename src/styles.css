@@ -1477,6 +1477,40 @@ button {
   font-size: 12px;
 }
 
+/* The action and the model chevron read as one footer row. */
+.change-tour-row {
+  display: flex;
+  align-items: stretch;
+}
+
+.change-tour-hover {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.change-tour-row .change-tour-action {
+  flex: 1;
+  min-width: 0;
+}
+
+.change-tour-model {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 10px;
+  border: 0;
+  border-left: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.change-tour-model:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
 .change-tour-action {
   display: flex;
   align-items: center;
@@ -2420,6 +2454,43 @@ html:is(
 .changed-files-open-editor-btn:focus-visible,
 .changed-files-open-canvas-btn:hover,
 .changed-files-open-canvas-btn:focus-visible {
+  color: var(--fg) !important;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated)) !important;
+}
+
+/* The Understand action is positioned through its hint wrapper so the hint
+   anchors to the visible control. It sits left of the editor and canvas
+   buttons, and stays put while its tour generates or waits to be opened. */
+.changed-files-understand-anchor {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.file-row:has(.changed-files-open-editor-btn:not(:disabled)) .changed-files-understand-anchor,
+.file-row:has(.changed-files-open-canvas-btn) .changed-files-understand-anchor {
+  right: 29px;
+}
+
+.file-row:has(.changed-files-open-editor-btn:not(:disabled)):has(.changed-files-open-canvas-btn)
+  .changed-files-understand-anchor {
+  right: 53px;
+}
+
+.file-row:hover .changed-files-understand-anchor,
+.changed-files-understand-anchor:focus-within,
+.changed-files-understand-anchor:has([aria-busy='true']),
+.changed-files-understand-anchor:has([data-ready='true']) {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.changed-files-understand-btn:hover,
+.changed-files-understand-btn:focus-visible {
   color: var(--fg) !important;
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated)) !important;
 }
@@ -3651,6 +3722,441 @@ html[data-look='islands-light'] .window-title-icon {
   font: inherit;
   font-size: 10px;
   white-space: nowrap;
+}
+
+/* Understanding tour */
+
+/* The tour is one card on a dark room: the dialog panel is transparent and
+   everything around the card is a faint hairline or a muted icon, so nothing
+   competes with the words being read. */
+.understanding-dialog {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  padding: 0 2px;
+}
+
+/* The subject lines up with the card's left edge; the icon's box overhangs on
+   the right so its glyph sits where the card ends. */
+.understanding-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 0 10px 2px;
+}
+
+.understanding-progress {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 14px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* Mono marks the machine-addressable parts of the tour — the subject, the
+   counter, the file refs — so prose and identifiers never read alike. */
+.understanding-subject,
+/* The path may be long, so it yields space to the bar rather than pushing it. */
+.understanding-subject {
+  max-width: 50%;
+}
+
+.understanding-segments {
+  display: flex;
+  flex: 1;
+  min-width: 60px;
+  gap: 4px;
+  opacity: 0.35;
+}
+
+.understanding-segments > span {
+  flex: 1;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+/* Cards already read stay dimmer than the one in hand, so the strip says where
+   you are and not only how far you got. */
+.understanding-segments > span[data-state='seen'] {
+  background: color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+.understanding-segments > span[data-state='current'] {
+  background: var(--accent);
+}
+
+.understanding-count {
+  flex-shrink: 0;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One stage height for every state, so the footer controls never jump when the
+   card changes. */
+.understanding-stage {
+  display: flex;
+  min-height: 356px;
+  max-height: 62vh;
+  flex-direction: column;
+  /* The card scrolls, not the stage, so its edges stay whole on a long card. */
+  overflow: hidden;
+}
+
+/* A dead end has no next card to stay level with, so it fits its message. */
+.understanding-stage--message {
+  min-height: 0;
+}
+
+/* The card and the questions asked under it form one column that scrolls
+   as a whole, so an answer reads on from the card it belongs to. */
+.understanding-stage--thread {
+  min-height: 0;
+  gap: 18px;
+  overflow-y: auto;
+}
+
+.understanding-stage--thread > .understanding-card,
+.understanding-thread > .understanding-card {
+  flex: none;
+  overflow: visible;
+}
+
+/* The spine card keeps the height a card alone would have, so the footer
+   stays level from one card to the next. */
+.understanding-stage--thread > .understanding-card:first-child {
+  min-height: 356px;
+  box-sizing: border-box;
+}
+
+.understanding-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.understanding-thread-question {
+  margin: 0;
+  padding: 0 4px;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  opacity: 0.55;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.understanding-thread > .understanding-card--message {
+  min-height: 72px;
+}
+
+/* The only surface in the dialog; the shadow lifts it off the dark backdrop. */
+.understanding-card {
+  flex: 1;
+  min-height: 0;
+  padding: 26px 28px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--fg) 4%, var(--bg-elevated));
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+}
+
+/* States with no card to read: keep the few words they need in the middle. */
+.understanding-card--message {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  text-align: center;
+}
+
+.understanding-card-label {
+  margin: 0 0 10px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* A step above the body, not a headline: the body carries the card. */
+.understanding-card-title {
+  margin: 0 0 12px;
+  font-family: var(--font-ui);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  line-height: 1.35;
+}
+
+.understanding-diagram {
+  margin: 0 0 16px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre;
+}
+
+.understanding-body {
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.understanding-body p,
+.understanding-body ul,
+.understanding-body ol {
+  margin: 0 0 0.8em;
+}
+
+.understanding-body > :first-child {
+  margin-top: 0;
+}
+
+.understanding-body > :last-child {
+  margin-bottom: 0;
+}
+
+/* The card's tone appears once, as the rule beside the consequence. */
+.understanding-why {
+  margin-top: 22px;
+  padding-left: 14px;
+  border-left: 2px solid var(--tour-tone, var(--border));
+}
+
+.understanding-why-text {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.understanding-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 22px;
+}
+
+.understanding-ref {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.understanding-ref:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  color: var(--fg);
+}
+
+.understanding-ref svg {
+  flex-shrink: 0;
+  opacity: 0.55;
+}
+
+.understanding-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 6px;
+  color: var(--fg-muted);
+  font-size: 14px;
+}
+
+.understanding-substatus {
+  margin: 0;
+  opacity: 0.6;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* Deliberately static: the spinner on the status line already carries the
+   motion, so nothing here needs a reduced-motion override. */
+.understanding-skeleton {
+  display: flex;
+  width: 100%;
+  max-width: 320px;
+  flex-direction: column;
+  gap: 13px;
+  margin-top: 26px;
+}
+
+.understanding-skeleton > span {
+  height: 10px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+
+.understanding-alert-row {
+  padding: 0 4px 10px;
+}
+
+.understanding-alert {
+  margin: 0;
+  color: var(--error);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.understanding-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 4px 0;
+}
+
+.understanding-footer-fill {
+  flex: 1;
+}
+
+/* Asking is subordinate to reading: no box, and a rule only while typing. */
+.understanding-ask {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A real field, so asking reads as an offer rather than as empty space. */
+.understanding-ask-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.understanding-ask-input::placeholder {
+  color: var(--fg-subtle);
+  opacity: 0.7;
+}
+
+.understanding-ask-input:focus {
+  border-color: var(--border-focus);
+  outline: none;
+}
+
+.understanding-ask-input:disabled {
+  opacity: 0.45;
+}
+
+/* Holds the spinner in the slot the Go deeper icon just left. */
+.understanding-asking {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+}
+
+/* Tour chrome: an icon the size of a fingertip, muted until it is wanted. */
+.tour-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  opacity: 0.5;
+  cursor: pointer;
+}
+
+.tour-icon:hover:not(:disabled),
+.tour-icon:focus-visible {
+  color: var(--fg);
+  opacity: 1;
+}
+
+.tour-icon:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: 0;
+}
+
+.tour-icon:disabled {
+  opacity: 0.18;
+  cursor: default;
+}
+
+/* The way forward is the one control legible at rest — still not a button. */
+.tour-icon--primary {
+  color: var(--fg);
+  opacity: 0.8;
+}
+
+/* Hover popover of a tour button: which file, what the click does. Glance-only. */
+.tour-hint-anchor {
+  display: inline-flex;
+}
+
+.tour-hint {
+  position: fixed;
+  z-index: 2000;
+  box-sizing: border-box;
+  max-width: calc(100vw - 24px);
+  padding: 10px 12px;
+  background: var(--bg-elevated);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.tour-hint-heading {
+  display: block;
+}
+
+.tour-hint-subject {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.tour-hint-body {
+  margin: 8px 0 0;
+}
+
+.tour-hint-action {
+  margin: 6px 0 0;
+  color: var(--fg-muted);
 }
 
 /* Keep reduced-motion overrides last so class-based rules win by source order. */

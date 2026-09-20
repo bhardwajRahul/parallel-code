@@ -2,7 +2,16 @@ import { DelegationReviewDialog } from './DelegationReviewDialog';
 import { DelegationPanel } from './DelegationPanel';
 import { canUsePeerComposer, usePeerComposer } from '../store/delegation';
 import { TaskMindMap } from './TaskMindMap';
-import { Show, createSignal, createEffect, createMemo, onMount, onCleanup, batch } from 'solid-js';
+import {
+  Show,
+  createSignal,
+  createEffect,
+  createMemo,
+  on,
+  onMount,
+  onCleanup,
+  batch,
+} from 'solid-js';
 import {
   store,
   retryCloseTask,
@@ -43,7 +52,9 @@ import { TaskAITerminal } from './TaskAITerminal';
 import { isAgentChat } from '../store/agent-chat';
 import { TaskClosingOverlay } from './TaskClosingOverlay';
 import { invoke } from '../lib/ipc';
+import { errMessage } from '../lib/log';
 import { IPC } from '../../electron/ipc/channels';
+import type { DocumentSnapshot } from '../documents/types';
 import { SubTaskStrip } from './SubTaskStrip';
 import { theme } from '../lib/theme';
 import { isMac } from '../lib/platform';
@@ -56,6 +67,14 @@ import { shouldPollTaskCommits } from './task-commit-polling';
 import { devQualityFindingProvider } from './dev-quality-finding-fixture';
 import { createEslintQualityFindingProvider } from '../lib/eslint-quality-findings';
 import { createChangeTour } from '../lib/create-change-tour';
+import {
+  createUnderstandingTour,
+  planTourSubject,
+  tourInputSubject,
+  type UnderstandingTourInput,
+} from '../lib/create-understanding-tour';
+import { parseAgentTour } from '../lib/understanding-tour';
+import { UnderstandingTourDialog } from './UnderstandingTourDialog';
 import { getTaskDiffBaseBranch } from '../lib/load-task-diff';
 
 interface TaskPanelProps {
@@ -108,6 +127,13 @@ export function TaskPanel(props: TaskPanelProps) {
   const [commitList, setCommitList] = createSignal<CommitInfo[]>([]);
   const [selectedCommit, setSelectedCommit] = createSignal<CommitSelection>(null);
   const tour = createChangeTour();
+  // Tours generate in the background, so the entry button plus a notification
+  // are the only cues that one finished.
+  const understanding = createUnderstandingTour({
+    onReady: (subject) => showNotification(`Tour ready: ${subject}`),
+    onError: (message) => showNotification(`Tour failed: ${message}`),
+  });
+  const [understandingOpen, setUnderstandingOpen] = createSignal(false);
   const tourBranchName = () =>
     store.taskGitStatus[props.task.id]?.current_branch ?? props.task.branchName;
   const diffBaseBranch = () =>
@@ -129,6 +155,111 @@ export function TaskPanel(props: TaskPanelProps) {
     tour.reset();
     setStartTour(false);
   });
+  // Understanding tours describe the plan or a file, not a diff, so browsing
+  // commits must not discard them: identity is narrower than tourIdentity.
+  const understandingIdentity = createMemo(() =>
+    JSON.stringify([props.task.id, props.task.projectId, props.task.worktreePath]),
+  );
+  createEffect(() => {
+    void understandingIdentity();
+    understanding.reset();
+    setUnderstandingOpen(false);
+  });
+  /**
+   * Shows the tour the agent published through the tour_publish MCP tool. Card
+   * validation lives in the renderer, so a malformed publish is reported here
+   * rather than reaching the viewer.
+   */
+  const showAgentTour = () => {
+    const payload = props.task.agentTour?.payload;
+    if (!payload) return;
+    try {
+      understanding.publish({
+        subject: payload.subject,
+        tour: parseAgentTour(payload),
+        context: payload.context ?? '',
+        worktreePath: props.task.worktreePath,
+      });
+      setUnderstandingOpen(true);
+    } catch (error: unknown) {
+      showNotification(`Tour rejected: ${errMessage(error)}`);
+    }
+  };
+  /**
+   * Start or open: a finished tour opens, the one being generated cancels, and
+   * anything else starts generation in the background without opening a dialog.
+   */
+  const startOrOpenTour = (input: UnderstandingTourInput) => {
+    const subject = tourInputSubject(input);
+    if (understanding.isLoading(input.kind, subject)) {
+      understanding.cancel();
+      return;
+    }
+    if (understanding.open(input)) {
+      setUnderstandingOpen(true);
+      return;
+    }
+    void understanding.generate(input);
+  };
+  /**
+   * The entry button: reopens the cached tour, or publishes it again when the
+   * cache was cleared. A published tour is never generated.
+   */
+  const openAgentTour = () => {
+    const payload = props.task.agentTour?.payload;
+    if (!payload) return;
+    const opened = understanding.open({
+      kind: 'agent',
+      taskName: props.task.name,
+      worktreePath: props.task.worktreePath,
+      subject: payload.subject,
+    });
+    if (opened) setUnderstandingOpen(true);
+    else showAgentTour();
+  };
+  // Every publish opens the viewer, including a second publish of the same subject.
+  createEffect(
+    on(
+      () => props.task.agentTour?.revision,
+      (revision) => {
+        if (revision !== undefined) showAgentTour();
+      },
+    ),
+  );
+  const openPlanTour = () =>
+    startOrOpenTour({
+      kind: 'plan',
+      taskName: props.task.name,
+      worktreePath: props.task.worktreePath,
+      planContent: props.task.planContent ?? '',
+      subject: planTourSubject(props.task),
+    });
+  const openFileTour = (filePath: string) =>
+    startOrOpenTour({
+      kind: 'file',
+      taskName: props.task.name,
+      worktreePath: props.task.worktreePath,
+      filePath,
+    });
+  /** A document open on the canvas is read fresh, so an edited file gets a new tour. */
+  const openDocumentTour = (path: string) => {
+    const { worktreePath, name: taskName } = props.task;
+    void invoke<DocumentSnapshot>(IPC.ReadDocument, {
+      projectRoot: worktreePath,
+      documentPath: path,
+    })
+      .then((snapshot) => {
+        if (snapshot.missing) throw new Error('the file is not in the worktree');
+        startOrOpenTour({
+          kind: 'plan',
+          taskName,
+          worktreePath,
+          planContent: snapshot.content,
+          subject: path,
+        });
+      })
+      .catch((error: unknown) => showNotification(`Could not read ${path}: ${errMessage(error)}`));
+  };
   const [editingProjectId, setEditingProjectId] = createSignal<string | null>(null);
   // Jump-to-step state is a single signal so ↗ can be hidden entirely before
   // TerminalView is ready (otherwise firstIndex would default to 0, showing ↗
@@ -414,6 +545,8 @@ export function TaskPanel(props: TaskPanelProps) {
       isActive={props.isActive}
       reasoning={reasoningGraphEl()}
       mindmap={mindMapEl()}
+      understanding={understanding}
+      onTakeTour={openDocumentTour}
     />
   );
   const notesBodyEl = (
@@ -421,6 +554,9 @@ export function TaskPanel(props: TaskPanelProps) {
       task={props.task}
       agentId={firstAgentId()}
       onPlanFullscreen={() => setPlanFullscreen(true)}
+      understanding={understanding}
+      onPlanTour={openPlanTour}
+      onAgentTour={openAgentTour}
     />
   );
   const changedFilesEl = (
@@ -453,6 +589,8 @@ export function TaskPanel(props: TaskPanelProps) {
       tourDisabled={changedFileCount() === 0}
       compact={topStripEmpty()}
       onFileCountChange={setChangedFileCount}
+      onUnderstandClick={(file) => openFileTour(file.path)}
+      understanding={understanding}
     />
   );
   const stepsSectionEl = (
@@ -903,6 +1041,15 @@ export function TaskPanel(props: TaskPanelProps) {
         taskId={props.task.id}
         agentId={props.task.agentIds[0]}
         worktreePath={props.task.worktreePath}
+        onTakeTour={openPlanTour}
+      />
+      {/* Above the plan viewer and a fullscreen canvas, so a tour started from either stacks on top. */}
+      <UnderstandingTourDialog
+        tour={understanding}
+        open={understandingOpen()}
+        onClose={() => setUnderstandingOpen(false)}
+        worktreePath={props.task.worktreePath}
+        zIndex={1450}
       />
     </div>
   );

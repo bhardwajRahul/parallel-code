@@ -1,7 +1,14 @@
 import type { BrowserWindow } from 'electron';
 import { debug as logDebug } from '../log.js';
 import { ASK_CODE_MODELS } from '../shared/ask-code-models.js';
-import { CHANGE_TOUR_TIMEOUT_MS, CHANGE_TOUR_PROMPT_LIMIT } from '../shared/change-tour-limits.js';
+import { UNDERSTANDING_MAX_OUTPUT_CHARS } from '../shared/understanding-limits.js';
+import {
+  askCodePromptLimit,
+  askCodeSystemPrompt,
+  askCodeTimeoutMs,
+  isStructuredPurpose,
+  type AskCodePurpose,
+} from './ask-code-purpose.js';
 import {
   AskCodeSession,
   ASK_CODE_MAX_CONCURRENT,
@@ -15,10 +22,17 @@ interface MinimaxAskCodeRequest {
   requestId: string;
   channelId: string;
   prompt: string;
-  purpose?: 'tour';
+  purpose?: AskCodePurpose;
 }
 
 const MINIMAX_API_URL = 'https://api.minimax.io/v1/chat/completions';
+/** Inline answers stay short; a tour JSON object with up to 8 cards needs far more room. */
+const MAX_TOKENS_INLINE = 2048;
+/**
+ * Ceiling, not a target: the largest tour the validator accepts, at a
+ * conservative ~3 characters per token so a dense JSON response still fits.
+ */
+const MAX_TOKENS_STRUCTURED = Math.ceil(UNDERSTANDING_MAX_OUTPUT_CHARS / 3);
 export const MINIMAX_MODEL = ASK_CODE_MODELS.minimax;
 
 const activeRequests = new RequestRegistry<AbortController>({
@@ -41,7 +55,7 @@ export function askAboutCodeMinimax(win: BrowserWindow, args: MinimaxAskCodeRequ
     throw new Error('MiniMax API key is not set. Please configure it in Settings.');
   }
 
-  assertPromptWithinLimit(prompt, args.purpose === 'tour' ? CHANGE_TOUR_PROMPT_LIMIT : undefined);
+  assertPromptWithinLimit(prompt, askCodePromptLimit(args.purpose));
   assertCanStart(activeRequests, requestId);
 
   cancelAskAboutCodeMinimax(requestId);
@@ -60,7 +74,7 @@ export function askAboutCodeMinimax(win: BrowserWindow, args: MinimaxAskCodeRequ
     controller,
     send,
     (request) => request.abort(),
-    args.purpose === 'tour' ? CHANGE_TOUR_TIMEOUT_MS : undefined,
+    askCodeTimeoutMs(args.purpose),
   );
 
   fetch(MINIMAX_API_URL, {
@@ -72,18 +86,12 @@ export function askAboutCodeMinimax(win: BrowserWindow, args: MinimaxAskCodeRequ
     body: JSON.stringify({
       model: MINIMAX_MODEL,
       messages: [
-        {
-          role: 'system',
-          content:
-            args.purpose === 'tour'
-              ? 'Return exactly one JSON object matching the requested tour schema. No markdown, commentary, or additional JSON objects.'
-              : 'Answer concisely about the selected code. Use markdown.',
-        },
+        { role: 'system', content: askCodeSystemPrompt(args.purpose) },
         { role: 'user', content: prompt },
       ],
       // MiniMax temperature must be in (0.0, 1.0]
       temperature: 0.3,
-      max_tokens: 2048,
+      max_tokens: isStructuredPurpose(args.purpose) ? MAX_TOKENS_STRUCTURED : MAX_TOKENS_INLINE,
       stream: true,
     }),
     signal: controller.signal,

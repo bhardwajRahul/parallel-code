@@ -15,6 +15,7 @@ vi.mock('../lib/ipc', () => ({
 
 import { loadState, resolveIncomingPanelUserSize, saveState } from './persistence';
 import { setStore, store } from './core';
+import { setAskCodeProvider } from './ui';
 import { IPC } from '../../electron/ipc/channels';
 
 function agentDef(overrides: Partial<AgentDef> = {}): AgentDef {
@@ -408,6 +409,26 @@ describe('reasoning profile persistence', () => {
       expect(saved.tasks['task-2'].reasoningProfile).toBe(expected);
     },
   );
+});
+
+it('never writes a tour the agent published: it is runtime state only', async () => {
+  mockInvoke.mockResolvedValueOnce(
+    JSON.stringify({
+      projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'blue' }],
+      taskOrder: ['task-1'],
+      tasks: { 'task-1': persistedTask(agentDef()) },
+    }),
+  );
+  await loadState();
+  setStore('tasks', 'task-1', 'agentTour', {
+    revision: 1,
+    payload: { subject: 'the retry bug', gist: {}, cards: [{}] },
+  });
+  mockInvoke.mockClear();
+  mockInvoke.mockResolvedValueOnce(undefined);
+  await saveState();
+  const call = mockInvoke.mock.calls.find(([channel]) => channel === IPC.SaveAppState);
+  expect(JSON.parse(call?.[1].json).tasks['task-1']).not.toHaveProperty('agentTour');
 });
 
 describe('mind map persistence', () => {
@@ -1432,6 +1453,73 @@ describe('document full width persistence', () => {
     await loadState();
     expect(store.documentFullWidth).toBe(false);
     expect((await lastSaved()).documentFullWidth).toBeUndefined();
+  });
+});
+
+describe('code Q&A model persistence', () => {
+  function stateJson(extra: Record<string, unknown>): string {
+    return JSON.stringify({
+      projects: [],
+      lastProjectId: null,
+      lastAgentId: null,
+      taskOrder: [],
+      collapsedTaskOrder: [],
+      tasks: {},
+      activeTaskId: null,
+      sidebarVisible: true,
+      ...extra,
+    });
+  }
+
+  async function lastSaved(): Promise<Record<string, unknown>> {
+    mockInvoke.mockResolvedValueOnce(undefined);
+    await saveState();
+    const lastCall = mockInvoke.mock.calls[mockInvoke.mock.calls.length - 1];
+    return JSON.parse(lastCall[1].json) as Record<string, unknown>;
+  }
+
+  it('round-trips a chosen alias and leaves the sonnet default out of the file', async () => {
+    mockInvoke.mockResolvedValueOnce(stateJson({ askCodeModel: 'opus' }));
+    await loadState();
+    expect(store.askCodeModel).toBe('opus');
+    expect((await lastSaved()).askCodeModel).toBe('opus');
+
+    mockInvoke.mockResolvedValueOnce(stateJson({ askCodeModel: 'gpt-4' }));
+    await loadState();
+    expect(store.askCodeModel).toBe('sonnet');
+    expect((await lastSaved()).askCodeModel).toBeUndefined();
+  });
+
+  it('round-trips a Codex provider with its model slug', async () => {
+    mockInvoke.mockResolvedValueOnce(
+      stateJson({ askCodeProvider: 'codex', askCodeModel: 'gpt-5.6-luna' }),
+    );
+    await loadState();
+    expect(store.askCodeProvider).toBe('codex');
+    expect(store.askCodeModel).toBe('gpt-5.6-luna');
+    const saved = await lastSaved();
+    expect(saved.askCodeProvider).toBe('codex');
+    expect(saved.askCodeModel).toBe('gpt-5.6-luna');
+  });
+
+  it('drops a Codex slug that could not be a CLI argument, leaving the CLI default', async () => {
+    mockInvoke.mockResolvedValueOnce(
+      stateJson({ askCodeProvider: 'codex', askCodeModel: '-- rm -rf /' }),
+    );
+    await loadState();
+    expect(store.askCodeProvider).toBe('codex');
+    expect(store.askCodeModel).toBe('');
+    expect((await lastSaved()).askCodeModel).toBeUndefined();
+  });
+
+  it('replaces a model the newly chosen provider cannot run', async () => {
+    mockInvoke.mockResolvedValueOnce(stateJson({ askCodeModel: 'opus' }));
+    await loadState();
+
+    setAskCodeProvider('codex');
+    expect(store.askCodeModel).toBe('');
+    setAskCodeProvider('claude');
+    expect(store.askCodeModel).toBe('sonnet');
   });
 });
 

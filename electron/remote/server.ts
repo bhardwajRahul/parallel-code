@@ -30,6 +30,7 @@ import {
 import { parseMindMapUpdate, type MindMapDocument, type MindMapUpdate } from '../shared/mindmap.js';
 import { parseReasoningUpdate } from '../shared/reasoning-feed.js';
 import { parseCanvasView, type CanvasView } from '../shared/canvas-view.js';
+import { parseAgentTourPayload, type AgentTourPayload } from '../shared/agent-tour.js';
 import type { SessionCaller, SessionCapabilities } from '../shared/delegation-types.js';
 import type { ReasoningDocument } from '../shared/reasoning.js';
 import type { ReasoningUpdate } from '../shared/reasoning-state.js';
@@ -342,9 +343,16 @@ function buildAgentList(
 /** Read and JSON-parse a request body with a hard size cap. */
 type CanvasOps = Pick<
   Parameters<typeof startRemoteServer>[0],
-  'readMindMap' | 'updateMindMap' | 'readReasoning' | 'updateReasoning' | 'openCanvas'
+  | 'readMindMap'
+  | 'updateMindMap'
+  | 'readReasoning'
+  | 'updateReasoning'
+  | 'openCanvas'
+  | 'publishTour'
 >;
-type CanvasRoute = 'mindmaps' | 'reasoning' | 'canvas';
+type CanvasRoute = 'mindmaps' | 'reasoning' | 'canvas' | 'tours';
+/** A published tour inlines its own context; the shared parser caps it again. */
+const TOUR_MAX_BODY_BYTES = 256 * 1024;
 const CANVAS_MAX_IN_FLIGHT = 4;
 // The renderer reports failures as plain messages; 409 tells the agent to read again, 400 to fix its input.
 const CANVAS_CONFLICT =
@@ -376,6 +384,13 @@ async function canvasRequest(
     const view = parseCanvasView(await readJsonBody(req));
     await ops.openCanvas(taskId, view);
     return { ok: true, view };
+  }
+  if (route === 'tours') {
+    if (req.method !== 'POST') throw httpError(405, 'Method not allowed');
+    if (!ops.publishTour) throw httpError(503, 'Tours unavailable');
+    const payload = parseAgentTourPayload(await readJsonBody(req, TOUR_MAX_BODY_BYTES));
+    await ops.publishTour(taskId, payload);
+    return { ok: true, subject: payload.subject };
   }
   const reasoning = route === 'reasoning';
   if (req.method === 'GET') {
@@ -844,6 +859,8 @@ export function startRemoteServer(opts: {
   updateMindMap?: (taskId: string, update: MindMapUpdate) => Promise<MindMapDocument>;
   /** Open or focus a canvas view for the agent's own task (renderer-backed). */
   openCanvas?: (taskId: string, view: CanvasView) => Promise<void>;
+  /** Show a tour the agent wrote for its own task (renderer-backed). */
+  publishTour?: (taskId: string, payload: AgentTourPayload) => Promise<unknown>;
   /** Read a task's notes (renderer-backed). */
   getTaskNotes?: (taskId: string) => Promise<string>;
   /** Persist a task's notes (renderer-backed). */
@@ -1075,7 +1092,7 @@ export function startRemoteServer(opts: {
         res.end(JSON.stringify(body));
       };
 
-      const mapMatch = url.pathname.match(/^\/api\/(mindmaps|reasoning|canvas)\/([^/]+)$/);
+      const mapMatch = url.pathname.match(/^\/api\/(mindmaps|reasoning|canvas|tours)\/([^/]+)$/);
       if (mapMatch) {
         const route = mapMatch[1] as CanvasRoute;
         let taskId: string;

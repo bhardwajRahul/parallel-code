@@ -10,6 +10,7 @@ import type { Coordinator } from '../mcp/coordinator.js';
 import { MCPClient } from '../mcp/client.js';
 import { getAgentMeta } from '../ipc/pty.js';
 import { startRemoteServer } from './server.js';
+import type { AgentTourPayload } from '../shared/agent-tour.js';
 import { appendReasoningUpdate, readReasoningFeed } from '../ipc/reasoning.js';
 import { parseReasoningFeed } from '../shared/reasoning-feed.js';
 import type { ReasoningDocument } from '../shared/reasoning.js';
@@ -64,6 +65,7 @@ const updateReasoning = vi.fn(async (taskId: string, update: ReasoningUpdate) =>
   return readReasoning(taskId);
 });
 const openCanvas = vi.fn(async (_taskId: string, _view: 'mindmap' | 'reasoning') => {});
+const publishTour = vi.fn(async (_taskId: string, _payload: AgentTourPayload) => ({ ok: true }));
 const read = vi.fn(async (_taskId: string) => structuredClone(map));
 const update = vi.fn(
   async (
@@ -93,6 +95,7 @@ beforeEach(async () => {
     readReasoning,
     updateReasoning,
     openCanvas,
+    publishTour,
   });
   token = server.registerCanvasAgent('task-1', 'agent-1');
   client = new MCPClient(`http://127.0.0.1:${server.port}`, token);
@@ -181,6 +184,33 @@ it('opens canvas views for the owning task only and validates the view', async (
   expect(openCanvas).toHaveBeenCalledTimes(1);
 });
 
+it('publishes a tour for the owning task only and validates the payload', async () => {
+  const card = { label: 'KEY DECISION', title: 'One idea', body: 'Body text.' };
+  const tour = { subject: 'the retry bug', gist: card, cards: [card], context: 'The facts.' };
+  await expect(client.publishTour('task-1', tour)).resolves.toEqual({
+    ok: true,
+    subject: 'the retry bug',
+  });
+  expect(publishTour).toHaveBeenCalledWith('task-1', tour);
+  await expect(client.publishTour('task-2', tour)).rejects.toThrow('403');
+  const endpoint = `http://127.0.0.1:${server.port}/api/tours/task-1`;
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const malformed = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ ...tour, cards: [] }),
+  });
+  expect(malformed.status).toBe(400);
+  const huge = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ ...tour, context: 'x'.repeat(300 * 1024) }),
+  });
+  expect(huge.status).toBe(413);
+  expect((await fetch(endpoint, { headers })).status).toBe(405);
+  expect(publishTour).toHaveBeenCalledTimes(1);
+});
+
 it('rejects access to other tasks, terminals, task control and device pairing', async () => {
   await expect(client.readMindMap('task-2')).rejects.toThrow('403');
   for (const path of [
@@ -265,6 +295,7 @@ it('serves discoverable tools over real MCP stdio and reflects subsequent manual
       'reasoning_read',
       'reasoning_update',
       'canvas_open',
+      'tour_publish',
     ]);
     const opened = await mcp.callTool({ name: 'canvas_open', arguments: { view: 'mindmap' } });
     expect(opened.isError).not.toBe(true);
