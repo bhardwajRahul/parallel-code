@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   CopilotKitProvider,
@@ -61,6 +61,9 @@ export interface ChatProps {
   onReview?: (path?: string) => void;
   onOpenFile?: (path: string) => void;
   onListFiles?: () => Promise<string[]>;
+  /** Path to reference for a dropped file — worktree-relative when inside it — or
+   *  undefined when it has no path on disk, such as an image dragged from a browser. */
+  dropPathFor?: (file: File) => string | undefined;
   permissionMode?: string;
   permissionsDisabled?: boolean;
   onPermissionMode?: (mode: ChatPermissionMode) => Promise<void>;
@@ -185,6 +188,9 @@ function Conversation(props: ChatProps & { drafts: Map<string, ComposerMemory> }
   const sendingRef = useRef(false);
   const [images, setImages] = useState<ChatImage[]>(saved?.images ?? []);
   const [files, setFiles] = useState<string[]>(saved?.files ?? []);
+  // Where the `@` that opened the file search sits in the draft, and the files before it.
+  const [picker, setPicker] = useState<{ at: number; files: string[] } | null>(null);
+  const caretAfterPick = useRef<number | null>(null);
   const [readingImages, setReadingImages] = useState(false);
   const [queue, setQueue] = useState<{ id: string; text: string; images: ChatImage[] }[]>(
     saved?.queue ?? [],
@@ -204,6 +210,12 @@ function Conversation(props: ChatProps & { drafts: Map<string, ComposerMemory> }
   useEffect(() => {
     props.drafts.set(draftKey, { images, files, queue });
   }, [props.drafts, draftKey, images, files, queue]);
+  useLayoutEffect(() => {
+    const caret = caretAfterPick.current;
+    if (caret === null) return;
+    caretAfterPick.current = null;
+    container.current?.querySelector('textarea')?.setSelectionRange(caret, caret);
+  }, [props.draft]);
   const working = props.state.status === 'working';
   useEffect(() => {
     mounted.current = true;
@@ -280,7 +292,7 @@ function Conversation(props: ChatProps & { drafts: Map<string, ComposerMemory> }
       [
         text.trim(),
         files.length
-          ? `Referenced worktree files:\n${files.map((file) => JSON.stringify(file)).join('\n')}`
+          ? `Referenced files:\n${files.map((file) => JSON.stringify(file)).join('\n')}`
           : '',
       ]
         .filter(Boolean)
@@ -380,6 +392,49 @@ function Conversation(props: ChatProps & { drafts: Map<string, ComposerMemory> }
     } finally {
       setReadingImages(false);
     }
+  }
+  // Images attach inline; other files are referenced by path, so they need one on disk.
+  function addDropped(dropped: File[]) {
+    if (sendingRef.current || stoppingRef.current || props.disabled) return;
+    const others = dropped
+      .filter((file) => !file.type.startsWith('image/'))
+      .map((file) => ({ name: file.name, path: props.dropPathFor?.(file) }));
+    const paths = others.flatMap((file) => file.path ?? []);
+    const rejected = others.filter((file) => !file.path);
+    if (paths.length) setFiles((current) => [...new Set([...current, ...paths])]);
+    const pictures = dropped.filter((file) => file.type.startsWith('image/'));
+    if (pictures.length) void addImages(pictures);
+    if (rejected.length)
+      setError(
+        `No file on disk for: ${rejected.map((file) => file.name).join(', ')}. Save it first, then drop the saved file.`,
+      );
+  }
+  // `@` at a word start opens the file search. The `@` stays typed until a file is
+  // chosen, so a literal mention such as `@Component` costs only an Escape.
+  function openFilePicker(event: FormEvent<HTMLTextAreaElement>) {
+    const input = event.currentTarget;
+    const at = input.selectionStart - 1;
+    if (
+      !props.onListFiles ||
+      !(event.nativeEvent instanceof InputEvent) ||
+      event.nativeEvent.data !== '@' ||
+      /\S/.test(input.value[at - 1] ?? '')
+    )
+      return;
+    setPicker({ at, files });
+  }
+  function closeFilePicker() {
+    if (!picker) return;
+    const draft = current.current.draft;
+    const chosen = files.some((file) => !picker.files.includes(file));
+    const removed = chosen && draft[picker.at] === '@';
+    if (removed) current.current.onDraft(draft.slice(0, picker.at) + draft.slice(picker.at + 1));
+    setPicker(null);
+    const textarea = container.current?.querySelector('textarea');
+    textarea?.focus();
+    // A new draft value moves the caret to the end, so wait for it to commit.
+    if (removed) caretAfterPick.current = picker.at;
+    else textarea?.setSelectionRange(picker.at + 1, picker.at + 1);
   }
   function reuse(text: string, attached: ChatImage[] = []) {
     if (
@@ -490,8 +545,8 @@ function Conversation(props: ChatProps & { drafts: Map<string, ComposerMemory> }
                     <div className="chat-empty">
                       <strong>What would you like to work on?</strong>
                       <p>
-                        Describe a change, ask about the code, or attach files and images for
-                        context.
+                        Describe a change or ask about the code. Type @ or drop files to reference
+                        them; paste or drop images.
                       </p>
                     </div>
                   )}
@@ -609,9 +664,10 @@ function Conversation(props: ChatProps & { drafts: Map<string, ComposerMemory> }
                       files={files}
                       images={images}
                       disabled={props.disabled || sending || readingImages || stopping}
+                      open={!!picker}
                       onFiles={setFiles}
-                      onImages={(files) => void addImages(files)}
                       onRemoveImage={(index) => setImages(images.filter((_, i) => i !== index))}
+                      onClose={closeFilePicker}
                       onListFiles={props.onListFiles}
                     />
                     {readingImages && <div role="status">Reading images…</div>}
@@ -676,7 +732,8 @@ function Conversation(props: ChatProps & { drafts: Map<string, ComposerMemory> }
                     )}
                   </div>
                   <div className="chat-composer-hint">
-                    {working ? 'Enter to queue' : 'Enter to send'} · Shift+Enter for a new line
+                    {working ? 'Enter to queue' : 'Enter to send'} · Shift+Enter for a new line · @
+                    for files
                   </div>
                 </div>
               ),
@@ -698,13 +755,14 @@ function Conversation(props: ChatProps & { drafts: Map<string, ComposerMemory> }
                     void addImages(pasted);
                   }
                 },
+                onInput: openFilePicker,
                 onDragOver: (event) => {
                   if (event.dataTransfer.types.includes('Files')) event.preventDefault();
                 },
                 onDrop: (event) => {
                   if (event.dataTransfer.files.length) {
                     event.preventDefault();
-                    void addImages(Array.from(event.dataTransfer.files));
+                    addDropped(Array.from(event.dataTransfer.files));
                   }
                 },
               },

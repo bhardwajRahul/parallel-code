@@ -41,6 +41,38 @@ const composer = () => {
   return input;
 };
 
+/** Types `text` at the end of the draft one character at a time, as a keyboard does. */
+async function type(text: string) {
+  for (const data of text) {
+    const input = composer();
+    const value = input.value + data;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(
+      input,
+      value,
+    );
+    input.setSelectionRange(value.length, value.length);
+    await act(async () =>
+      input.dispatchEvent(new InputEvent('input', { data, bubbles: true, composed: true })),
+    );
+    await update();
+  }
+}
+async function pickFile(path: string) {
+  await type(' @');
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  await act(async () => button(path).click());
+  await act(async () => button('Done').click());
+  await update();
+}
+async function drop(files: File[]) {
+  const event = new Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', { value: { files, types: ['Files'] } });
+  await act(async () => {
+    composer().dispatchEvent(event);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -204,8 +236,7 @@ it('blocks Enter during interruption and sends the original prompt while preserv
       }),
     onListFiles: async () => ['src/app.ts'],
   });
-  await act(async () => button('＋ Files').click());
-  await act(async () => button('src/app.ts').click());
+  await pickFile('src/app.ts');
   await act(async () => button('Interrupt and send now').click());
   await act(async () =>
     composer().dispatchEvent(
@@ -217,13 +248,13 @@ it('blocks Enter during interruption and sends the original prompt while preserv
     ),
   );
   expect(shadow.querySelector('.chat-queue')).toBeNull();
-  expect(props.draft).toBe('Keep my draft');
+  expect(props.draft).toBe('Keep my draft ');
   await update({ draft: 'Still writing this' });
   await act(async () => release());
   await update({ state: { ...props.state, status: 'ready' } });
   expect(send).toHaveBeenCalledTimes(1);
   expect(send).toHaveBeenCalledWith(
-    'Keep my draft\n\nReferenced worktree files:\n"src/app.ts"',
+    'Keep my draft\n\nReferenced files:\n"src/app.ts"',
     expect.any(Function),
   );
   expect(props.draft).toBe('Still writing this');
@@ -396,15 +427,77 @@ it('does not submit while an IME composition is active', async () => {
 
 it('allows file references to be removed and sends selected paths as visible context', async () => {
   await update({ onListFiles: async () => ['src/app.ts', 'README.md'] });
-  await act(async () => button('＋ Files').click());
-  await act(async () => button('src/app.ts').click());
+  await pickFile('src/app.ts');
   expect(shadow.querySelector('.chat-context-chips')?.textContent).toContain('src/app.ts');
+  expect(props.draft).toBe('Keep my draft ');
+  expect(getDeepActiveElement()).toBe(composer());
+  expect(composer().selectionStart).toBe('Keep my draft '.length);
   await act(async () => button('Send message').click());
   expect(send).toHaveBeenCalledWith(
-    'Keep my draft\n\nReferenced worktree files:\n"src/app.ts"',
+    'Keep my draft\n\nReferenced files:\n"src/app.ts"',
     expect.any(Function),
   );
   expect(shadow.querySelector('.chat-context-chips')?.textContent).not.toContain('src/app.ts');
+});
+
+it('keeps a typed @ when the file search closes without a choice', async () => {
+  await update({ onListFiles: async () => ['src/app.ts'] });
+  await type('a@');
+  expect(shadow.querySelector('.chat-file-picker')).toBeNull();
+  await type(' @');
+  await act(async () => button('Done').click());
+  expect(shadow.querySelector('.chat-file-picker')).toBeNull();
+  expect(props.draft).toBe('Keep my drafta@ @');
+  await update();
+  expect(composer().selectionStart).toBe('Keep my drafta@ @'.length);
+});
+
+it('puts the caret where the @ was when a file is picked mid-draft', async () => {
+  await update({ onListFiles: async () => ['src/app.ts'] });
+  const input = composer();
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(
+    input,
+    'Keep @my draft',
+  );
+  input.setSelectionRange(6, 6);
+  await act(async () =>
+    input.dispatchEvent(new InputEvent('input', { data: '@', bubbles: true, composed: true })),
+  );
+  await update();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  await act(async () => button('src/app.ts').click());
+  await act(async () => button('Done').click());
+  await update();
+  expect(props.draft).toBe('Keep my draft');
+  expect(composer().selectionStart).toBe(5);
+});
+
+it('references dropped files by path and rejects files with none', async () => {
+  const paths = new Map([
+    ['app.ts', 'src/app.ts'],
+    ['report.pdf', '/home/me/Downloads/report.pdf'],
+  ]);
+  await update({ dropPathFor: (file) => paths.get(file.name) });
+  await drop([new File(['x'], 'app.ts'), new File(['x'], 'report.pdf')]);
+  const chips = shadow.querySelector('.chat-context-chips')?.textContent;
+  expect(chips).toContain('src/app.ts');
+  expect(chips).toContain('/home/me/Downloads/report.pdf');
+  await drop([new File(['x'], 'from-browser.txt')]);
+  expect(shadow.querySelector('[role="alert"]')?.textContent).toContain('from-browser.txt');
+});
+
+it('keeps the usable part of a drop that also holds a file without a path', async () => {
+  const onDisk = new File(['x'], 'app.ts');
+  await update({ dropPathFor: (file) => (file === onDisk ? 'src/app.ts' : undefined) });
+  await drop([
+    new File(['image data'], 'screen.png', { type: 'image/png' }),
+    onDisk,
+    new File(['x'], 'notes.txt'),
+  ]);
+  const chips = shadow.querySelector('.chat-context-chips')?.textContent;
+  expect(chips).toContain('screen.png');
+  expect(chips).toContain('src/app.ts');
+  expect(shadow.querySelector('[role="alert"]')?.textContent).toContain('notes.txt');
 });
 
 it('finds tool output inside collapsed activity and opens the matching entry', async () => {
@@ -465,15 +558,7 @@ it('reuses a prompt as a new draft without changing earlier messages', async () 
 
 it('retains image context when delivery fails', async () => {
   await update();
-  const input = shadow.querySelector<HTMLInputElement>('input[type="file"]');
-  if (!input) throw new Error('Missing image picker');
-  Object.defineProperty(input, 'files', {
-    value: [new File(['image data'], 'screen.png', { type: 'image/png' })],
-  });
-  await act(async () => {
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  });
+  await drop([new File(['image data'], 'screen.png', { type: 'image/png' })]);
   expect(shadow.querySelector('.chat-context-chips')?.textContent).toContain('screen.png');
   send.mockRejectedValueOnce(new Error('Disconnected'));
   await act(async () => button('Send message').click());

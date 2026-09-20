@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { validateChatImages, type ChatImage } from '../../../electron/shared/agent-chat-types';
 
 export async function readChatImages(files: File[]): Promise<ChatImage[]> {
@@ -24,64 +24,43 @@ export async function readChatImages(files: File[]): Promise<ChatImage[]> {
   );
 }
 
+/** Attached context. The worktree file search opens from the composer (typing `@`),
+ *  not from a button; images arrive by paste or drop. */
 export function ChatContext(props: {
   files: string[];
   images: ChatImage[];
   disabled: boolean;
+  open: boolean;
   onFiles: (files: string[]) => void;
-  onImages: (files: File[]) => void;
   onRemoveImage: (index: number) => void;
+  onClose: () => void;
   onListFiles?: () => Promise<string[]>;
 }) {
-  const picker = useRef<HTMLInputElement>(null);
   const [all, setAll] = useState<string[]>([]);
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  async function showFiles() {
-    setOpen(true);
+  const { open, onListFiles } = props;
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    setQuery('');
     setLoading(true);
     setError('');
-    try {
-      setAll((await props.onListFiles?.()) ?? []);
-    } catch (error) {
-      setError(String(error));
-    } finally {
-      setLoading(false);
-    }
-  }
+    (onListFiles?.() ?? Promise.resolve([]))
+      .then((files) => live && setAll(files))
+      .catch((error: unknown) => live && setError(String(error)))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+  }, [open, onListFiles]);
   const matches = all.filter((file) =>
     file.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
   );
   return (
     <div className="chat-context">
-      <div className="chat-context-actions">
-        {props.onListFiles && (
-          <button
-            disabled={props.disabled}
-            aria-expanded={open}
-            onClick={() => (open ? setOpen(false) : void showFiles())}
-          >
-            ＋ Files
-          </button>
-        )}
-        <button disabled={props.disabled} onClick={() => picker.current?.click()}>
-          ＋ Images
-        </button>
-        <input
-          hidden
-          ref={picker}
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
-          multiple
-          onChange={(event) => {
-            props.onImages(Array.from(event.target.files ?? []));
-            event.target.value = '';
-          }}
-        />
-      </div>
-      {open && (
+      {props.open && (
         <div className="chat-file-picker">
           <input
             autoFocus
@@ -90,7 +69,7 @@ export function ChatContext(props: {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Escape') setOpen(false);
+              if (event.key === 'Escape') props.onClose();
             }}
           />
           {loading ? (
@@ -125,7 +104,7 @@ export function ChatContext(props: {
               </small>
             </>
           )}
-          <button onClick={() => setOpen(false)}>Done</button>
+          <button onClick={props.onClose}>Done</button>
         </div>
       )}
       <div className="chat-context-chips">
