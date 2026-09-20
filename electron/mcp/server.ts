@@ -11,6 +11,7 @@ import { parseMindMapUpdate } from '../shared/mindmap.js';
 import { parseReasoningUpdate } from '../shared/reasoning-feed.js';
 import { parseCanvasView } from '../shared/canvas-view.js';
 import {
+  APP_TASK_INSTRUCTIONS,
   CANVAS_INSTRUCTIONS,
   hasCanvasTools,
   selectTools,
@@ -408,6 +409,7 @@ async function main(): Promise<void> {
       capabilities: { tools: {} },
       instructions:
         [
+          APP_TASK_INSTRUCTIONS,
           ...(hasCanvasTools(taskId, coordinatorId, canvasOnly) ? [CANVAS_INSTRUCTIONS] : []),
           ...(sessionCapabilities ? [sessionInstructions(sessionCapabilities)] : []),
         ].join('\n\n') || undefined,

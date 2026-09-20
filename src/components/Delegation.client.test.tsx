@@ -6,7 +6,6 @@ import type { DelegationState } from '../../electron/shared/delegation-types';
 import { invoke } from '../lib/ipc';
 import { setStore, store } from '../store/core';
 import type { Task } from '../store/types';
-import { DelegateTaskDialog } from './DelegateTaskDialog';
 import { DelegationPanel } from './DelegationPanel';
 import { DelegationReviewDialog } from './DelegationReviewDialog';
 import { setDelegationStates, canUsePeerComposer, usePeerComposer } from '../store/delegation';
@@ -38,6 +37,7 @@ beforeEach(() => {
     tasks: { parent: { ...task } },
     taskOrder: ['parent'],
     collapsedTaskOrder: [],
+    mcpOrchestrationEnabled: true,
     availableAgents: [
       {
         id: 'claude',
@@ -62,8 +62,6 @@ beforeEach(() => {
     lastOutput: [],
   });
   vi.mocked(invoke).mockImplementation(async (_channel, args) => {
-    if (args?.action === 'snapshot')
-      return { branchName: 'task/parent', headSha: 'abc123456789', changedFileCount: 2 };
     if (args?.action === 'state') return state;
     return {};
   });
@@ -77,57 +75,19 @@ afterEach(() => {
   setDelegationStates('parent', { attempts: [], messages: [], paused: false });
 });
 
-it('preserves the assignment across cancel and requires an explicit committed snapshot for dirty parents', async () => {
-  const [open, setOpen] = createSignal(true);
-  dispose = render(
-    () => (
-      <DelegateTaskDialog task={store.tasks.parent} open={open()} onClose={() => setOpen(false)} />
-    ),
-    host,
-  );
-  await vi.waitFor(() => expect(document.body.textContent).toContain('2 changed file(s)'));
-  const name = document.querySelector<HTMLInputElement>('input:not([type="checkbox"])');
-  const assignment = document.querySelector('textarea');
-  if (!name || !assignment) throw new Error('Missing assignment form');
-  name.value = 'Tests';
-  name.dispatchEvent(new Event('input', { bubbles: true }));
-  assignment.value = 'Add regression coverage';
-  assignment.dispatchEvent(new Event('input', { bubbles: true }));
-  expect(document.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
-  button('Cancel')?.click();
-  setOpen(true);
-  await vi.waitFor(() =>
-    expect(document.querySelector('textarea')?.value).toBe('Add regression coverage'),
-  );
-  const useCommit = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(
-    (input) => input.parentElement?.textContent?.includes('Use the last commit'),
-  );
-  useCommit?.click();
-  await vi.waitFor(() =>
-    expect(document.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(
-      false,
-    ),
-  );
-  document
-    .querySelector('form')
-    ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-  await vi.waitFor(() =>
-    expect(invoke).toHaveBeenCalledWith(
-      IPC.DelegationRequest,
-      expect.objectContaining({
-        action: 'create',
-        assignment: expect.objectContaining({
-          parentTaskId: 'parent',
-          expectedBranch: 'task/parent',
-          expectedHeadSha: 'abc123456789',
-          useLastCommit: true,
-          prompt: 'Add regression coverage',
-          propagateSkipPermissions: false,
-        }),
-      }),
-    ),
-  );
-  expect(store.activeTaskId).not.toBe('child');
+it('hides inactive collaboration and offers tools restart when coordinating and enabled', () => {
+  setStore('tasks', 'parent', 'agentSessionIds', { agent: 'conversation' });
+  dispose = render(() => <DelegationPanel task={store.tasks.parent} />, host);
+  expect(host.querySelector('[aria-label="Task collaboration"]')).toBeNull();
+  setStore('tasks', 'parent', 'delegationPaused', true);
+  expect(button('Restart and resume Claude')).toBeDefined();
+  setStore('mcpOrchestrationEnabled', false);
+  expect(button('Restart and resume Claude')).toBeUndefined();
+  setStore('mcpOrchestrationEnabled', true);
+  expect(button('Restart and resume Claude')).toBeDefined();
+  setStore('tasks', 'parent', 'delegationPaused', false);
+  setStore('tasks', 'parent', 'delegationParent', true);
+  expect(host.querySelector('[aria-label="Task collaboration"]')).toBeNull();
 });
 
 it('reviews and manually copies held messages without touching drafts or sending terminal input', async () => {
@@ -290,4 +250,28 @@ it('uses only the exact recipient empty composer and marks handling without send
   ).toBe(false);
   expect(usePeerComposer(store.tasks.parent, message, composer, false)).toBe(false);
   expect(untrack(text)).toBe('');
+});
+
+it('does not show an empty collaboration section merely for automatic updates', () => {
+  setStore('tasks', 'parent', 'autoSendChildUpdates', true);
+  dispose = render(() => <DelegationPanel task={store.tasks.parent} />, host);
+  expect(host.querySelector('[aria-label="Task collaboration"]')).toBeNull();
+});
+
+it('respects explicit automatic update policy over the legacy mode marker', () => {
+  setStore('tasks', 'parent', {
+    coordinatorMode: true,
+    autoSendChildUpdates: false,
+    stagedNotification: {
+      batchId: 'batch',
+      notificationIds: ['child'],
+      text: 'Child complete',
+      autoFireAt: 0,
+      userEdited: false,
+    },
+  });
+  dispose = render(() => <DelegationPanel task={store.tasks.parent} />, host);
+  expect(host.textContent).toContain('ready for review');
+  setStore('tasks', 'parent', 'autoSendChildUpdates', true);
+  expect(host.textContent).not.toContain('ready for review');
 });

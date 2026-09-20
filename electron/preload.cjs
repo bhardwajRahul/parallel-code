@@ -142,7 +142,6 @@ const ALLOWED_CHANNELS = new Set([
   'quit_and_install_update',
   'get_update_status',
   'update_status_changed',
-  'set_coordinator_mode_enabled',
   'start_mcp_server',
   'stop_mcp_server',
   'get_mcp_status',

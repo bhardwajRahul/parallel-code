@@ -48,6 +48,8 @@ const mocks = vi.hoisted(() => {
   const mockSubscribeToAgent = vi.fn();
   const mockUnsubscribeFromAgent = vi.fn();
   const mockGetAgentScrollback = vi.fn();
+  const mockGetActiveAgentIds = vi.fn();
+  const mockGetAgentMeta = vi.fn();
   const mockGetChangedFiles = vi.fn();
   const mockGetAllFileDiffs = vi.fn();
   const mockGetDiffBaseSha = vi.fn();
@@ -82,6 +84,8 @@ const mocks = vi.hoisted(() => {
     mockSubscribeToAgent,
     mockUnsubscribeFromAgent,
     mockGetAgentScrollback,
+    mockGetActiveAgentIds,
+    mockGetAgentMeta,
     mockGetChangedFiles,
     mockGetAllFileDiffs,
     mockGetDiffBaseSha,
@@ -185,6 +189,8 @@ vi.mock('../ipc/pty.js', () => ({
   subscribeToAgent: mocks.mockSubscribeToAgent,
   unsubscribeFromAgent: mocks.mockUnsubscribeFromAgent,
   getAgentScrollback: mocks.mockGetAgentScrollback,
+  getActiveAgentIds: mocks.mockGetActiveAgentIds,
+  getAgentMeta: mocks.mockGetAgentMeta,
   onPtyEvent: mocks.mockOnPtyEvent,
 }));
 
@@ -261,6 +267,8 @@ export const {
   mockSubscribeToAgent,
   mockUnsubscribeFromAgent,
   mockGetAgentScrollback,
+  mockGetActiveAgentIds,
+  mockGetAgentMeta,
   mockGetChangedFiles,
   mockGetAllFileDiffs,
   mockGetDiffBaseSha,
@@ -339,6 +347,8 @@ export function resetCoordinatorMocks(): void {
   mockKillAgent.mockReset();
   mockSubscribeToAgent.mockReset();
   mockUnsubscribeFromAgent.mockReset();
+  mockGetActiveAgentIds.mockReset().mockReturnValue([]);
+  mockGetAgentMeta.mockReset().mockReturnValue(null);
   mockGetAgentScrollback.mockReset();
   mockGetAgentScrollback.mockReturnValue(null);
 

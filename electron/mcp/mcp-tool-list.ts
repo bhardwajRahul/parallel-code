@@ -16,6 +16,9 @@ export interface ToolDef {
   };
 }
 
+export const APP_TASK_INSTRUCTIONS =
+  'You are running inside Parallel Code. When the user asks to create a Parallel Code task (or PC task), use this server’s create_task MCP tool. It creates a visible task in the app with its own Git worktree and agent terminal. Native sub-agent tools such as spawn_agent do not create Parallel Code tasks and must not substitute for this request. Only report a task as created after create_task succeeds and returns its taskId. If the tool is missing or rejected, explain the limitation instead of silently using a native sub-agent. Task creation requires orchestration enabled in Settings > MCP, a supported top-level Git worktree task, and an app-managed MCP session. After enabling tools, restart and resume the session where supported.';
+
 const initialReasoningUpdate = {
   runId: null,
   newRunId: 'run-1',
@@ -181,7 +184,7 @@ export const COORDINATOR_TOOLS: ToolDef[] = [
   {
     name: 'create_task',
     description:
-      'Create a new task with its own git worktree and AI agent. The agent starts automatically and the prompt is delivered once the agent is ready. A startup/default placeholder prompt in get_task_output is not evidence that delivery failed; wait and re-check before sending follow-up instructions.',
+      'Create a visible Parallel Code task with its own Git worktree and AI agent terminal. Use this when the user asks for a Parallel Code task or PC task; native sub-agent tools do not create app tasks. The agent starts automatically and the prompt is delivered once the agent is ready. A startup/default placeholder prompt in get_task_output is not evidence that delivery failed; wait and re-check before sending follow-up instructions.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -376,7 +379,7 @@ const ORDINARY_TOOLS: ToolDef[] = COORDINATOR_TOOLS.filter(
     return {
       ...tool,
       description:
-        'Delegate an assignment to a child from your current committed snapshot. Children inherit neither conversation nor uncommitted edits. Include required context in prompt. Use requestId for identical retries. Supply expectedBranch and expectedHeadSha after inspecting your Git state; if dirty, explicitly choose useLastCommit:true to omit dirty edits. This never authorizes committing. Results require user review before merging.',
+        'Create a visible Parallel Code task with its own Git worktree and agent terminal from your current committed snapshot. Use this for requests to create a Parallel Code task or PC task, not native sub-agent tools. Children inherit neither conversation nor uncommitted edits. Include required context in prompt. Use requestId for identical retries. Supply expectedBranch and expectedHeadSha after inspecting your Git state; if dirty, explicitly choose useLastCommit:true to omit dirty edits. This never authorizes committing. The result reports integrationPolicy: review requires user approval; automatic permits the child to verify and self-land via land_self. The policy comes from this task’s user-selected automation options; do not override it in the child prompt.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -408,10 +411,13 @@ const ORDINARY_TOOLS: ToolDef[] = COORDINATOR_TOOLS.filter(
 export function sessionInstructions(capabilities: SessionCapabilities): string {
   const guidance =
     capabilities.profile === 'ordinary'
-      ? 'Delegate only bounded assignments with the context needed; children do not inherit your conversation or uncommitted changes. Child results require user review; never merge them automatically. Use list_tasks, then wait_for_signal_done as the completion loop. Empty child lists end waiting. After timeout check status once and wait again while work remains; without a blocking wait leave at least 10 seconds between unchanged status checks. Idle and consumed completion events are not integration. Do not resend original assignments.'
+      ? (capabilities.canCreate
+          ? 'Use create_task to create Parallel Code tasks for bounded assignments with the context needed; children do not inherit your conversation or uncommitted changes. '
+          : 'This launch cannot create Parallel Code tasks. Enable orchestration in Settings > MCP, then restart and resume the session. You may supervise existing children. ') +
+        'Follow each child’s returned integrationPolicy. Review-policy children commit and call signal_done for user approval. Automatic-policy children commit, verify, and call land_self to merge and clean up through Parallel Code. Never directly merge or delete child worktrees. Use list_tasks and bounded wait_for_signal_done for progress; self-landed children leave the active list, so reconcile status and app completion summaries rather than expecting signal_done from them. Empty child lists end waiting. After timeout check status once and wait again while work remains; without a blocking wait leave at least 10 seconds between unchanged status checks. Idle and consumed completion events are not integration. Do not resend original assignments.'
       : capabilities.profile === 'child-review'
-        ? 'Commit and verify your assigned work, then call signal_done. Your result requires user review before merging; do not call land_self or create children.'
-        : 'Commit and verify your assigned work before land_self. Use signal_done when manual review is needed. You cannot create children.';
+        ? 'Commit and verify your assigned work, then call signal_done. Your result requires user review before merging; do not call land_self. This is a child task and cannot create further Parallel Code tasks; direct creation requests to a top-level task.'
+        : 'Commit and verify your assigned work before land_self. Use signal_done when manual review is needed. This is a child task and cannot create further Parallel Code tasks; direct creation requests to a top-level task.';
   return (
     guidance +
     (capabilities.peers

@@ -37,7 +37,6 @@ import type {
 import { parseGitHubUrl, taskNameFromGitHubUrl } from '../lib/github-url';
 import type { Agent, Task, GitIsolationMode, AppStore } from './types';
 import type { DockerSource } from '../lib/docker';
-import { COORDINATOR_PREAMBLE } from './coordinator-preamble';
 import {
   clampCoordinatorConcurrentTasks,
   DEFAULT_COORDINATOR_CONCURRENT_TASKS,
@@ -242,7 +241,8 @@ export interface CreateTaskOptions {
   dockerSource?: DockerSource;
   dockerImage?: string;
   stepsEnabled?: boolean;
-  coordinatorMode?: boolean;
+  autoMergeChildren?: boolean;
+  autoSendChildUpdates?: boolean;
   propagateSkipPermissions?: boolean;
   maxConcurrentTasks?: number;
 }
@@ -297,62 +297,10 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
     worktreePath = projectRoot;
   }
 
-  // Generate agentId early so we can derive the Docker container name before StartMCPServer.
   const agentId = crypto.randomUUID();
-
-  // Single clamped value shared by the preamble text and the backend's hard
-  // enforcement so the two can never drift apart.
   const effectiveMaxConcurrentTasks = clampCoordinatorConcurrentTasks(
     opts.maxConcurrentTasks ?? DEFAULT_COORDINATOR_CONCURRENT_TASKS,
   );
-
-  // Start MCP server BEFORE adding task to store — the store update triggers
-  // a reactive render of TerminalView which spawns the PTY immediately.
-  // If MCP launch args aren't set yet, the coordinator agent starts without MCP wiring.
-  let mcpConfigPath: string | undefined;
-  let mcpLaunchArgs: string[] | undefined;
-  if (opts.coordinatorMode) {
-    // When running in Docker, sub-agents will be spawned via `docker exec` into this container.
-    const dockerContainerName = dockerMode ? `parallel-code-${agentId.slice(0, 12)}` : undefined;
-    try {
-      const mcpResult = await invoke<{
-        configPath: string | undefined;
-        mcpLaunchArgs?: string[];
-      }>(IPC.StartMCPServer, {
-        coordinatorTaskId: taskId,
-        projectId,
-        projectRoot,
-        coordinatorBranch: branchName || undefined,
-        worktreePath: gitIsolation === 'worktree' ? worktreePath : undefined,
-        skipPermissions: skipPermissions ?? false,
-        propagateSkipPermissions: opts.propagateSkipPermissions ?? false,
-        maxConcurrentTasks: effectiveMaxConcurrentTasks,
-        verifyCommand: getProject(projectId)?.verifyCommand,
-        agentCommand: agentDef.command,
-        agentArgs: agentDef.args,
-        agentEnvFile: store.agentEnvFiles[agentDef.id],
-        dockerContainerName,
-        dockerImage,
-      });
-      mcpConfigPath = mcpResult.configPath ?? undefined;
-      mcpLaunchArgs = mcpResult.mcpLaunchArgs;
-      console.warn('[MCP] Coordinator config path:', mcpConfigPath);
-      await invoke(IPC.MCP_CoordinatorRegistered, {
-        coordinatorTaskId: taskId,
-        projectId,
-        coordinatorBranch: branchName || undefined,
-        worktreePath,
-        verifyCommand: getProject(projectId)?.verifyCommand,
-      });
-    } catch (err) {
-      console.warn('[MCP] Failed to start MCP server for coordinator:', err);
-      // Clean up worktree so we don't leave a dangling branch
-      if (gitIsolation === 'worktree') {
-        invoke(IPC.RemoveArenaWorktree, { projectRoot, branchName }).catch(() => {});
-      }
-      throw err;
-    }
-  }
 
   // Per-task steps tracking — explicit opt-in from dialog, or fall back to default preference
   const stepsEnabled = opts.stepsEnabled ?? store.defaultStepsEnabled;
@@ -362,11 +310,6 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
   // Only possible here when an initialPrompt was provided; if not, sendPrompt handles injection.
   const effectivePrompt =
     stepsEnabled && initialPrompt ? `${initialPrompt}\n\n---\n${STEPS_INSTRUCTION}` : initialPrompt;
-  const coordinatorBaseBranchInstruction =
-    opts.coordinatorMode && branchName
-      ? `Use \`${branchName}\` as the baseBranch for all sub-tasks.\n\n`
-      : '';
-
   const task: Task = {
     ...createBaseTaskRecord({
       id: taskId,
@@ -379,15 +322,7 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
       worktreePath,
       agentId,
     }),
-    initialPrompt:
-      opts.coordinatorMode && effectivePrompt
-        ? COORDINATOR_PREAMBLE.replace(
-            /\{\{MAX_CONCURRENT\}\}/g,
-            String(effectiveMaxConcurrentTasks),
-          ) +
-          coordinatorBaseBranchInstruction +
-          effectivePrompt
-        : (effectivePrompt ?? undefined),
+    initialPrompt: effectivePrompt ?? undefined,
     savedInitialPrompt: initialPrompt ?? undefined,
     stepsEnabled: stepsEnabled || undefined,
     skipPermissions: skipPermissions ?? undefined,
@@ -395,16 +330,11 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
     dockerSource: dockerSource ?? undefined,
     dockerImage: dockerImage ?? undefined,
     githubUrl,
-    coordinatorMode: opts.coordinatorMode || undefined,
-    propagateSkipPermissions: opts.coordinatorMode
-      ? (opts.propagateSkipPermissions ?? false)
-      : undefined,
-    maxConcurrentTasks: opts.coordinatorMode ? effectiveMaxConcurrentTasks : undefined,
-    controlledBy: opts.coordinatorMode ? 'coordinator' : undefined,
-    mcpConfigPath,
-    mcpLaunchArgs,
-    // Coordinator tasks call StartMCPServer before entering the store, so MCP is ready immediately.
-    mcpStartupStatus: opts.coordinatorMode ? ('ready' as const) : undefined,
+    autoMergeChildren: opts.autoMergeChildren,
+    autoSendChildUpdates: opts.autoSendChildUpdates,
+    propagateSkipPermissions:
+      gitIsolation === 'worktree' ? (opts.propagateSkipPermissions ?? false) : undefined,
+    maxConcurrentTasks: gitIsolation === 'worktree' ? effectiveMaxConcurrentTasks : undefined,
   };
 
   const agent = createAgentRecord({

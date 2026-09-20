@@ -9,7 +9,6 @@ import { ImportWorktreesDialog } from './ImportWorktreesDialog';
 import { CloseIcon } from './icons';
 import { RemoveProjectConfirm } from './RemoveProjectConfirm';
 import { updateProjectCoordination } from '../store/projects';
-import { DEFAULT_COORDINATOR_CONCURRENT_TASKS } from '../lib/coordinator-limits';
 import { isDocumentProject } from '../store/projects';
 
 interface EditProjectDialogProps {
@@ -23,7 +22,6 @@ function hueFromColor(color: string): number {
 }
 
 export function EditProjectDialog(props: EditProjectDialogProps) {
-  const [allowAgentTaskCreation, setAllowAgentTaskCreation] = createSignal(false);
   const [allowPeerAccess, setAllowPeerAccess] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
   const [saveError, setSaveError] = createSignal('');
@@ -49,7 +47,6 @@ export function EditProjectDialog(props: EditProjectDialogProps) {
     const p = props.project;
     if (!p) return;
     setName(p.name);
-    setAllowAgentTaskCreation(p.allowAgentTaskCreation === true);
     setAllowPeerAccess(p.allowPeerAccess === true);
     setSaveError('');
     setSelectedHue(hueFromColor(p.color));
@@ -88,7 +85,6 @@ export function EditProjectDialog(props: EditProjectDialogProps) {
     setSaving(true);
     setSaveError('');
     const projectId = props.project.id;
-    const creationConsent = allowAgentTaskCreation();
     const peerConsent = allowPeerAccess();
     const syncPolicy = showsTaskSettings();
     const updates = {
@@ -103,7 +99,7 @@ export function EditProjectDialog(props: EditProjectDialogProps) {
       terminalBookmarks: bookmarks(),
     };
     try {
-      if (syncPolicy) await updateProjectCoordination(projectId, creationConsent, peerConsent);
+      if (syncPolicy) await updateProjectCoordination(projectId, peerConsent);
       updateProject(projectId, updates);
       props.onClose();
     } catch (error) {
@@ -144,20 +140,6 @@ export function EditProjectDialog(props: EditProjectDialogProps) {
                 }}
               >
                 <legend>Agent collaboration</legend>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={allowAgentTaskCreation()}
-                    onChange={(e) => setAllowAgentTaskCreation(e.currentTarget.checked)}
-                  />{' '}
-                  Allow agents to create child tasks
-                </label>
-                <small>
-                  Children launch additional agent sessions and may incur provider charges. The
-                  default concurrent child limit is {DEFAULT_COORDINATOR_CONCURRENT_TASKS}; each
-                  parent can have a configured limit. This is not a spending cap. Delegate task…
-                  authorizes one child without enabling this setting.
-                </small>
                 <label>
                   <input
                     type="checkbox"

@@ -1,7 +1,6 @@
-import { DelegateTaskDialog } from './DelegateTaskDialog';
 import { DelegationReviewDialog } from './DelegationReviewDialog';
 import { DelegationPanel } from './DelegationPanel';
-import { canDelegate, canUsePeerComposer, usePeerComposer } from '../store/delegation';
+import { canUsePeerComposer, usePeerComposer } from '../store/delegation';
 import { TaskMindMap } from './TaskMindMap';
 import { Show, createSignal, createEffect, createMemo, onMount, onCleanup, batch } from 'solid-js';
 import {
@@ -72,10 +71,10 @@ const CHANGED_FILES_PANEL_AUTO_MAX = 'min(300px, 33vh)';
 const NOTES_PANEL_AUTO_MAX = 'min(400px, 33vh)';
 
 export function TaskPanel(props: TaskPanelProps) {
+  const autoSendChildUpdates = () => props.task.autoSendChildUpdates ?? props.task.coordinatorMode;
   const eslintQualityFindingProvider = createEslintQualityFindingProvider(
     () => props.task.worktreePath,
   );
-  const [showDelegate, setShowDelegate] = createSignal(false);
   const [showCloseConfirm, setShowCloseConfirm] = createSignal(false);
   const [planFullscreen, setPlanFullscreen] = createSignal(false);
 
@@ -83,7 +82,7 @@ export function TaskPanel(props: TaskPanelProps) {
   const [nowMs, setNowMs] = createSignal(Date.now());
   createEffect(() => {
     const n = props.task.stagedNotification;
-    const hasActiveCountdown = Boolean(props.task.coordinatorMode && n && !n.userEdited);
+    const hasActiveCountdown = Boolean(autoSendChildUpdates() && n && !n.userEdited);
     if (!props.task.stepsEnabled && !hasActiveCountdown) return;
     const id = window.setInterval(() => setNowMs(Date.now()), hasActiveCountdown ? 1_000 : 30_000);
     onCleanup(() => clearInterval(id));
@@ -488,7 +487,7 @@ export function TaskPanel(props: TaskPanelProps) {
         taskName={props.task.name}
         agentId={firstAgentId()}
         coordinatedBy={props.task.coordinatedBy}
-        coordinatorMode={props.task.coordinatorMode}
+        autoSendChildUpdates={autoSendChildUpdates()}
         controlledBy={props.task.controlledBy}
         stagedNotification={props.task.stagedNotification}
         nowMs={nowMs}
@@ -596,7 +595,7 @@ export function TaskPanel(props: TaskPanelProps) {
               aiTerminalChild,
               ...(props.task.stepsEnabled ? [stepsSectionChild] : []),
               ...(!isAgentChat(props.task, firstAgentId()) &&
-              (store.showPromptInput || props.task.coordinatorMode)
+              (store.showPromptInput || autoSendChildUpdates())
                 ? [promptInputChild]
                 : []),
             ]}
@@ -619,7 +618,7 @@ export function TaskPanel(props: TaskPanelProps) {
                   children={[
                     aiTerminalChild,
                     ...(!isAgentChat(props.task, firstAgentId()) &&
-                    (store.showPromptInput || props.task.coordinatorMode)
+                    (store.showPromptInput || autoSendChildUpdates())
                       ? [promptInputChild]
                       : []),
                   ]}
@@ -689,7 +688,12 @@ export function TaskPanel(props: TaskPanelProps) {
         closingError={props.task.closingError}
         onRetry={() => retryCloseTask(props.task.id)}
       />
-      <Show when={!!props.task.coordinatedBy || !!props.task.coordinatorMode}>
+      <Show
+        when={
+          !!props.task.coordinatedBy ||
+          (!!autoSendChildUpdates() && !!props.task.stagedNotification)
+        }
+      >
         <div
           style={{
             background: theme.bgElevated,
@@ -707,9 +711,7 @@ export function TaskPanel(props: TaskPanelProps) {
               gap: '12px',
             }}
           >
-            <span>
-              {props.task.coordinatorMode ? 'Auto delivery enabled' : 'Coordinated sub-task'}
-            </span>
+            <span>{autoSendChildUpdates() ? 'Automatic child updates' : 'Child task'}</span>
             <Show
               when={!!props.task.stagedNotification && !props.task.stagedNotification.userEdited}
             >
@@ -797,7 +799,6 @@ export function TaskPanel(props: TaskPanelProps) {
             isActive={props.isActive}
             onClose={() => setShowCloseConfirm(true)}
             onMerge={() => setShowMergeConfirm(true)}
-            onDelegate={canDelegate(props.task) ? () => setShowDelegate(true) : undefined}
             onPush={() => setShowPushConfirm(true)}
             pushing={pushing()}
             pushSuccess={pushSuccess()}
@@ -819,11 +820,6 @@ export function TaskPanel(props: TaskPanelProps) {
           children={canvasVisible() ? [mainChild, canvasChild] : [mainChild]}
         />
       </div>
-      <DelegateTaskDialog
-        task={props.task}
-        open={showDelegate()}
-        onClose={() => setShowDelegate(false)}
-      />
       <DelegationReviewDialog
         task={props.task}
         open={showMergeConfirm() && props.task.integrationPolicy === 'review'}

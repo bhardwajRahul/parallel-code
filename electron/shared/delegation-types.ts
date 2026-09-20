@@ -24,6 +24,8 @@ export interface TaskAuthorityInput {
   gitIsolation: 'worktree' | 'direct' | 'none';
   parentTaskId?: string;
   coordinatorMode?: boolean;
+  autoMergeChildren?: boolean;
+  autoSendChildUpdates?: boolean;
   delegationParent?: boolean;
   propagateSkipPermissions?: boolean;
   externalWorktree?: boolean;
@@ -40,7 +42,6 @@ export interface TaskAuthorityInput {
 
 export interface ProjectDelegationPolicy {
   projectId: string;
-  allowAgentTaskCreation: boolean;
   allowPeerAccess: boolean;
 }
 
@@ -104,8 +105,7 @@ export type DelegationRequest =
   | { action: 'register'; task: TaskAuthorityInput }
   | { action: 'unregister'; taskId: string }
   | { action: 'projectPolicy'; policy: ProjectDelegationPolicy }
-  | { action: 'snapshot'; taskId: string }
-  | { action: 'create'; assignment: DelegateAssignment }
+  | { action: 'orchestrationSetting'; enabled: boolean }
   | { action: 'pause'; taskId: string; paused: boolean }
   | { action: 'review'; taskId: string }
   | { action: 'merge'; taskId: string; review: Omit<DelegationReview, 'diff'> }

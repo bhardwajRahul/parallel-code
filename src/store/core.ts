@@ -91,7 +91,7 @@ export const [store, setStore] = createStore<AppStore>({
   focusMode: false,
   taskSplitMode: {},
   verboseLogging: false,
-  coordinatorModeEnabled: false,
+  mcpOrchestrationEnabled: true,
   documentWorkspacesEnabled: false,
   documentFullWidth: false,
   activeDocumentProjectId: null,

@@ -1,13 +1,14 @@
 import { clearStagedNotification } from '../store/tasks';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
+import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PromptInput } from './PromptInput';
 import { registerAction, registerFocusFn, sendPrompt } from '../store/store';
 
 const { storeMock, setTaskPromptDraft, taskUsesAgentChat } = vi.hoisted(() => ({
-  storeMock: { tasks: {} as Record<string, unknown> },
+  storeMock: { tasks: {} as Record<string, unknown>, mcpOrchestrationEnabled: true },
   setTaskPromptDraft: vi.fn(),
   taskUsesAgentChat: vi.fn(() => false),
 }));
@@ -57,6 +58,7 @@ afterEach(() => {
   while (disposers.length > 0) disposers.pop()?.();
   document.body.replaceChildren();
   storeMock.tasks = {};
+  storeMock.mcpOrchestrationEnabled = true;
   setTaskPromptDraft.mockClear();
   taskUsesAgentChat.mockReturnValue(false);
   vi.mocked(registerFocusFn).mockClear();
@@ -153,7 +155,7 @@ it('never auto-sends an ordinary parent completion summary or replaces its draft
         taskId="task-ordinary"
         taskName="Ordinary"
         agentId="agent-1"
-        coordinatorMode={false}
+        autoSendChildUpdates={false}
         controlledBy="coordinator"
         stagedNotification={{
           batchId: 'batch',
@@ -194,7 +196,7 @@ it('keeps an ordinary parent review summary when the user sends an unrelated pro
           taskId="ordinary-send"
           taskName="Ordinary"
           agentId="agent-1"
-          coordinatorMode={false}
+          autoSendChildUpdates={false}
           stagedNotification={{
             batchId: 'result',
             notificationIds: ['child'],
@@ -221,4 +223,87 @@ it('keeps an ordinary parent review summary when the user sends an unrelated pro
           channel === IPC.MCP_CoordinatorRestageAfterUserSend,
       ),
   ).toBe(false);
+});
+
+it('preserves staged coordinator results without auto-sending when global orchestration is off', async () => {
+  vi.useFakeTimers();
+  vi.mocked(sendPrompt).mockClear();
+  vi.mocked(clearStagedNotification).mockClear();
+  storeMock.mcpOrchestrationEnabled = false;
+  storeMock.tasks = { coordinator: { id: 'coordinator', agentIds: ['agent-1'] } };
+  const [control, setControl] = createSignal<'human' | 'coordinator'>('human');
+  const container = document.createElement('div');
+  document.body.append(container);
+  const cleanup = render(
+    () => (
+      <PromptInput
+        taskId="coordinator"
+        taskName="Coordinator"
+        agentId="agent-1"
+        autoSendChildUpdates
+        controlledBy={control()}
+        stagedNotification={{
+          batchId: 'result',
+          notificationIds: ['child'],
+          text: 'Child ready for review',
+          autoFireAt: 0,
+          userEdited: false,
+        }}
+      />
+    ),
+    container,
+  );
+  try {
+    await vi.advanceTimersByTimeAsync(65_000);
+    setControl('coordinator');
+    await vi.advanceTimersByTimeAsync(65_000);
+    expect(sendPrompt).not.toHaveBeenCalled();
+    expect(clearStagedNotification).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Ready for review');
+    expect(container.textContent).not.toMatch(
+      /Staged for auto-send|Auto-sending|Sending when coordinator/,
+    );
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
+});
+
+it('automatically sends opted-in child updates for an ordinary task', async () => {
+  vi.useFakeTimers();
+  vi.mocked(sendPrompt).mockClear();
+  vi.mocked(clearStagedNotification).mockClear();
+  storeMock.tasks = { ordinary: { id: 'ordinary', agentIds: ['agent-1'] } };
+  const container = document.createElement('div');
+  document.body.append(container);
+  const cleanup = render(
+    () => (
+      <PromptInput
+        taskId="ordinary"
+        taskName="Ordinary"
+        agentId="agent-1"
+        autoSendChildUpdates
+        stagedNotification={{
+          batchId: 'batch',
+          notificationIds: ['child'],
+          text: 'Child complete',
+          autoFireAt: 0,
+          userEdited: false,
+        }}
+      />
+    ),
+    container,
+  );
+  try {
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sendPrompt).toHaveBeenCalledWith('ordinary', 'agent-1', 'Child complete');
+    expect(invoke).toHaveBeenCalledWith(IPC.MCP_CoordinatorNotificationAck, {
+      coordinatorTaskId: 'ordinary',
+      batchId: 'batch',
+    });
+    expect(clearStagedNotification).toHaveBeenCalledWith('ordinary');
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
 });

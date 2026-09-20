@@ -626,9 +626,20 @@ export function registerAllHandlers(win: BrowserWindow): void {
    *  kill clears the entry to cancel the spawn, and a finished restart clears its own, so an
    *  absent entry means both "nobody owns this" and "the owner already left". */
   const canvasOwners = new Map<string, { sessionInstanceId: string }>();
+  let orchestrationEnabled = true;
+  try {
+    const saved = loadAppState();
+    if (saved) orchestrationEnabled = JSON.parse(saved).mcpOrchestrationEnabled !== false;
+  } catch (error) {
+    orchestrationEnabled = false;
+    logWarn('mcp', 'Could not restore orchestration setting; keeping orchestration disabled', {
+      err: errMessage(error),
+    });
+  }
   const delegation = new DelegationService({
+    orchestrationEnabled,
     coordinator: async () => {
-      await enableCoordinatorMode();
+      await ensureCoordinator();
       if (!coordinator) throw new Error('Delegation unavailable.');
       return coordinator;
     },
@@ -650,7 +661,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
   ipcMain.handle(IPC.DelegationRequest, (_event, request) => delegation.request(request));
 
   async function prepareDelegationParent(task: TaskAuthorityInput): Promise<void> {
-    await enableCoordinatorMode();
+    await ensureCoordinator();
     if (!coordinator) throw new Error('Delegation unavailable.');
     const server = await ensureMcpTransport(task.dockerMode === true);
     const hostServerPath = path
@@ -676,7 +687,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       branchName: task.branchName,
       spawnDefaults: { command: task.agentCommand, args: task.agentArgs },
       agentEnvFile: task.agentEnvFile,
-      automaticNotifications: task.coordinatorMode === true,
+      automaticNotifications: task.autoSendChildUpdates ?? task.coordinatorMode ?? false,
       paused: task.delegationPaused,
       skipPermissions: task.propagateSkipPermissions,
       maxConcurrentTasks: task.maxConcurrentTasks,
@@ -773,7 +784,29 @@ export function registerAllHandlers(win: BrowserWindow): void {
         const server = await ensureMcpTransport(args.dockerMode === true);
         assertPendingSpawn();
         canvasOwners.set(args.agentId, pending);
-        const refreshed = coordinator.refreshSessionMcp(args.taskId, args.command);
+        const child = coordinator.getTask(args.taskId);
+        let launchArgs: string[] | undefined;
+        if (child?.agentId === args.agentId) {
+          launchArgs = coordinator.refreshSessionMcp(args.taskId, args.command).mcpLaunchArgs;
+        } else {
+          // Split panes have independent launch identities and private credential files.
+          const capabilities = delegation.capabilities(args.taskId);
+          if (!capabilities || !canConfigureCanvasMcp(args.command, []))
+            throw new Error('This child pane cannot use the managed MCP integration.');
+          const token = server.registerCanvasAgent(args.taskId, args.agentId, undefined, {
+            sessionInstanceId: pending.sessionInstanceId,
+            capabilities,
+          });
+          launchArgs = prepareCanvasMcpArgs({
+            ...args,
+            serverPath: path
+              .join(path.dirname(fileURLToPath(import.meta.url)), '..', 'mcp-server.cjs')
+              .replace('/app.asar/', '/app.asar.unpacked/'),
+            port: server.port,
+            token,
+            sessionCapabilities: capabilities,
+          });
+        }
         const oldArgs: string[] = args.managedMcpLaunchArgs ?? [];
         const nextArgs: string[] = [...args.args];
         if (oldArgs.length) {
@@ -784,16 +817,12 @@ export function registerAllHandlers(win: BrowserWindow): void {
             throw new Error(
               'Managed child configuration changed. Reopen this task before restarting.',
             );
-          nextArgs.splice(at, oldArgs.length, ...(refreshed.mcpLaunchArgs ?? []));
-        } else if (refreshed.mcpLaunchArgs?.length) {
+          nextArgs.splice(at, oldArgs.length, ...(launchArgs ?? []));
+        } else if (launchArgs?.length) {
           if (!canConfigureCanvasMcp(args.command, nextArgs))
             throw new Error('Custom MCP configuration cannot be replaced automatically.');
           const separator = nextArgs.indexOf('--');
-          nextArgs.splice(
-            separator < 0 ? nextArgs.length : separator,
-            0,
-            ...refreshed.mcpLaunchArgs,
-          );
+          nextArgs.splice(separator < 0 ? nextArgs.length : separator, 0, ...launchArgs);
         }
         args = { ...args, args: nextArgs };
         canvasTools = true;
@@ -1782,6 +1811,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       }),
       getCoordinator: () => coordinator,
       callSessionTool: (caller, name, params) => delegation.callTool(caller, name, params),
+      isOrchestrationEnabled: () => delegation.isOrchestrationEnabled(),
       ...mobileTaskBridge,
     };
   };
@@ -2030,14 +2060,13 @@ export function registerAllHandlers(win: BrowserWindow): void {
 
   // --- MCP server management ---
 
-  // Registers coordinator-specific IPC handlers. Called lazily when coordinator
-  // mode is enabled (either at startup from persisted state, or on first toggle).
+  // Register coordination IPC handlers lazily for ordinary tasks or legacy restoration.
   function registerCoordinatorHandlers(): void {
     if (coordinatorHandlersRegistered) return;
     coordinatorHandlersRegistered = true;
 
     // NOTE: StartMCPServer is registered eagerly (below, outside this function) so the
-    // renderer can call it during restore before enableCoordinatorMode() completes.
+    // renderer can call it during restore before ensureCoordinator() completes.
 
     ipcMain.handle(
       IPC.MCP_ControlChanged,
@@ -2046,7 +2075,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
         if (args.controlledBy !== 'coordinator' && args.controlledBy !== 'human') {
           throw new Error(`Invalid controlledBy: ${String(args.controlledBy)}`);
         }
-        if (!coordinator) throw new Error('coordinator mode not initialized');
+        if (!coordinator) throw new Error('Task coordination is not initialized');
+
         coordinator.setTaskControl(args.taskId, args.controlledBy);
       },
     );
@@ -2186,7 +2216,19 @@ export function registerAllHandlers(win: BrowserWindow): void {
         validatePath(args.worktreePath, 'worktreePath');
         assertString(args.coordinatorTaskId, 'coordinatorTaskId');
         validateUUID(args.coordinatorTaskId, 'coordinatorTaskId');
-        if (!coordinator) throw new Error('coordinator mode not initialized');
+        if (!coordinator) throw new Error('Task coordination is not initialized');
+        const authority = delegation.getTask(args.id);
+        if (
+          !authority ||
+          authority.parentTaskId !== args.coordinatorTaskId ||
+          authority.projectId !== args.projectId ||
+          authority.projectRoot !== fs.realpathSync(args.projectRoot) ||
+          authority.worktreePath !== fs.realpathSync(args.worktreePath) ||
+          authority.branchName !== args.branchName ||
+          authority.integrationPolicy !== args.integrationPolicy ||
+          !delegation.capabilities(args.id)
+        )
+          throw new Error('Task authority was not validated. Restore the task before starting it.');
         if (args.agentCommand !== undefined) assertString(args.agentCommand, 'agentCommand');
         if (args.initialPrompt !== undefined) assertString(args.initialPrompt, 'initialPrompt');
         const result = coordinator.hydrateTask({
@@ -2222,21 +2264,26 @@ export function registerAllHandlers(win: BrowserWindow): void {
     );
   }
 
-  // Enable coordinator mode: lazily import the Coordinator module and register handlers.
+  // Lazily initialize the shared coordination backend and register its handlers.
   // Safe to call multiple times — only initializes once.
   let coordinatorStarting: Promise<void> | undefined;
-  async function enableCoordinatorMode(): Promise<void> {
+  async function ensureCoordinator(): Promise<void> {
     if (coordinator) return;
     if (coordinatorStarting) return coordinatorStarting;
     coordinatorStarting = (async () => {
       const { Coordinator } = await import('../mcp/coordinator.js');
       coordinator = new Coordinator();
+      coordinator.setOrchestrationEnabled(delegation.isOrchestrationEnabled());
       coordinator.setWindow(win);
       coordinator.setSessionMcpProvider((task) => {
         if (!delegation.getTask(task.coordinatorTaskId) || !remoteServer) return undefined;
-        delegation.registerChild(task);
+        if (!delegation.getTask(task.id)) {
+          if (task.status !== 'creating')
+            throw new Error('Task authority was not validated before restoring its MCP session.');
+          delegation.registerChild(task);
+        }
         const sessionCapabilities = delegation.capabilities(task.id);
-        if (!sessionCapabilities) return undefined;
+        if (!sessionCapabilities) throw new Error('Task authority is unavailable.');
         let owner = canvasOwners.get(task.agentId);
         if (!owner) {
           owner = { sessionInstanceId: crypto.randomUUID() };
@@ -2258,29 +2305,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
     }
   }
 
-  // Renderer calls this at startup (if coordinator mode was previously enabled)
-  // and when the user toggles the setting on.
-  ipcMain.handle(IPC.SetCoordinatorModeEnabled, async (_e, args: { enabled: boolean }) => {
-    if (args.enabled) await enableCoordinatorMode();
-  });
-
-  // Eagerly initialize if coordinator mode was enabled in the last saved state,
-  // so the handlers are ready before the renderer finishes loading.
-  (() => {
-    const json = loadAppState();
-    if (!json) return;
-    try {
-      const state = JSON.parse(json) as { coordinatorModeEnabled?: boolean };
-      if (state.coordinatorModeEnabled === true) {
-        void enableCoordinatorMode();
-      }
-    } catch {
-      // ignore malformed state
-    }
-  })();
-
   // StartMCPServer registered eagerly (not inside registerCoordinatorHandlers) so the
-  // renderer can call it during app-restore before enableCoordinatorMode() resolves.
+  // renderer can call it during app-restore before ensureCoordinator() resolves.
   ipcMain.handle(
     IPC.StartMCPServer,
     async (
@@ -2330,7 +2356,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
         }
       }
 
-      await enableCoordinatorMode();
+      await ensureCoordinator();
       if (!coordinator) return;
 
       // Set coordinator's default project + coordinator task ID, and register this coordinator

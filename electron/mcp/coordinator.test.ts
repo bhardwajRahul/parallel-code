@@ -23,6 +23,9 @@ import {
   mockWriteToAgent,
   mockSubscribeToAgent,
   mockGetAgentScrollback,
+  mockGetActiveAgentIds,
+  mockGetAgentMeta,
+  mockKillAgent,
   mockGetChangedFiles,
   mockGetAllFileDiffs,
   mockGetDiffBaseSha,
@@ -1509,6 +1512,10 @@ describe('Coordinator land_self', () => {
 
   it('lands, cleans up resources, and closes the task record', async () => {
     const { deleteTask: mockDeleteTask } = await import('../ipc/tasks.js');
+    mockGetActiveAgentIds.mockReturnValueOnce(['secondary', 'unrelated']);
+    mockGetAgentMeta
+      .mockReturnValueOnce({ taskId: 'task-1' })
+      .mockReturnValueOnce({ taskId: 'other' });
 
     const result = await coordinator.landSelf('task-1', { verification, summary: 'done' });
 
@@ -1520,6 +1527,11 @@ describe('Coordinator land_self', () => {
     });
     expect(vi.mocked(mergeTask)).toHaveBeenCalled();
     expect(vi.mocked(mockDeleteTask)).toHaveBeenCalled();
+    expect(mockKillAgent).toHaveBeenCalledWith('secondary');
+    expect(mockKillAgent).not.toHaveBeenCalledWith('unrelated');
+    expect(vi.mocked(mockDeleteTask)).toHaveBeenCalledWith(
+      expect.objectContaining({ agentIds: expect.arrayContaining(['secondary']) }),
+    );
     expect(coordinator.getTask('task-1')).toBeUndefined();
     expect(mockNotifyRenderer).toHaveBeenCalledWith(
       'mcp_task_closed',

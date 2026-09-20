@@ -15,13 +15,14 @@ const mocks = vi.hoisted(() => ({
   scrollback: vi.fn(),
   kill: vi.fn(),
   remove: vi.fn(),
+  activeAgents: vi.fn(),
 }));
 vi.mock('node:child_process', () => ({
   execFile: Object.assign(vi.fn(), { [promisify.custom]: mocks.git }),
 }));
 vi.mock('node:fs/promises', () => ({ realpath: mocks.realpath }));
 vi.mock('../ipc/pty.js', () => ({
-  getActiveAgentIds: () => [],
+  getActiveAgentIds: mocks.activeAgents,
   getAgentMeta: mocks.meta,
   getAgentScrollback: mocks.scrollback,
   killAgent: mocks.kill,
@@ -38,6 +39,8 @@ let dirty = '';
 let sessions: SessionCaller[];
 let service: InstanceType<typeof DelegationService>;
 let core: {
+  setOrchestrationEnabled: ReturnType<typeof vi.fn>;
+  signalDone: ReturnType<typeof vi.fn>;
   createTask: ReturnType<typeof vi.fn>;
   listTasks: ReturnType<typeof vi.fn>;
   getTaskStatus: ReturnType<typeof vi.fn>;
@@ -110,8 +113,8 @@ function childRecord(): CoordinatedTask {
     integrationPolicy: 'review',
   };
 }
-function policy(allowAgentTaskCreation = false, allowPeerAccess = false) {
-  service.updatePolicy({ projectId: 'project', allowAgentTaskCreation, allowPeerAccess });
+function policy(allowPeerAccess = false) {
+  service.updatePolicy({ projectId: 'project', allowPeerAccess });
 }
 async function send(sender: SessionCaller, target: SessionCaller, requestId = 'message-1') {
   return (await service.callTool(sender, 'send_agent_prompt', {
@@ -127,6 +130,7 @@ beforeEach(() => {
   worktrees.clear();
   dirty = '';
   sessions = [];
+  mocks.activeAgents.mockReturnValue([]);
   mocks.realpath.mockImplementation(async (path: string) => path);
   mocks.git.mockImplementation(
     async (_command: string, args: string[], options: { cwd: string }) => {
@@ -147,6 +151,8 @@ beforeEach(() => {
   mocks.meta.mockImplementation((agentId: string) => ({ agentId, isShell: false }));
   mocks.scrollback.mockReturnValue(Buffer.from('\u001b[31mHello peer\u001b[0m').toString('base64'));
   core = {
+    setOrchestrationEnabled: vi.fn(),
+    signalDone: vi.fn().mockReturnValue(true),
     createTask: vi.fn().mockResolvedValue(childRecord()),
     listTasks: vi.fn().mockReturnValue([]),
     getTaskStatus: vi.fn(),
@@ -174,6 +180,65 @@ afterEach(() => {
 });
 
 describe('delegation authority and creation', () => {
+  it('disables existing sessions and fresh parent capabilities while preserving child completion', async () => {
+    await register('parent');
+    await register('child', { parentTaskId: 'parent', integrationPolicy: 'review' });
+    const parent = session('parent');
+    const child = session('child', 'child-launch', true);
+    policy(true);
+    await service.request({ action: 'orchestrationSetting', enabled: false });
+    expect(core.setOrchestrationEnabled).toHaveBeenCalledWith(false);
+    expect(service.capabilities('parent')).toBeUndefined();
+    expect(service.capabilities('child')).toMatchObject({ canCreate: false, peers: false });
+    await expect(service.callTool(parent, 'list_tasks', {})).rejects.toThrow('disabled');
+    expect(() => service.create(assignment())).toThrow('disabled');
+    await expect(service.callTool(child, 'signal_done', {})).resolves.toEqual({ ok: true });
+    expect(
+      JSON.parse(service.normalizeState('{"mcpOrchestrationEnabled":true}'))
+        .mcpOrchestrationEnabled,
+    ).toBe(false);
+    await service.request({ action: 'orchestrationSetting', enabled: true });
+    await expect(service.callTool(parent, 'list_tasks', {})).resolves.toEqual([]);
+  });
+
+  it('closes held messages without killing agents when orchestration is disabled', async () => {
+    await register('parent');
+    await register('peer');
+    policy(true);
+    const parent = session('parent');
+    const peer = session('peer');
+    await send(parent, peer);
+    expect(service.state('peer').messages).toHaveLength(1);
+    await service.request({ action: 'orchestrationSetting', enabled: false });
+    expect(service.state('peer').messages).toEqual([]);
+    expect(mocks.kill).not.toHaveBeenCalled();
+    expect(mocks.remove).not.toHaveBeenCalled();
+  });
+
+  it('retains the previous policy when saving fails and rejects invalid settings', async () => {
+    vi.mocked(persist).mockImplementation(() => {
+      throw new Error('disk full');
+    });
+    await expect(
+      service.request({ action: 'orchestrationSetting', enabled: false }),
+    ).rejects.toThrow('disk full');
+    expect(service.isOrchestrationEnabled()).toBe(true);
+    expect(core.setOrchestrationEnabled).not.toHaveBeenCalled();
+    await expect(
+      service.request({ action: 'orchestrationSetting', enabled: 'false' }),
+    ).rejects.toThrow();
+  });
+
+  it('cancels creation during snapshot preparation even if orchestration is re-enabled', async () => {
+    await register('parent');
+    const creation = service.create(assignment());
+    const rejected = expect(creation).rejects.toThrow('canceled');
+    await service.request({ action: 'orchestrationSetting', enabled: false });
+    await service.request({ action: 'orchestrationSetting', enabled: true });
+    await rejected;
+    expect(core.createTask).not.toHaveBeenCalled();
+  });
+
   it('accepts validated external worktrees and rejects conflicting lifecycle identity', async () => {
     await register('parent');
     expect(service.getTask('parent')?.projectRoot).toBe('/repo');
@@ -190,18 +255,64 @@ describe('delegation authority and creation', () => {
     expect(service.capabilities('unregistered')).toBeUndefined();
   });
 
-  it('requires project consent for agent creation while allowing one explicit desktop creation', async () => {
+  it('allows a fresh ordinary session to create a real app task with default settings', async () => {
     await register('parent');
     const caller = session('parent');
-    expect(() => service.create(assignment(), caller)).toThrow('Enable');
-    await service.create(assignment());
+    expect(service.capabilities('parent')?.canCreate).toBe(true);
+    await expect(
+      service.callTool(caller, 'create_task', {
+        requestId: 'default-create',
+        name: 'Haiku',
+        prompt: 'Write a haiku',
+      }),
+    ).resolves.toEqual({ taskId: 'child', agentId: 'agent-child', integrationPolicy: 'review' });
     expect(core.createTask).toHaveBeenCalledOnce();
-    expect(service.capabilities('parent')?.canCreate).toBe(false);
+    expect(service.capabilities('parent')?.canCreate).toBe(true);
+  });
+
+  it('uses only the task automation option to select child integration policy', async () => {
+    await register('parent', { autoMergeChildren: true });
+    core.createTask.mockResolvedValue({ ...childRecord(), integrationPolicy: 'automatic' });
+    const caller = session('parent');
+    await expect(
+      service.callTool(caller, 'create_task', {
+        requestId: 'automatic',
+        name: 'Child',
+        prompt: 'Implement assignment',
+        integrationPolicy: 'review',
+      }),
+    ).resolves.toMatchObject({ integrationPolicy: 'automatic' });
+    expect(core.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ integrationPolicy: 'automatic' }),
+    );
+    expect(service.capabilities('child')?.profile).toBe('child-automatic');
+    expect(service.getTask('child')?.autoMergeChildren).toBe(false);
+    await register('parent', { autoMergeChildren: false });
+    await service.callTool(caller, 'create_task', {
+      requestId: 'review',
+      name: 'Child',
+      prompt: 'Implement assignment',
+      integrationPolicy: 'automatic',
+    });
+    expect(core.createTask).toHaveBeenLastCalledWith(
+      expect.objectContaining({ integrationPolicy: 'review' }),
+    );
+  });
+
+  it('stops every child pane without stopping the parent or unrelated tasks', async () => {
+    await register('parent');
+    await register('child', { parentTaskId: 'parent' });
+    mocks.activeAgents.mockReturnValue(['primary', 'secondary', 'parent-agent', 'unrelated']);
+    mocks.meta.mockImplementation((agentId: string) => ({
+      taskId: ['primary', 'secondary'].includes(agentId) ? 'child' : agentId,
+    }));
+    await service.request({ action: 'pause', taskId: 'parent', paused: true });
+    expect(core.stopChildren).toHaveBeenCalledWith('parent');
+    expect(mocks.kill.mock.calls).toEqual([['primary'], ['secondary']]);
   });
 
   it('deduplicates a pending request and rejects changed content with the same ID', async () => {
     await register('parent');
-    policy(true);
     const caller = session('parent');
     const first = service.create(assignment(), caller);
     expect(service.create(assignment(), caller)).toBe(first);
@@ -214,7 +325,6 @@ describe('delegation authority and creation', () => {
 
   it('replays an agent request without deriving a new snapshot after the parent advances', async () => {
     await register('parent');
-    policy(true);
     const caller = session('parent');
     const params = { requestId: 'stable-request', name: 'Child', prompt: 'Implement assignment' };
     const first = await service.callTool(caller, 'create_task', params);
@@ -275,16 +385,15 @@ describe('delegation authority and creation', () => {
     expect(core.createTask).not.toHaveBeenCalled();
   });
 
-  it('rechecks revoked consent through the reserved launch guard', async () => {
+  it('rechecks the global setting through the reserved launch guard', async () => {
     await register('parent');
-    policy(true);
     const caller = session('parent');
     core.createTask.mockImplementationOnce(async (options: { launchGuard: () => void }) => {
-      policy(false);
+      await service.request({ action: 'orchestrationSetting', enabled: false });
       options.launchGuard();
       return childRecord();
     });
-    await expect(service.create(assignment(), caller)).rejects.toThrow('Enable');
+    await expect(service.create(assignment(), caller)).rejects.toThrow('disabled');
   });
 
   it('denies grandchildren and keeps ordinary supervision scoped', async () => {
@@ -313,7 +422,7 @@ describe('held peer messages and access', () => {
     session('other');
     await expect(service.callTool(parent, 'list_agent_sessions', {})).resolves.toEqual([]);
     await expect(send(parent, peer)).rejects.toThrow('scope');
-    policy(false, true);
+    policy(true);
     await expect(service.callTool(parent, 'list_agent_sessions', {})).resolves.toEqual([
       expect.objectContaining({ taskId: 'peer' }),
     ]);
@@ -332,7 +441,7 @@ describe('held peer messages and access', () => {
     session('parent');
     session('peer');
     const child = session('child', 'child-instance', true);
-    policy(false, true);
+    policy(true);
     await expect(service.callTool(child, 'list_agent_sessions', {})).resolves.toEqual([
       expect.objectContaining({ taskId: 'parent' }),
     ]);
@@ -343,7 +452,7 @@ describe('held peer messages and access', () => {
     await register('peer');
     const parent = session('parent'),
       peer = session('peer');
-    policy(false, true);
+    policy(true);
     const receipt = await send(parent, peer);
     expect(receipt.state).toBe('waiting');
     expect(await send(parent, peer)).toEqual(receipt);
@@ -368,7 +477,7 @@ describe('held peer messages and access', () => {
     await register('peer');
     const parent = session('parent'),
       peer = session('peer');
-    policy(false, true);
+    policy(true);
     const receipt = await send(parent, peer);
     sessions = sessions.filter((entry) => entry !== peer);
     session('peer', 'replacement');
@@ -393,9 +502,9 @@ describe('held peer messages and access', () => {
     await register('peer');
     const parent = session('parent'),
       peer = session('peer');
-    policy(false, true);
+    policy(true);
     const receipt = await send(parent, peer);
-    policy(false, false);
+    policy(false);
     await expect(
       service.callTool(parent, 'wait_for_agent_prompt', { deliveryId: receipt.deliveryId }),
     ).resolves.toMatchObject({ state: 'closed', reason: expect.stringContaining('disabled') });
@@ -410,6 +519,27 @@ describe('held peer messages and access', () => {
 });
 
 describe('backend detach normalization', () => {
+  it('detaches retained review children absent from the runtime coordinator registry', async () => {
+    await register('parent');
+    await register('retained', { parentTaskId: 'parent', integrationPolicy: 'review' });
+    core.detachChildren.mockReturnValue([]);
+    await expect(service.closeParent('parent', true)).resolves.toEqual({
+      detachedChildIds: ['retained'],
+    });
+    expect(service.getTask('retained')).toMatchObject({
+      parentTaskId: undefined,
+      delegationPaused: true,
+    });
+    const saved = JSON.parse(
+      service.normalizeState(
+        JSON.stringify({
+          tasks: { retained: { coordinatedBy: 'parent', integrationPolicy: 'review' } },
+        }),
+      ),
+    );
+    expect(saved.tasks.retained).not.toHaveProperty('coordinatedBy');
+  });
+
   it('overrides stale renderer relationships before deleting the parent', async () => {
     await register('parent');
     await register('child', { parentTaskId: 'parent', integrationPolicy: 'review' });

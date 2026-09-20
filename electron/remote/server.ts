@@ -824,6 +824,7 @@ export function startRemoteServer(opts: {
     lastLine: string;
   };
   getCoordinator: () => Coordinator | null;
+  isOrchestrationEnabled?: () => boolean;
   callSessionTool?: (
     caller: SessionCaller,
     name: string,
@@ -1133,6 +1134,8 @@ export function startRemoteServer(opts: {
               return jsonEnd(400, { error: 'Invalid session tool request' });
             if (canvasAgents.get(agentId) !== record || !canvasActive(owner))
               return jsonEnd(403, { error: 'Session expired' });
+            if (opts.isOrchestrationEnabled?.() === false && body.name !== 'signal_done')
+              return jsonEnd(403, { error: 'Agent orchestration is disabled in Settings > MCP.' });
             const result = await opts.callSessionTool?.(
               { taskId: record.taskId, agentId, ...session },
               body.name,
@@ -1358,6 +1361,13 @@ export function startRemoteServer(opts: {
         url.pathname === '/api/tasks' ||
         url.pathname === '/api/wait-signal' ||
         url.pathname.startsWith('/api/tasks/');
+      const disabledAgentRoute = () =>
+        isCoordinatorRoute &&
+        (tokenClass === 'coordinator' || tokenClass === 'subtask') &&
+        !(req.method === 'POST' && /^\/api\/tasks\/[^/]+\/done$/.test(url.pathname)) &&
+        opts.isOrchestrationEnabled?.() === false;
+      if (disabledAgentRoute())
+        return jsonEnd(403, { error: 'Agent orchestration is disabled in Settings > MCP.' });
       if (!orch && isCoordinatorRoute) {
         res.writeHead(503, { ...SECURITY_HEADERS, 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'coordinator not available' }));
@@ -1365,7 +1375,14 @@ export function startRemoteServer(opts: {
       }
       if (orch) {
         const jsonReply = createJsonReply(res, SECURITY_HEADERS);
-        const readBody = () => readCoordinatorBody(req, jsonReply);
+        const readBody = async () => {
+          const body = await readCoordinatorBody(req, jsonReply);
+          if (disabledAgentRoute()) {
+            jsonReply(403, { error: 'Agent orchestration is disabled in Settings > MCP.' });
+            throw new Error('Agent orchestration disabled while reading the request');
+          }
+          return body;
+        };
 
         // Extract the coordinator ID from the header (set by MCP coordinator clients).
         // Only honor it if it is a registered coordinator — prevents a caller from

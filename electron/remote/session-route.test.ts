@@ -18,6 +18,7 @@ vi.mock('../ipc/pty.js', () => ({
 }));
 
 let server: Awaited<ReturnType<typeof startRemoteServer>>;
+let orchestrationEnabled = true;
 const dispatch = vi.fn(async () => ({ remaining: 0 }));
 const capabilities: SessionCapabilities = { profile: 'ordinary', canCreate: true, peers: true };
 const session = (sessionInstanceId = 'launch-1') => ({ sessionInstanceId, capabilities });
@@ -35,6 +36,7 @@ const request = (
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  orchestrationEnabled = true;
   dispatch.mockResolvedValue({ remaining: 0 });
   vi.mocked(getAgentMeta).mockReturnValue({ taskId: 'parent', agentId: 'agent', isShell: false });
   server = await startRemoteServer({
@@ -45,6 +47,7 @@ beforeEach(async () => {
     getAgentStatus: () => ({ status: 'running', exitCode: null, lastLine: '' }),
     getCoordinator: () => null,
     callSessionTool: dispatch,
+    isOrchestrationEnabled: () => orchestrationEnabled,
   });
 });
 afterEach(async () => {
@@ -140,7 +143,7 @@ it('rejects a task-mismatched PTY when there is no custom active check', async (
   expect(dispatch).not.toHaveBeenCalled();
 });
 
-it.each(['replace', 'deactivate'] as const)(
+it.each(['replace', 'deactivate', 'disable orchestration'] as const)(
   'rechecks %s after reading an in-flight request body',
   async (change) => {
     let active = true;
@@ -171,7 +174,8 @@ it.each(['replace', 'deactivate'] as const)(
     pending.write(body.slice(0, -1));
     if (change === 'replace')
       server.registerCanvasAgent('parent', 'agent', () => true, session('replacement'));
-    else active = false;
+    else if (change === 'deactivate') active = false;
+    else orchestrationEnabled = false;
     pending.end(body.slice(-1));
     expect(await response).toBe(403);
     expect(dispatch).not.toHaveBeenCalled();
@@ -206,4 +210,27 @@ it('does not let session credentials use legacy task routes or browser-origin re
     403,
   );
   expect(dispatch).not.toHaveBeenCalled();
+});
+
+it('revokes existing session orchestration immediately while allowing completion', async () => {
+  const token = server.registerCanvasAgent('parent', 'agent', undefined, session());
+  expect((await request(token)).status).toBe(200);
+  dispatch.mockClear();
+  orchestrationEnabled = false;
+  for (const name of ['list_tasks', 'create_task', 'send_agent_prompt', 'close_task']) {
+    const response = await request(token, { name, params: {} });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'Agent orchestration is disabled in Settings > MCP.',
+    });
+  }
+  expect(dispatch).not.toHaveBeenCalled();
+  expect((await request(token, { name: 'signal_done', params: {} })).status).toBe(200);
+  expect(dispatch).toHaveBeenCalledExactlyOnceWith(
+    { taskId: 'parent', agentId: 'agent', ...session() },
+    'signal_done',
+    {},
+  );
+  orchestrationEnabled = true;
+  expect((await request(token)).status).toBe(200);
 });

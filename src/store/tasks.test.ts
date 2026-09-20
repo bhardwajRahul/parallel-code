@@ -121,7 +121,6 @@ vi.mock('./completion', () => ({
 }));
 vi.mock('../lib/log', () => ({ warn: vi.fn() }));
 vi.mock('../lib/clean-task-name', () => ({ cleanTaskName: vi.fn() }));
-vi.mock('./coordinator-preamble', () => ({ COORDINATOR_PREAMBLE: '' }));
 vi.mock('./sidebar-order', () => ({
   getCoordinatorChildren: vi.fn(),
   computeSidebarDraggableTaskOrder: vi.fn(() =>
@@ -920,7 +919,7 @@ describe('MCP startup status transitions', () => {
   });
 });
 
-describe('createTask coordinator base branch prompt', () => {
+describe('createTask delegation options', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     const harness = expectDefined(core.harness, 'mock store harness');
@@ -928,6 +927,8 @@ describe('createTask coordinator base branch prompt', () => {
     mockTasks = {};
     mockAgents = {};
     mockTaskOrder = [];
+    mockDefaultStepsEnabled = false;
+    mockAgentEnvFiles = { 'agent-def': '~/.config/parallel-code/claude.env' };
     vi.mocked(getProjectPath).mockReturnValue('/repo');
     mockProjects = [{ id: 'proj-1', path: '/repo' }];
     vi.mocked(getProjectBranchPrefix).mockReturnValue('task');
@@ -935,21 +936,18 @@ describe('createTask coordinator base branch prompt', () => {
     mockInvoke.mockImplementation((channel: string) => {
       if (channel === IPC.CreateTask) {
         return Promise.resolve({
-          id: 'coord-1',
-          branch_name: 'task/coordinator-work',
-          worktree_path: '/repo/.worktrees/coordinator-work',
+          id: 'parent-1',
+          branch_name: 'task/parent-work',
+          worktree_path: '/repo/.worktrees/parent-work',
         });
-      }
-      if (channel === IPC.StartMCPServer) {
-        return Promise.resolve({ mcpLaunchArgs: ['--mcp-config', '/tmp/coord.json'] });
       }
       return Promise.resolve(undefined);
     });
   });
 
-  it('tells coordinators to base sub-tasks on the coordinator branch, not its base branch', async () => {
-    await createTask({
-      name: 'Coordinator',
+  async function createParent(options = {}) {
+    return createTask({
+      name: 'Parent',
       agentDef: {
         id: 'agent-def',
         name: 'Claude',
@@ -962,51 +960,55 @@ describe('createTask coordinator base branch prompt', () => {
       projectId: 'proj-1',
       gitIsolation: 'worktree',
       baseBranch: 'main',
-      initialPrompt: 'Pick a task',
-      coordinatorMode: true,
+      initialPrompt: 'Work through this backlog',
+      ...options,
+    });
+  }
+
+  it('keeps backlog instructions as the prompt and prepares authority without eager MCP', async () => {
+    await createParent({
+      autoMergeChildren: true,
+      autoSendChildUpdates: true,
+      propagateSkipPermissions: true,
+      maxConcurrentTasks: 5,
     });
 
-    expect(mockTasks['coord-1'].initialPrompt).toContain(
-      'Use `task/coordinator-work` as the baseBranch for all sub-tasks.',
-    );
-    expect(mockTasks['coord-1'].initialPrompt).not.toContain(
-      'Use `main` as the baseBranch for all sub-tasks.',
-    );
-    expect(mockInvoke).toHaveBeenCalledWith(
-      IPC.StartMCPServer,
-      expect.objectContaining({ coordinatorBranch: 'task/coordinator-work' }),
-    );
-    expect(mockInvoke).toHaveBeenCalledWith(
-      IPC.MCP_CoordinatorRegistered,
-      expect.objectContaining({ coordinatorBranch: 'task/coordinator-work' }),
-    );
+    expect(mockTasks['parent-1']).toMatchObject({
+      initialPrompt: 'Work through this backlog',
+      savedInitialPrompt: 'Work through this backlog',
+      autoMergeChildren: true,
+      autoSendChildUpdates: true,
+      propagateSkipPermissions: true,
+      maxConcurrentTasks: 5,
+    });
+    expect(mockTasks['parent-1'].coordinatorMode).toBeUndefined();
+    expect(mockTasks['parent-1'].controlledBy).toBeUndefined();
+    expect(mockTasks['parent-1'].mcpStartupStatus).toBeUndefined();
+    expect(mockInvoke.mock.calls.some(([channel]) => channel === IPC.StartMCPServer)).toBe(false);
+    expect(
+      mockInvoke.mock.calls.some(([channel]) => channel === IPC.MCP_CoordinatorRegistered),
+    ).toBe(false);
+    expect(mockInvoke).toHaveBeenCalledWith(IPC.DelegationRequest, {
+      action: 'register',
+      task: expect.objectContaining({
+        taskId: 'parent-1',
+        autoMergeChildren: true,
+        autoSendChildUpdates: true,
+        propagateSkipPermissions: true,
+        maxConcurrentTasks: 5,
+        agentEnvFile: '~/.config/parallel-code/claude.env',
+      }),
+    });
   });
 
-  it('sends the agent env file so coordinator sub-tasks inherit its credentials', async () => {
-    mockAgentEnvFiles = { 'agent-def': '~/.config/parallel-code/claude.env' };
-
-    await createTask({
-      name: 'Coordinator',
-      agentDef: {
-        id: 'agent-def',
-        name: 'Claude',
-        command: 'claude',
-        args: [],
-        resume_args: [],
-        skip_permissions_args: [],
-        description: 'Claude',
-      },
-      projectId: 'proj-1',
-      gitIsolation: 'worktree',
-      baseBranch: 'main',
-      initialPrompt: 'Pick a task',
-      coordinatorMode: true,
+  it('defaults worktree permissions and concurrency safely and retains explicit false options', async () => {
+    await createParent({ autoMergeChildren: false, autoSendChildUpdates: false });
+    expect(mockTasks['parent-1']).toMatchObject({
+      autoMergeChildren: false,
+      autoSendChildUpdates: false,
+      propagateSkipPermissions: false,
+      maxConcurrentTasks: 3,
     });
-
-    expect(mockInvoke).toHaveBeenCalledWith(
-      IPC.StartMCPServer,
-      expect.objectContaining({ agentEnvFile: '~/.config/parallel-code/claude.env' }),
-    );
   });
 });
 

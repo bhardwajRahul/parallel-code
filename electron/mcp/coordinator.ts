@@ -40,6 +40,8 @@ import {
   subscribeToAgent,
   unsubscribeFromAgent,
   getAgentScrollback,
+  getActiveAgentIds,
+  getAgentMeta,
   onPtyEvent,
 } from '../ipc/pty.js';
 import { onAgentHookEvent } from '../agent-hooks/events.js';
@@ -191,6 +193,39 @@ export class Coordinator {
   private bracketedPasteAgentIds = new Set<string>();
   private closingTaskIds = new Set<string>();
   private integratingTaskIds = new Set<string>();
+  private orchestrationEnabled = true;
+  private orchestrationEpoch = 0;
+
+  setOrchestrationEnabled(enabled: boolean): void {
+    if (this.orchestrationEnabled === enabled) return;
+    this.orchestrationEnabled = enabled;
+    if (enabled) return;
+    this.orchestrationEpoch += 1;
+    for (const parent of this.coordinators.values())
+      parent.launchEpoch = (parent.launchEpoch ?? 0) + 1;
+    for (const task of this.tasks.values()) this.discardAutomatedPrompts(task);
+  }
+
+  private discardAutomatedPrompts(task: CoordinatedTask): void {
+    this.clearInitialPromptDeliveryState(task.id);
+    this.clearQueuedPromptFlushTimer(task.id);
+    task.initialPrompt = undefined;
+    task.pendingPrompts = undefined;
+    this.notifyRenderer(IPC.MCP_TaskStateSync, {
+      taskId: task.id,
+      initialPrompt: null,
+      pendingPromptCount: 0,
+    });
+  }
+
+  private assertOrchestrationEnabled(epoch = this.orchestrationEpoch): void {
+    if (!this.orchestrationEnabled || epoch !== this.orchestrationEpoch) {
+      throw new Error(
+        'Agent orchestration is disabled or this operation was canceled. Enable it in Settings > MCP to start new operations.',
+      );
+    }
+  }
+
   private sessionMcpProvider?: (
     task: CoordinatedTask,
   ) => { token: string; sessionCapabilities: SessionCapabilities } | undefined;
@@ -456,10 +491,15 @@ export class Coordinator {
   }
 
   private scheduleQueuedPromptFlush(task: CoordinatedTask): void {
-    if (!task.pendingPrompts?.length || this.queuedPromptFlushTimers.has(task.id)) return;
+    if (
+      !this.orchestrationEnabled ||
+      !task.pendingPrompts?.length ||
+      this.queuedPromptFlushTimers.has(task.id)
+    )
+      return;
     const timer = setTimeout(() => {
       this.queuedPromptFlushTimers.delete(task.id);
-      if (!this.tasks.has(task.id)) return;
+      if (!this.orchestrationEnabled || !this.tasks.has(task.id)) return;
       if (this.controlMap.get(task.id) === 'human') return;
       if (!task.pendingPrompts?.length) return;
       if (!this.tailHasAgentPrompt(task)) return;
@@ -536,6 +576,7 @@ export class Coordinator {
     delayMs = INITIAL_PROMPT_READY_DELAY_MS,
     promptReady = false,
   ): void {
+    if (!this.orchestrationEnabled) return;
     if (promptReady) this.initialPromptReadyTasks.add(task.id);
     if (!task.initialPrompt || task.assignedPromptDelivered) return;
     if (this.initialPromptTimers.has(task.id)) return;
@@ -629,6 +670,8 @@ export class Coordinator {
   }
 
   private async tryDeliverInitialPrompt(taskId: string): Promise<void> {
+    if (!this.orchestrationEnabled) return;
+    const epoch = this.orchestrationEpoch;
     const task = this.tasks.get(taskId);
     if (!task?.initialPrompt || task.assignedPromptDelivered) return;
     if (task.status === 'exited' || task.status === 'error') return;
@@ -683,7 +726,11 @@ export class Coordinator {
         });
         return;
       }
-      if (this.tasks.has(task.id)) {
+      if (
+        this.orchestrationEnabled &&
+        epoch === this.orchestrationEpoch &&
+        this.tasks.has(task.id)
+      ) {
         task.initialPrompt = prompt;
         this.scheduleInitialPromptDelivery(task, INITIAL_PROMPT_READY_DELAY_MS, promptReady);
       }
@@ -916,11 +963,9 @@ export class Coordinator {
       return line + warn;
     });
     const allLanded = pending.every((n) => n.state === 'landed');
-    const footer = !automatic
-      ? 'Inspect the child result and verification. Integration requires explicit user review and approval.'
-      : allLanded
-        ? 'Sub-tasks have merged their branches and cleaned up. If there are items remaining on the backlog, spawn the next batch.'
-        : "Please review each completed task: check its diff, confirm the work looks correct, then commit and merge what's ready. If there are items remaining on the backlog, spawn the next batch.";
+    const footer = allLanded
+      ? 'Sub-tasks have merged their branches and cleaned up. If there are items remaining on the backlog, spawn the next batch.'
+      : 'Inspect each child result, verification, and integrationPolicy through get_task_status. Review-policy tasks require explicit user review and approval in the app. Use only the permitted Parallel Code integration tools; never merge directly or delete child worktrees. Completion updates do not grant merge permission.';
     return [header, '', ...lines, '', footer].join('\n');
   }
 
@@ -940,6 +985,8 @@ export class Coordinator {
     launchGuard?: () => void | Promise<void>;
     nativeLaunchGuard?: () => void;
   }): Promise<CoordinatedTask> {
+    const isAgentCreation = opts.coordinatorTaskId !== REST_COORDINATOR_SENTINEL;
+    if (isAgentCreation) this.assertOrchestrationEnabled();
     const coordinatorId =
       opts.coordinatorTaskId !== REST_COORDINATOR_SENTINEL
         ? opts.coordinatorTaskId
@@ -959,11 +1006,13 @@ export class Coordinator {
 
     const epoch = coordinatorState.launchEpoch ?? 0;
     const assertNativeLaunch = () => {
+      if (isAgentCreation) this.assertOrchestrationEnabled();
       this.assertParentAdmission(coordinatorId, epoch);
       opts.nativeLaunchGuard?.();
       this.assertParentAdmission(coordinatorId, epoch);
     };
     const assertLaunch = async () => {
+      if (isAgentCreation) this.assertOrchestrationEnabled();
       this.assertParentAdmission(coordinatorId, epoch);
       await opts.launchGuard?.();
       this.assertParentAdmission(coordinatorId, epoch);
@@ -1035,7 +1084,7 @@ export class Coordinator {
       this.clearPromptDeliveryState(task.id);
       task.pendingPrompts = undefined;
       this.controlMap.set(task.id, 'human');
-      killAgent(task.agentId);
+      for (const agentId of this.agentIdsForTask(task)) killAgent(agentId);
     }
   }
 
@@ -1225,6 +1274,7 @@ export class Coordinator {
     };
 
     this.tasks.set(task.id, task);
+    if (!this.orchestrationEnabled) this.discardAutomatedPrompts(task);
     onInserted();
     this.tailBuffers.set(agentId, '');
 
@@ -1425,6 +1475,7 @@ export class Coordinator {
   }
 
   async sendPrompt(taskId: string, prompt: string): Promise<{ queued: boolean }> {
+    this.assertOrchestrationEnabled();
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
     if (Buffer.byteLength(prompt, 'utf8') > MAX_PROMPT_BYTES)
@@ -1460,6 +1511,8 @@ export class Coordinator {
   }
 
   private async flushNextQueuedPrompt(task: CoordinatedTask): Promise<void> {
+    if (!this.orchestrationEnabled) return;
+    const epoch = this.orchestrationEpoch;
     if (this.controlMap.get(task.id) === 'human') return;
     if (task.initialPrompt && !task.assignedPromptDelivered) return;
     if (this.writingPromptTaskIds.has(task.id)) return;
@@ -1481,7 +1534,7 @@ export class Coordinator {
             err: err.message,
           },
         );
-      } else {
+      } else if (this.orchestrationEnabled && epoch === this.orchestrationEpoch) {
         task.pendingPrompts ??= [];
         task.pendingPrompts.unshift(prompt);
         logWarn(
@@ -1505,6 +1558,8 @@ export class Coordinator {
   }
 
   private async writePromptToTask(task: CoordinatedTask, prompt: string): Promise<void> {
+    this.assertOrchestrationEnabled();
+    const epoch = this.orchestrationEpoch;
     // Send text then Enter separately (like the frontend does)
     this.setAutomationWriteInFlight(task, true);
     try {
@@ -1530,6 +1585,7 @@ export class Coordinator {
       const submitDelayMs = pasteDelayMs(prompt);
       await new Promise((r) => setTimeout(r, submitDelayMs));
       try {
+        this.assertOrchestrationEnabled(epoch);
         writeToAgent(task.agentId, '\r');
       } catch (err) {
         throw new PromptWriteError('Prompt Enter write failed', 'enter', err);
@@ -1784,7 +1840,10 @@ export class Coordinator {
     this.notifyRenderer(IPC.MCP_TaskStateSync, { taskId: task.id, verificationRun: run });
   }
 
-  private async prepareCleanSelfLandingWorktree(task: CoordinatedTask): Promise<void> {
+  private async prepareCleanSelfLandingWorktree(
+    task: CoordinatedTask,
+    assertAllowed: () => void,
+  ): Promise<void> {
     const actualBranch = await this.currentBranch(task.worktreePath);
     if (actualBranch === null) {
       throw new Error(
@@ -1839,8 +1898,10 @@ export class Coordinator {
           `Unexpected non-preamble paths staged before cleanup commit: ${unexpectedPaths.join(', ')}`,
         );
       }
+      assertAllowed();
       await execAsync('git', ['add', '-A', '--', ...dirtyPaths], { cwd: task.worktreePath });
       try {
+        assertAllowed();
         await execAsync('git', ['commit', '-m', 'Remove Parallel Code sub-task preamble'], {
           cwd: task.worktreePath,
         });
@@ -1860,10 +1921,12 @@ export class Coordinator {
   private async runGitMerge(
     task: CoordinatedTask,
     opts?: { squash?: boolean; message?: string },
+    assertAllowed?: () => void,
   ): Promise<{ mainBranch: string; linesAdded: number; linesRemoved: number }> {
     const coordinatorState = this.coordinators.get(task.coordinatorTaskId);
-    const runMerge = () =>
-      gitMergeTask(
+    const runMerge = () => {
+      assertAllowed?.();
+      return gitMergeTask(
         task.projectRoot,
         task.branchName,
         opts?.squash ?? false,
@@ -1873,6 +1936,7 @@ export class Coordinator {
         task.worktreePath,
         coordinatorState?.worktreePath,
       );
+    };
     let result: Awaited<ReturnType<typeof runMerge>>;
     try {
       result = await runMerge();
@@ -1958,6 +2022,15 @@ export class Coordinator {
     this.controlMap.delete(taskId);
   }
 
+  private agentIdsForTask(task: CoordinatedTask): string[] {
+    return [
+      ...new Set([
+        task.agentId,
+        ...getActiveAgentIds().filter((agentId) => getAgentMeta(agentId)?.taskId === task.id),
+      ]),
+    ];
+  }
+
   /** Resolve any pending waitForIdle callers for a task and clear the entry. */
   private resolveIdleWaiters(
     taskId: string,
@@ -1978,14 +2051,17 @@ export class Coordinator {
 
       this.clearAgentOutputState(task);
 
-      try {
-        killAgent(task.agentId);
-      } catch {
-        /* already dead */
+      const agentIds = this.agentIdsForTask(task);
+      for (const agentId of agentIds) {
+        try {
+          killAgent(agentId);
+        } catch {
+          /* already dead */
+        }
       }
 
       await deleteTask({
-        agentIds: [task.agentId],
+        agentIds,
         branchName: task.branchName,
         deleteBranch: true,
         projectRoot: task.projectRoot,
@@ -2004,7 +2080,9 @@ export class Coordinator {
   }
 
   async landSelf(taskId: string, input: LandSelfInput): Promise<ApiLandSelfResult> {
-    return this.withTaskIntegration(taskId, () => this.landSelfUnchecked(taskId, input));
+    this.assertOrchestrationEnabled();
+    const epoch = this.orchestrationEpoch;
+    return this.withTaskIntegration(taskId, () => this.landSelfUnchecked(taskId, input, epoch));
   }
 
   private async withTaskIntegration<T>(taskId: string, run: () => Promise<T>): Promise<T> {
@@ -2022,6 +2100,7 @@ export class Coordinator {
   private async landSelfUnchecked(
     taskId: string,
     input: LandSelfInput,
+    epoch: number,
   ): Promise<ApiLandSelfResult> {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
@@ -2047,7 +2126,9 @@ export class Coordinator {
     task.landingSummary = input.summary;
 
     try {
-      await this.prepareCleanSelfLandingWorktree(task);
+      await this.prepareCleanSelfLandingWorktree(task, () =>
+        this.assertOrchestrationEnabled(epoch),
+      );
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       this.escalateLanding(task, 'landing_escalated', reason);
@@ -2057,7 +2138,9 @@ export class Coordinator {
 
     let mergeResult: { mainBranch: string; linesAdded: number; linesRemoved: number };
     try {
-      mergeResult = await this.runGitMerge(task, { squash: false });
+      mergeResult = await this.runGitMerge(task, { squash: false }, () =>
+        this.assertOrchestrationEnabled(epoch),
+      );
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       const state =
@@ -2137,12 +2220,17 @@ export class Coordinator {
     taskId: string,
     opts?: { squash?: boolean; message?: string; cleanup?: boolean; skipVerification?: boolean },
   ): Promise<{ mainBranch: string; linesAdded: number; linesRemoved: number }> {
-    return this.withTaskIntegration(taskId, () => this.mergeTaskUnchecked(taskId, opts));
+    this.assertOrchestrationEnabled();
+    const epoch = this.orchestrationEpoch;
+    return this.withTaskIntegration(taskId, () => this.mergeTaskUnchecked(taskId, opts, epoch));
   }
 
   private async mergeTaskUnchecked(
     taskId: string,
-    opts?: { squash?: boolean; message?: string; cleanup?: boolean; skipVerification?: boolean },
+    opts:
+      | { squash?: boolean; message?: string; cleanup?: boolean; skipVerification?: boolean }
+      | undefined,
+    epoch: number,
   ): Promise<{ mainBranch: string; linesAdded: number; linesRemoved: number }> {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
@@ -2159,7 +2247,9 @@ export class Coordinator {
     if (task.worktreePath) {
       await stripPreambleFromBranch(task);
       try {
+        this.assertOrchestrationEnabled(epoch);
         await execAsync('git', ['add', '-A'], { cwd: task.worktreePath });
+        this.assertOrchestrationEnabled(epoch);
         await execAsync('git', ['commit', '-m', 'WIP: auto-commit before merge'], {
           cwd: task.worktreePath,
         });
@@ -2181,7 +2271,7 @@ export class Coordinator {
     // fix, such as a suite that is already red on the base branch.
     if (!opts?.skipVerification) await this.verifyBeforeLanding(task);
 
-    const result = await this.runGitMerge(task, opts);
+    const result = await this.runGitMerge(task, opts, () => this.assertOrchestrationEnabled(epoch));
 
     if (opts?.cleanup) {
       await this.cleanupTask(taskId);
@@ -2312,6 +2402,7 @@ export class Coordinator {
   }
 
   async closeTask(taskId: string): Promise<void> {
+    this.assertOrchestrationEnabled();
     if (this.integratingTaskIds.has(taskId)) throw new Error('Task integration is in progress.');
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
@@ -2354,17 +2445,20 @@ export class Coordinator {
     // Kill the agent. For Docker sub-tasks, killAgent also calls docker stop on the
     // sub-task's own container (via stopDockerContainer in pty.ts), which cleanly
     // terminates the entire container rather than just the PTY client process.
-    try {
-      killAgent(task.agentId);
-    } catch {
-      /* already dead */
+    const agentIds = this.agentIdsForTask(task);
+    for (const agentId of agentIds) {
+      try {
+        killAgent(agentId);
+      } catch {
+        /* already dead */
+      }
     }
 
     // Remove worktree. If this fails, keep all coordinator state so the caller
     // can retry. Do NOT emit MCP_TaskClosed — the task still exists on disk.
     try {
       await deleteTask({
-        agentIds: [task.agentId],
+        agentIds,
         branchName: task.branchName,
         deleteBranch: true,
         projectRoot: task.projectRoot,
@@ -2459,6 +2553,7 @@ export class Coordinator {
 
     const existingTask = this.tasks.get(opts.id);
     if (existingTask) {
+      if (!this.orchestrationEnabled) this.discardAutomatedPrompts(existingTask);
       if (safeMcpConfigPath) existingTask.mcpConfigPath = safeMcpConfigPath;
       const mcpLaunchArgs = this.rewriteHydratedSubtaskMcpConfig(
         existingTask,
@@ -2495,6 +2590,7 @@ export class Coordinator {
       preambleFileExistedBefore: opts.preambleFileExistedBefore,
     };
     this.tasks.set(task.id, task);
+    if (!this.orchestrationEnabled) this.discardAutomatedPrompts(task);
     if (opts.landedMetadata) {
       const current = this.landedOrderCounters.get(opts.coordinatorTaskId) ?? 0;
       this.landedOrderCounters.set(

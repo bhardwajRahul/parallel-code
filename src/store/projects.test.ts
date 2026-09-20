@@ -308,29 +308,26 @@ describe('updateProject verify command', () => {
   });
 });
 
-it('changes project creation and peer permissions only after backend acknowledgment', async () => {
+it('changes project peer permission only after backend acknowledgment', async () => {
   setStore('projects', [
     {
       id: 'consent',
       name: 'Consent',
       path: '/repo',
       color: '',
-      allowAgentTaskCreation: false,
       allowPeerAccess: false,
     },
   ]);
   vi.mocked(invoke).mockRejectedValueOnce(new Error('Permission update failed'));
-  await expect(updateProjectCoordination('consent', true, true)).rejects.toThrow(
+  await expect(updateProjectCoordination('consent', true)).rejects.toThrow(
     'Permission update failed',
   );
-  expect(store.projects[0].allowAgentTaskCreation).toBe(false);
   expect(store.projects[0].allowPeerAccess).toBe(false);
   vi.mocked(invoke).mockResolvedValueOnce({});
-  await updateProjectCoordination('consent', true, false);
+  await updateProjectCoordination('consent', true);
   expect(invoke).toHaveBeenLastCalledWith(IPC.DelegationRequest, {
     action: 'projectPolicy',
-    policy: { projectId: 'consent', allowAgentTaskCreation: true, allowPeerAccess: false },
+    policy: { projectId: 'consent', allowPeerAccess: true },
   });
-  expect(store.projects[0].allowAgentTaskCreation).toBe(true);
-  expect(store.projects[0].allowPeerAccess).toBe(false);
+  expect(store.projects[0].allowPeerAccess).toBe(true);
 });

@@ -61,7 +61,7 @@ import { BranchPrefixField } from './BranchPrefixField';
 import { BranchCombobox } from './BranchCombobox';
 import { ProjectSelect } from './ProjectSelect';
 import { SymlinkDirPicker } from './SymlinkDirPicker';
-import { scrollCoordinatorIntoView } from './scrollCoordinatorIntoView';
+import { isSupportedDelegationAgent } from '../store/delegation';
 import type { AgentDef, GitIgnoredEntry } from '../ipc/types';
 import { DEFAULT_DOCKER_IMAGE, PROJECT_DOCKERFILE_RELATIVE_PATH } from '../lib/docker';
 import {
@@ -135,7 +135,7 @@ interface ProjectDockerfileInfo {
 function DockerTaskOptions(props: {
   dockerMode: boolean;
   setDockerMode: (enabled: boolean) => void;
-  coordinatorMode: boolean;
+  orchestrationEnabled: boolean;
   projectDockerfile: ProjectDockerfileInfo | null;
   dockerImageReady: boolean | null;
   dockerBuilding: boolean;
@@ -166,11 +166,11 @@ function DockerTaskOptions(props: {
               </Show>
             </>
           </InlineBanner>
-          <Show when={props.coordinatorMode && isMac}>
+          <Show when={props.orchestrationEnabled && isMac}>
             <InlineBanner color={theme.warning} fontSize="12px">
-              Coordinator + Docker on macOS: the MCP server binds to all network interfaces so
-              sub-task containers can reach it via host.docker.internal. The port is reachable from
-              other hosts on your local network (token-protected).
+              Agent orchestration + Docker on macOS: the MCP server binds to all network interfaces
+              so sub-task containers can reach it via host.docker.internal. The port is reachable
+              from other hosts on your local network (token-protected).
             </InlineBanner>
           </Show>
           <Show when={props.projectDockerfile}>
@@ -299,10 +299,11 @@ function DockerTaskOptions(props: {
   );
 }
 
-function CoordinatorTaskOptions(props: {
-  coordinatorMode: boolean;
-  setCoordinatorMode: (enabled: boolean) => void;
-  hasActiveCoordinator: boolean;
+function AgentAutomationOptions(props: {
+  autoMergeChildren: boolean;
+  setAutoMergeChildren: (enabled: boolean) => void;
+  autoSendChildUpdates: boolean;
+  setAutoSendChildUpdates: (enabled: boolean) => void;
   agentSupportsSkipPermissions: boolean;
   skipPermissions: boolean;
   propagateSkipPermissions: boolean;
@@ -311,78 +312,69 @@ function CoordinatorTaskOptions(props: {
   setMaxConcurrentTasks: (value: number) => void;
 }) {
   return (
-    <Show when={store.coordinatorModeEnabled}>
-      <div
-        data-nav-field="coordinator-mode"
-        style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}
+    <div
+      data-nav-field="agent-automation"
+      style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}
+    >
+      <div style={sectionLabelStyle}>Agent automation</div>
+      <CheckboxOption
+        label="Automatically merge completed child tasks"
+        checked={props.autoMergeChildren}
+        onChange={props.setAutoMergeChildren}
+      />
+      <CheckboxOption
+        label="Automatically send child updates"
+        checked={props.autoSendChildUpdates}
+        onChange={props.setAutoSendChildUpdates}
+      />
+      <label
+        style={{
+          display: 'flex',
+          'align-items': 'center',
+          gap: '8px',
+          'font-size': '13px',
+          color: theme.fg,
+          'padding-left': '4px',
+        }}
       >
-        <CheckboxOption
-          label="Coordinator mode"
-          checked={props.coordinatorMode}
-          disabled={props.hasActiveCoordinator}
-          onChange={props.setCoordinatorMode}
-          title={
-            props.hasActiveCoordinator
-              ? 'Only one coordinator per project can be active at a time'
-              : undefined
-          }
+        Max concurrent sub-tasks:
+        <input
+          type="number"
+          min={MIN_COORDINATOR_CONCURRENT_TASKS}
+          max={MAX_COORDINATOR_CONCURRENT_TASKS}
+          value={props.maxConcurrentTasks}
+          onInput={(e) => {
+            const v = parseInt(e.currentTarget.value, 10);
+            if (!isNaN(v)) props.setMaxConcurrentTasks(clampCoordinatorConcurrentTasks(v));
+          }}
+          style={{
+            width: '60px',
+            background: theme.bgInput,
+            color: theme.fg,
+            border: `1px solid ${theme.border}`,
+            'border-radius': 'var(--radius-sm)',
+            padding: '4px 8px',
+            'font-size': '13px',
+          }}
         />
-        <Show when={props.coordinatorMode}>
+      </label>
+      <Show when={props.agentSupportsSkipPermissions && props.skipPermissions}>
+        <CheckboxOption
+          label="Propagate skip-permissions to sub-tasks"
+          checked={props.propagateSkipPermissions}
+          onChange={props.setPropagateSkipPermissions}
+          paddingLeft="4px"
+        />
+        <Show when={props.propagateSkipPermissions}>
           <InlineBanner color={theme.warning} fontSize="12px">
-            This agent will be able to create tasks, send prompts, and merge branches automatically
-            via MCP tools. The remote server will be started automatically.
+            <>
+              All child tasks created by this agent will inherit{' '}
+              <strong>--dangerously-skip-permissions</strong> and run without confirmation prompts.
+            </>
           </InlineBanner>
-          <label
-            style={{
-              display: 'flex',
-              'align-items': 'center',
-              gap: '8px',
-              'font-size': '13px',
-              color: theme.fg,
-              'padding-left': '4px',
-            }}
-          >
-            Max concurrent sub-tasks:
-            <input
-              type="number"
-              min={MIN_COORDINATOR_CONCURRENT_TASKS}
-              max={MAX_COORDINATOR_CONCURRENT_TASKS}
-              value={props.maxConcurrentTasks}
-              onInput={(e) => {
-                const v = parseInt(e.currentTarget.value, 10);
-                if (!isNaN(v)) props.setMaxConcurrentTasks(clampCoordinatorConcurrentTasks(v));
-              }}
-              style={{
-                width: '60px',
-                background: theme.bgInput,
-                color: theme.fg,
-                border: `1px solid ${theme.border}`,
-                'border-radius': 'var(--radius-sm)',
-                padding: '4px 8px',
-                'font-size': '13px',
-              }}
-            />
-          </label>
-          <Show when={props.agentSupportsSkipPermissions && props.skipPermissions}>
-            <CheckboxOption
-              label="Propagate skip-permissions to sub-tasks"
-              checked={props.propagateSkipPermissions}
-              onChange={props.setPropagateSkipPermissions}
-              paddingLeft="4px"
-            />
-            <Show when={props.propagateSkipPermissions}>
-              <InlineBanner color={theme.warning} fontSize="12px">
-                <>
-                  All sub-tasks created by this coordinator will inherit{' '}
-                  <strong>--dangerously-skip-permissions</strong> and run without confirmation
-                  prompts.
-                </>
-              </InlineBanner>
-            </Show>
-          </Show>
         </Show>
-      </div>
-    </Show>
+      </Show>
+    </div>
   );
 }
 
@@ -422,23 +414,23 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
     imageTag: string;
     buildContext: string;
   } | null>(null);
-  const [coordinatorMode, setCoordinatorMode] = createSignal(false);
+  const [autoMergeChildren, setAutoMergeChildren] = createSignal(false);
+  const [autoSendChildUpdates, setAutoSendChildUpdates] = createSignal(false);
+  const orchestrationEnabled = () => {
+    const agent = selectedAgent();
+    return (
+      store.mcpOrchestrationEnabled &&
+      gitIsolation() === 'worktree' &&
+      !!agent &&
+      isSupportedDelegationAgent(agent)
+    );
+  };
   const [propagateSkipPermissions, setPropagateSkipPermissions] = createSignal(
     store.defaultPropagateSkipPermissions,
   );
   const [maxConcurrentTasks, setMaxConcurrentTasks] = createSignal(
     DEFAULT_COORDINATOR_CONCURRENT_TASKS,
   );
-  const hasActiveCoordinator = () =>
-    Object.values(store.tasks).some(
-      (t) => t.coordinatorMode && !t.closingStatus && t.projectId === selectedProjectId(),
-    );
-  createEffect(() => {
-    selectedProjectId();
-    if (hasActiveCoordinator()) {
-      setCoordinatorMode(false);
-    }
-  });
   const [branchPrefix, setBranchPrefix] = createSignal('');
   let promptRef!: HTMLTextAreaElement;
   const titleId = createUniqueId();
@@ -449,7 +441,6 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
   let panelRef!: HTMLElement;
   let formRef!: HTMLFormElement;
   let buildOutputRef!: HTMLPreElement;
-  let scrollContainerRef!: HTMLDivElement;
 
   const focusableSelector =
     'textarea:not(:disabled), input:not(:disabled), select:not(:disabled), button:not(:disabled), [tabindex]:not([tabindex="-1"])';
@@ -548,7 +539,9 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
           setDockerBuildOutput('');
           setDockerBuildError('');
           setProjectDockerfile(null);
-          setCoordinatorMode(false);
+          setAutoMergeChildren(false);
+          setAutoSendChildUpdates(false);
+          setMaxConcurrentTasks(DEFAULT_COORDINATOR_CONCURRENT_TASKS);
 
           let cancelled = false;
           onCleanup(() => {
@@ -822,20 +815,6 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
     }
   });
 
-  // When the user enables coordinator mode, scroll the form to the bottom so
-  // the newly-revealed options (max tasks, propagate, symlinks) are visible.
-  // defer:true skips the initial run so we only scroll on user-initiated toggles.
-  // queueMicrotask waits for Solid to insert the <Show> block before measuring scrollHeight.
-  createEffect(
-    on(
-      coordinatorMode,
-      (enabled) => {
-        queueMicrotask(() => scrollCoordinatorIntoView(enabled, scrollContainerRef));
-      },
-      { defer: true },
-    ),
-  );
-
   async function handleBuildImage() {
     setDockerBuilding(true);
     setDockerBuildOutput('');
@@ -967,10 +946,6 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
       setError('Select a project');
       return;
     }
-    if (coordinatorMode() && hasActiveCoordinator()) {
-      setError('Only one coordinator per project can be active at a time');
-      return;
-    }
 
     const p = prompt().trim() || undefined;
     const isFromDrop = !!store.newTaskDropUrl;
@@ -1041,12 +1016,13 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
         dockerImage: dockerMode()
           ? (projDocker?.imageTag ?? (store.dockerImage || DEFAULT_DOCKER_IMAGE))
           : undefined,
-        coordinatorMode: coordinatorMode() || undefined,
+        autoMergeChildren: orchestrationEnabled() ? autoMergeChildren() : undefined,
+        autoSendChildUpdates: orchestrationEnabled() ? autoSendChildUpdates() : undefined,
         propagateSkipPermissions:
-          coordinatorMode() && agentSupportsSkipPermissions() && skipPermissions()
+          orchestrationEnabled() && agentSupportsSkipPermissions() && skipPermissions()
             ? propagateSkipPermissions()
             : undefined,
-        maxConcurrentTasks: coordinatorMode()
+        maxConcurrentTasks: orchestrationEnabled()
           ? clampCoordinatorConcurrentTasks(maxConcurrentTasks())
           : undefined,
       });
@@ -1131,7 +1107,6 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
         }}
       >
         <div
-          ref={scrollContainerRef}
           style={{
             'overflow-y': 'auto',
             'min-height': '0',
@@ -1177,11 +1152,7 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
                   if (canSubmit()) handleSubmit(e);
                 }
               }}
-              placeholder={
-                coordinatorMode()
-                  ? 'Example: Work through the items in /path/to/todos.md. Only work from that file. Use <branch> as the baseBranch for all sub-tasks.'
-                  : 'What should the agent work on?'
-              }
+              placeholder="What should the agent work on?"
               rows={6}
               style={{
                 background: theme.bgInput,
@@ -1476,7 +1447,7 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
                 <DockerTaskOptions
                   dockerMode={dockerMode()}
                   setDockerMode={setDockerMode}
-                  coordinatorMode={coordinatorMode()}
+                  orchestrationEnabled={orchestrationEnabled()}
                   projectDockerfile={projectDockerfile()}
                   dockerImageReady={dockerImageReady()}
                   dockerBuilding={dockerBuilding()}
@@ -1490,19 +1461,20 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
               </div>
               {/* end checkboxes group */}
 
-              {/* Coordinator mode toggle — below skip-permissions so enabling skip-perms
-              doesn't cause items to appear above the checkbox you just clicked */}
-              <CoordinatorTaskOptions
-                coordinatorMode={coordinatorMode()}
-                setCoordinatorMode={setCoordinatorMode}
-                hasActiveCoordinator={hasActiveCoordinator()}
-                agentSupportsSkipPermissions={agentSupportsSkipPermissions()}
-                skipPermissions={skipPermissions()}
-                propagateSkipPermissions={propagateSkipPermissions()}
-                setPropagateSkipPermissions={setPropagateSkipPermissions}
-                maxConcurrentTasks={maxConcurrentTasks()}
-                setMaxConcurrentTasks={setMaxConcurrentTasks}
-              />
+              <Show when={orchestrationEnabled()}>
+                <AgentAutomationOptions
+                  autoMergeChildren={autoMergeChildren()}
+                  setAutoMergeChildren={setAutoMergeChildren}
+                  autoSendChildUpdates={autoSendChildUpdates()}
+                  setAutoSendChildUpdates={setAutoSendChildUpdates}
+                  agentSupportsSkipPermissions={agentSupportsSkipPermissions()}
+                  skipPermissions={skipPermissions()}
+                  propagateSkipPermissions={propagateSkipPermissions()}
+                  setPropagateSkipPermissions={setPropagateSkipPermissions}
+                  maxConcurrentTasks={maxConcurrentTasks()}
+                  setMaxConcurrentTasks={setMaxConcurrentTasks}
+                />
+              </Show>
 
               <Show when={symlinkCandidates.dirs().length > 0 && gitIsolation() === 'worktree'}>
                 <SymlinkDirPicker

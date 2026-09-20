@@ -79,7 +79,6 @@ export interface TerminalBookmark {
 }
 
 export interface Project {
-  allowAgentTaskCreation?: boolean;
   allowPeerAccess?: boolean;
   id: string;
   name: string;
@@ -269,7 +268,9 @@ export interface Task {
   delegationParent?: boolean;
   delegationPaused?: boolean;
   integrationPolicy?: IntegrationPolicy;
-  // Coordinator fields
+  autoMergeChildren?: boolean;
+  autoSendChildUpdates?: boolean;
+  /** @deprecated Retained to restore tasks created with legacy coordinator transport. */
   coordinatorMode?: boolean;
   propagateSkipPermissions?: boolean;
   maxConcurrentTasks?: number;
@@ -363,7 +364,9 @@ export interface PersistedTask {
   delegationParent?: boolean;
   delegationPaused?: boolean;
   integrationPolicy?: IntegrationPolicy;
-  // Coordinator fields
+  autoMergeChildren?: boolean;
+  autoSendChildUpdates?: boolean;
+  /** @deprecated Retained to restore tasks created with legacy coordinator transport. */
   coordinatorMode?: boolean;
   propagateSkipPermissions?: boolean;
   maxConcurrentTasks?: number;
@@ -444,7 +447,7 @@ export interface PersistedState {
   lightThemeCustomId?: string | null;
   darkThemePreset?: LookPreset;
   darkThemeCustomId?: string | null;
-  coordinatorModeEnabled?: boolean;
+  mcpOrchestrationEnabled?: boolean;
   documentWorkspacesEnabled?: boolean;
   documentFullWidth?: boolean;
   coordinatorNotificationDelayMs?: number;
@@ -582,7 +585,7 @@ export interface AppStore {
   lightThemeCustomId: string | null;
   darkThemePreset: LookPreset;
   darkThemeCustomId: string | null;
-  coordinatorModeEnabled: boolean;
+  mcpOrchestrationEnabled: boolean;
   documentWorkspacesEnabled: boolean;
   /** Let the rendered document take the whole column instead of a reading width. */
   documentFullWidth: boolean;

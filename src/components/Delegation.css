@@ -13,27 +13,6 @@
   margin: 8px 0;
 }
 
-.delegation-surface :is(input:not([type='checkbox']), textarea, select) {
-  box-sizing: border-box;
-  display: block;
-  width: 100%;
-  margin-top: 4px;
-  padding: 9px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-input);
-  color: var(--fg);
-  font: inherit;
-}
-
-.delegation-surface textarea {
-  resize: vertical;
-}
-
-.delegation-surface input[type='checkbox'] {
-  accent-color: var(--accent);
-}
-
 .delegation-surface button,
 .delegation-button {
   padding: 6px 10px;
@@ -51,7 +30,7 @@
   border-color: var(--accent);
 }
 
-.delegation-surface :is(button[type='submit'], .btn-primary) {
+.delegation-surface .btn-primary {
   background: var(--accent);
   color: var(--accent-text);
 }

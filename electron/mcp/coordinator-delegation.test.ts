@@ -12,6 +12,10 @@ import {
   mockAtomicWriteFileSync,
   mockDeleteBackendTask,
   mockNextTask,
+  mockWriteToAgent,
+  mockKillAgent,
+  getOutputCb,
+  getSpawnHandler,
   getExitHandler,
 } from './coordinator-test-harness.js';
 
@@ -262,6 +266,24 @@ describe('ordinary delegation lifecycle', () => {
     await expect(coordinator.waitForSignalDone('parent')).resolves.toEqual({ remaining: 0 });
   });
 
+  it('automatic delivery never authorizes merging a review-policy child', async () => {
+    coordinator.registerCoordinator('updates', 'project', {
+      projectRoot: '/project',
+      worktreePath: '/parent',
+      automaticNotifications: true,
+    });
+    const child = await create({ coordinatorTaskId: 'updates' });
+    coordinator.signalDone(child.id);
+    const staged = mockNotifyRenderer.mock.calls.find(
+      ([channel]) => channel === 'mcp_coordinator_notification_staged',
+    );
+    expect(staged?.[1]).toMatchObject({
+      automaticNotifications: true,
+      text: expect.stringContaining('require explicit user review and approval'),
+    });
+    expect(staged?.[1].text).not.toContain("commit and merge what's ready");
+  });
+
   it('uses bound child credentials for creation and subsequent config refresh', async () => {
     coordinator.setSessionMcpProvider(() => ({
       token: 'bound-token',
@@ -359,5 +381,154 @@ describe('review-required integration', () => {
       mockExecFile.mock.calls.some((call) => call[1][0] === 'add' || call[1][0] === 'commit'),
     ).toBe(false);
     expect(coordinator.getTaskStatus(child.id)?.landingState).toBe('reviewed');
+  });
+});
+
+describe('global agent orchestration switch', () => {
+  it('blocks agent mutations without killing an existing child or deleting its work', async () => {
+    const child = await create();
+    coordinator.setOrchestrationEnabled(false);
+    await expect(create()).rejects.toThrow('orchestration is disabled');
+    await expect(coordinator.sendPrompt(child.id, 'More work')).rejects.toThrow(
+      'orchestration is disabled',
+    );
+    await expect(coordinator.mergeTask(child.id)).rejects.toThrow('orchestration is disabled');
+    await expect(coordinator.landSelf(child.id, { verification: { checks: [] } })).rejects.toThrow(
+      'orchestration is disabled',
+    );
+    await expect(coordinator.closeTask(child.id)).rejects.toThrow('orchestration is disabled');
+    expect(mockKillAgent).not.toHaveBeenCalled();
+    expect(mockDeleteBackendTask).not.toHaveBeenCalled();
+    expect(coordinator.getTaskStatus(child.id)).not.toBeNull();
+    expect(coordinator.signalDone(child.id)).toBe(true);
+  });
+
+  it('cancels a pending launch even if orchestration is re-enabled before setup finishes', async () => {
+    let finish:
+      | ((value: { id: string; branch_name: string; worktree_path: string }) => void)
+      | undefined;
+    mockCreateBackendTask.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = create();
+    const assertion = expect(pending).rejects.toThrow('canceled');
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    coordinator.setOrchestrationEnabled(false);
+    coordinator.setOrchestrationEnabled(true);
+    finish?.({ id: 'task-1', branch_name: 'task/test', worktree_path: '/tmp/test' });
+    await assertion;
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it('discards queued prompts and startup timers without replaying them after re-enable', async () => {
+    const child = await create();
+    await expect(coordinator.sendPrompt(child.id, 'Queued follow-up')).resolves.toEqual({
+      queued: true,
+    });
+    getOutputCb()(Buffer.from('› ').toString('base64'));
+    coordinator.setOrchestrationEnabled(false);
+    coordinator.setOrchestrationEnabled(true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(mockWriteToAgent).not.toHaveBeenCalled();
+    expect(coordinator.getTaskStatus(child.id)?.pendingPromptCount).toBeUndefined();
+    expect(mockKillAgent).not.toHaveBeenCalled();
+  });
+
+  it('discards restored prompts while disabled rather than replaying them after enable', async () => {
+    coordinator.setOrchestrationEnabled(false);
+    const restored = {
+      id: 'restored-child',
+      name: 'Restored',
+      projectId: 'project',
+      projectRoot: '/project',
+      branchName: 'task/restored',
+      baseBranch: 'parent',
+      worktreePath: '/tmp/restored',
+      agentId: 'restored-agent',
+      coordinatorTaskId: 'parent',
+      initialPrompt: 'Old assignment',
+      pendingPrompts: ['Old follow-up'],
+      assignedPromptDelivered: false,
+    };
+    coordinator.hydrateTask(restored);
+    expect(coordinator.getTask(restored.id)?.initialPrompt).toBeUndefined();
+    expect(coordinator.getTask(restored.id)?.pendingPrompts).toBeUndefined();
+    expect(mockNotifyRenderer).toHaveBeenCalledWith(
+      'mcp_task_state_sync',
+      expect.objectContaining({ taskId: restored.id, initialPrompt: null, pendingPromptCount: 0 }),
+    );
+    // A stale renderer retry must also receive the cleared queue state.
+    mockNotifyRenderer.mockClear();
+    coordinator.hydrateTask(restored);
+    expect(mockNotifyRenderer).toHaveBeenCalledWith(
+      'mcp_task_state_sync',
+      expect.objectContaining({ taskId: restored.id, initialPrompt: null, pendingPromptCount: 0 }),
+    );
+    coordinator.setOrchestrationEnabled(true);
+    getSpawnHandler()(restored.agentId);
+    getOutputCb()(Buffer.from('› ').toString('base64'));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(mockWriteToAgent).not.toHaveBeenCalled();
+    expect(mockKillAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not send Enter or replay a body pasted before disable/re-enable', async () => {
+    const child = await create();
+    coordinator.markPromptDelivered(child.id);
+    const sending = coordinator.sendPrompt(child.id, 'Already pasted');
+    const assertion = expect(sending).rejects.toThrow('Enter write failed');
+    expect(mockWriteToAgent).toHaveBeenCalledWith(child.agentId, 'Already pasted');
+    coordinator.setOrchestrationEnabled(false);
+    coordinator.setOrchestrationEnabled(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await assertion;
+    expect(mockWriteToAgent).not.toHaveBeenCalledWith(child.agentId, '\r');
+    expect(mockWriteToAgent.mock.calls.filter((call) => call[1] === 'Already pasted')).toHaveLength(
+      1,
+    );
+    expect(coordinator.isAutomationWriteInFlight(child.id)).toBe(false);
+  });
+
+  it('preserves review notifications and explicit desktop approval while disabled', async () => {
+    const child = await create();
+    coordinator.signalDone(child.id);
+    mockNotifyRenderer.mockClear();
+    coordinator.setOrchestrationEnabled(false);
+    expect(mockNotifyRenderer).not.toHaveBeenCalledWith(
+      'mcp_coordinator_notification_cleared',
+      expect.anything(),
+    );
+    gitResults();
+    await coordinator.approveAndMergeTask(child.id, {
+      expectedCommit: sha,
+      expectedTargetBranch: 'parent',
+      expectedTargetCommit: targetSha,
+    });
+    expect(mockGitMergeTask).toHaveBeenCalledOnce();
+  });
+
+  it('permits manual child restart while disabled and treats repeated disable as a no-op', async () => {
+    const child = await create();
+    getExitHandler()(child.agentId, { exitCode: 0 });
+    coordinator.setOrchestrationEnabled(false);
+    const reservation = coordinator.reserveChildRestart(child.id);
+    coordinator.setOrchestrationEnabled(false);
+    expect(() => reservation.assertAllowed()).not.toThrow();
+    reservation();
+  });
+
+  it('keeps trusted phone creation available without replaying its assignment after enable', async () => {
+    coordinator.setDefaultProject('project', '/project', 'parent');
+    coordinator.setOrchestrationEnabled(false);
+    await expect(create({ coordinatorTaskId: 'api' })).resolves.toMatchObject({ id: 'task-1' });
+    expect(mockSpawnAgent).toHaveBeenCalledOnce();
+    expect(coordinator.getTask('task-1')?.initialPrompt).toBeUndefined();
+    coordinator.setOrchestrationEnabled(true);
+    getOutputCb()(Buffer.from('› ').toString('base64'));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(mockWriteToAgent).not.toHaveBeenCalled();
   });
 });

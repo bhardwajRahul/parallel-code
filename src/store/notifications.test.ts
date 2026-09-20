@@ -77,7 +77,6 @@ vi.mock('./completion', () => ({
 }));
 vi.mock('../lib/log', () => ({ warn: vi.fn() }));
 vi.mock('../lib/clean-task-name', () => ({ cleanTaskName: vi.fn() }));
-vi.mock('./coordinator-preamble', () => ({ COORDINATOR_PREAMBLE: '' }));
 vi.mock('./sidebar-order', () => ({ getCoordinatorChildren: vi.fn() }));
 vi.mock('../lib/github-url', () => ({
   parseGitHubUrl: vi.fn(),

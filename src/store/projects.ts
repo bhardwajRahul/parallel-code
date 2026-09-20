@@ -91,7 +91,6 @@ export function updateProject(
   updates: Partial<
     Pick<
       Project,
-      | 'allowAgentTaskCreation'
       | 'allowPeerAccess'
       | 'name'
       | 'color'
@@ -117,8 +116,6 @@ export function updateProject(
     produce((s) => {
       const idx = s.projects.findIndex((p) => p.id === projectId);
       if (idx === -1) return;
-      if (updates.allowAgentTaskCreation !== undefined)
-        s.projects[idx].allowAgentTaskCreation = updates.allowAgentTaskCreation;
       if (updates.allowPeerAccess !== undefined)
         s.projects[idx].allowPeerAccess = updates.allowPeerAccess;
       if (updates.name !== undefined) s.projects[idx].name = updates.name;
@@ -293,15 +290,14 @@ export function isProjectMissing(projectId: string): boolean {
   return projectId in store.missingProjectIds;
 }
 
-/** Consent changes take effect in the main process before the UI reports success. */
+/** Peer permission changes take effect in the main process before the UI reports success. */
 export async function updateProjectCoordination(
   projectId: string,
-  allowAgentTaskCreation: boolean,
   allowPeerAccess: boolean,
 ): Promise<void> {
   await delegationRequest({
     action: 'projectPolicy',
-    policy: { projectId, allowAgentTaskCreation, allowPeerAccess },
+    policy: { projectId, allowPeerAccess },
   });
-  updateProject(projectId, { allowAgentTaskCreation, allowPeerAccess });
+  updateProject(projectId, { allowPeerAccess });
 }

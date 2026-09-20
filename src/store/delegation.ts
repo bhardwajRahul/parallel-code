@@ -20,6 +20,12 @@ export function delegationRequest<T>(request: DelegationRequest): Promise<T> {
   return invoke<T>(IPC.DelegationRequest, request);
 }
 
+/** Acknowledge the backend policy before displaying or persisting a change. */
+export async function setMcpOrchestrationEnabled(enabled: boolean): Promise<void> {
+  await delegationRequest({ action: 'orchestrationSetting', enabled });
+  setStore('mcpOrchestrationEnabled', enabled);
+}
+
 export function taskAuthorityInput(
   task: Task | PersistedTask,
   project: Project,
@@ -36,6 +42,8 @@ export function taskAuthorityInput(
     gitIsolation: task.gitIsolation,
     parentTaskId: task.coordinatedBy,
     coordinatorMode: task.coordinatorMode,
+    autoMergeChildren: task.autoMergeChildren,
+    autoSendChildUpdates: task.autoSendChildUpdates,
     externalWorktree: task.externalWorktree,
     integrationPolicy: task.integrationPolicy,
     delegationPaused: task.delegationPaused,
@@ -93,11 +101,6 @@ export function applyDelegationChange(change: DelegationChanged): void {
 export async function refreshDelegationState(taskId: string): Promise<void> {
   const state = await delegationRequest<DelegationState>({ action: 'state', taskId });
   if (state) applyDelegationChange({ taskId, state });
-}
-
-/** UI creation remains available independently of the agent's tool integration. */
-export function canDelegate(task: Task): boolean {
-  return task.gitIsolation === 'worktree' && !task.coordinatedBy && !task.closingStatus;
 }
 
 export function isSupportedDelegationAgent(agent: AgentDef): boolean {

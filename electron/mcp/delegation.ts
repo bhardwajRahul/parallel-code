@@ -18,6 +18,7 @@ import type {
   DelegationRequest,
   DelegationSnapshot,
   DelegationState,
+  IntegrationPolicy,
   PeerMessage,
   PeerSession,
   ProjectDelegationPolicy,
@@ -30,6 +31,12 @@ const exec = promisify(execFile);
 const MAX_PROMPT_BYTES = 64 * 1024;
 const MAX_MESSAGES = 200;
 const ID = /^[a-zA-Z0-9_-]{1,128}$/;
+
+interface CreatedChild {
+  taskId: string;
+  agentId: string;
+  integrationPolicy: IntegrationPolicy;
+}
 
 type Authority = TaskAuthorityInput & { closing?: boolean; closed?: boolean };
 
@@ -69,11 +76,13 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 /** Identity comes only from acknowledged desktop lifecycle operations, never display broadcasts. */
 export class DelegationService {
   private readonly tasks = new Map<string, Authority>();
+  private orchestrationEnabled: boolean;
+  private orchestrationEpoch = 0;
   private readonly policies = new Map<string, ProjectDelegationPolicy>();
   private readonly detached = new Set<string>();
   private readonly requests = new Map<
     string,
-    { payload: string; promise: Promise<{ taskId: string; agentId: string }> }
+    { payload: string; promise: Promise<CreatedChild> }
   >();
   private readonly attempts = new Map<string, DelegationAttempt>();
   private readonly messages = new Map<string, PeerMessage>();
@@ -83,6 +92,7 @@ export class DelegationService {
 
   constructor(
     private readonly options: {
+      orchestrationEnabled?: boolean;
       coordinator: () => Promise<Coordinator>;
       currentCoordinator: () => Coordinator | null;
       prepareParent: (task: TaskAuthorityInput, assignment?: DelegateAssignment) => Promise<void>;
@@ -91,7 +101,43 @@ export class DelegationService {
       persist: () => void;
       parentCreated?: (taskId: string) => void;
     },
-  ) {}
+  ) {
+    this.orchestrationEnabled = options.orchestrationEnabled ?? true;
+  }
+
+  isOrchestrationEnabled(): boolean {
+    return this.orchestrationEnabled;
+  }
+
+  private assertOrchestrationEnabled(epoch = this.orchestrationEpoch): void {
+    if (!this.orchestrationEnabled || epoch !== this.orchestrationEpoch)
+      throw new DelegationError(
+        'Agent orchestration is disabled or this operation was canceled in Settings > MCP.',
+        403,
+      );
+  }
+
+  private setOrchestrationEnabled(enabled: boolean): void {
+    if (typeof enabled !== 'boolean') throw new DelegationError('Invalid orchestration setting');
+    const previous = this.orchestrationEnabled;
+    this.orchestrationEnabled = enabled;
+    try {
+      this.options.persist();
+    } catch (error) {
+      this.orchestrationEnabled = previous;
+      throw error;
+    }
+    if (previous && !enabled) this.orchestrationEpoch += 1;
+    this.options.currentCoordinator()?.setOrchestrationEnabled(enabled);
+    if (!enabled) {
+      for (const message of this.messages.values()) {
+        if (message.state !== 'waiting') continue;
+        message.state = 'closed';
+        message.reason = 'Agent orchestration disabled';
+        this.messageChanged(message);
+      }
+    }
+  }
 
   getTask(taskId: string): TaskAuthorityInput | undefined {
     return this.tasks.get(taskId);
@@ -171,6 +217,8 @@ export class DelegationService {
       parentTaskId: child.coordinatorTaskId,
       delegationParent: false,
       coordinatorMode: false,
+      autoMergeChildren: false,
+      autoSendChildUpdates: false,
       externalWorktree: false,
       delegationPaused: false,
       integrationPolicy: child.integrationPolicy,
@@ -180,24 +228,21 @@ export class DelegationService {
   capabilities(taskId: string): SessionCapabilities | undefined {
     const task = this.tasks.get(taskId);
     if (!task || task.closed || task.closing || task.gitIsolation !== 'worktree') return undefined;
+    if (!this.orchestrationEnabled && !task.parentTaskId) return undefined;
     return {
       profile: task.parentTaskId
         ? task.integrationPolicy === 'review'
           ? 'child-review'
           : 'child-automatic'
         : 'ordinary',
-      canCreate:
-        !task.parentTaskId && this.policies.get(task.projectId)?.allowAgentTaskCreation === true,
-      peers: true,
+      canCreate: this.orchestrationEnabled && !task.parentTaskId,
+      peers: this.orchestrationEnabled,
     };
   }
 
   updatePolicy(policy: ProjectDelegationPolicy): void {
     id(policy.projectId, 'projectId');
-    if (
-      typeof policy.allowAgentTaskCreation !== 'boolean' ||
-      typeof policy.allowPeerAccess !== 'boolean'
-    )
+    if (typeof policy.allowPeerAccess !== 'boolean')
       throw new DelegationError('Invalid project policy');
     this.policies.set(policy.projectId, { ...policy });
     for (const message of this.messages.values()) {
@@ -227,6 +272,7 @@ export class DelegationService {
   }
 
   private creationGuard(taskId: string, caller?: SessionCaller): void {
+    this.assertOrchestrationEnabled();
     const task = this.requireTask(taskId);
     if (task.parentTaskId || task.gitIsolation !== 'worktree')
       throw new DelegationError('Only top-level worktree tasks may delegate', 403);
@@ -234,22 +280,15 @@ export class DelegationService {
       throw new DelegationError('Child creation is paused. Resume it in Parallel Code.', 403);
     if (caller) {
       this.requireCaller(caller);
-      if (
-        caller.taskId !== taskId ||
-        !caller.capabilities.canCreate ||
-        !this.policies.get(task.projectId)?.allowAgentTaskCreation
-      )
+      if (caller.taskId !== taskId || !caller.capabilities.canCreate)
         throw new DelegationError(
-          'Enable agent-created tasks for this project and restart/resume the session.',
+          'This session lacks task-creation tools. Enable orchestration in Settings > MCP, then restart and resume the session.',
           403,
         );
     }
   }
 
-  create(
-    assignment: DelegateAssignment,
-    caller?: SessionCaller,
-  ): Promise<{ taskId: string; agentId: string }> {
+  create(assignment: DelegateAssignment, caller?: SessionCaller): Promise<CreatedChild> {
     this.creationGuard(assignment.parentTaskId, caller);
     id(assignment.requestId, 'requestId');
     text(assignment.name, 'name');
@@ -273,7 +312,12 @@ export class DelegationService {
     assignment: DelegateAssignment,
     caller: SessionCaller | undefined,
     key: string,
-  ): Promise<{ taskId: string; agentId: string }> {
+  ): Promise<CreatedChild> {
+    const epoch = this.orchestrationEpoch;
+    const assertLaunch = () => {
+      this.assertOrchestrationEnabled(epoch);
+      this.creationGuard(assignment.parentTaskId, caller);
+    };
     const attempt: DelegationAttempt = {
       requestId: assignment.requestId,
       parentTaskId: assignment.parentTaskId,
@@ -285,6 +329,7 @@ export class DelegationService {
     try {
       const task = this.requireTask(assignment.parentTaskId);
       const snapshot = await this.snapshot(task.taskId);
+      assertLaunch();
       if (
         snapshot.branchName !== assignment.expectedBranch ||
         snapshot.headSha !== assignment.expectedHeadSha
@@ -305,8 +350,9 @@ export class DelegationService {
         throw new DelegationError('Select a supported agent without custom MCP configuration');
       task.branchName = snapshot.branchName;
       await this.options.prepareParent(task, assignment);
-      this.creationGuard(task.taskId, caller);
+      assertLaunch();
       const coordinator = await this.options.coordinator();
+      assertLaunch();
       const child = await coordinator.createTask({
         name: assignment.name,
         prompt: assignment.prompt,
@@ -315,12 +361,12 @@ export class DelegationService {
         snapshotCommit: snapshot.headSha,
         agentCommand: command,
         agentArgs: args,
-        integrationPolicy: 'review',
+        integrationPolicy: task.autoMergeChildren === true ? 'automatic' : 'review',
         agentEnvFile: assignment.agentEnvFile ?? task.agentEnvFile,
         skipPermissions:
           assignment.propagateSkipPermissions ?? task.propagateSkipPermissions ?? false,
-        launchGuard: () => this.creationGuard(task.taskId, caller),
-        nativeLaunchGuard: () => this.creationGuard(task.taskId, caller),
+        launchGuard: assertLaunch,
+        nativeLaunchGuard: assertLaunch,
       });
       this.registerChild(child);
       const childAuthority = this.tasks.get(child.id);
@@ -333,7 +379,11 @@ export class DelegationService {
       this.options.persist();
       attempt.status = 'created';
       attempt.taskId = child.id;
-      return { taskId: child.id, agentId: child.agentId };
+      return {
+        taskId: child.id,
+        agentId: child.agentId,
+        integrationPolicy: child.integrationPolicy ?? 'review',
+      };
     } catch (error) {
       attempt.status = 'failed';
       attempt.error = error instanceof Error ? error.message : String(error);
@@ -363,7 +413,9 @@ export class DelegationService {
     name: string,
     params: Record<string, unknown>,
   ): Promise<unknown> {
+    const epoch = this.orchestrationEpoch;
     const task = this.requireCaller(caller);
+    if (name !== 'signal_done' || !task.parentTaskId) this.assertOrchestrationEnabled();
     if (
       [
         'list_agent_sessions',
@@ -401,6 +453,7 @@ export class DelegationService {
       const snap = original
         ? { branchName: original.expectedBranch, headSha: original.expectedHeadSha }
         : await this.snapshot(task.taskId);
+      this.assertOrchestrationEnabled(epoch);
       this.requireCaller(caller);
       return this.create(
         {
@@ -459,6 +512,7 @@ export class DelegationService {
     const sender = this.tasks.get(senderId),
       target = this.tasks.get(targetId);
     if (
+      !this.orchestrationEnabled ||
       !sender ||
       !target ||
       sender.closed ||
@@ -648,6 +702,9 @@ export class DelegationService {
   async request(raw: unknown): Promise<unknown> {
     const request = record(raw) as unknown as DelegationRequest;
     switch (request.action) {
+      case 'orchestrationSetting':
+        this.setOrchestrationEnabled(request.enabled);
+        return { enabled: this.orchestrationEnabled };
       case 'unregister': {
         const taskId = id(request.taskId);
         if (this.tasks.get(taskId)?.delegationParent || this.tasks.get(taskId)?.coordinatorMode)
@@ -662,10 +719,6 @@ export class DelegationService {
       case 'projectPolicy':
         this.updatePolicy(request.policy);
         return request.policy;
-      case 'snapshot':
-        return this.snapshot(id(request.taskId));
-      case 'create':
-        return this.create(request.assignment);
       case 'state':
         this.expireMessages();
         return this.state(id(request.taskId));
@@ -681,6 +734,14 @@ export class DelegationService {
         if (coordinator?.isRegisteredCoordinator(task.taskId)) {
           if (request.paused) coordinator.stopChildren(task.taskId);
           else coordinator.resumeChildren(task.taskId);
+        }
+        if (request.paused) {
+          // A child may have several panes; the coordinator tracks only its primary agent.
+          for (const agentId of getActiveAgentIds()) {
+            const childId = getAgentMeta(agentId)?.taskId;
+            if (childId && this.tasks.get(childId)?.parentTaskId === task.taskId)
+              killAgent(agentId);
+          }
         }
         this.emit(task.taskId);
         return { paused: request.paused };
@@ -744,7 +805,14 @@ export class DelegationService {
     task.delegationPaused = true;
     try {
       const coordinator = await this.options.coordinator();
-      const detachedChildIds = coordinator.detachChildren(taskId);
+      const detachedChildIds = [
+        ...new Set([
+          ...coordinator.detachChildren(taskId),
+          ...[...this.tasks.values()]
+            .filter((child) => !child.closed && child.parentTaskId === taskId)
+            .map((child) => child.taskId),
+        ]),
+      ];
       for (const childId of detachedChildIds) {
         this.detached.add(childId);
         const child = this.tasks.get(childId);
@@ -809,6 +877,7 @@ export class DelegationService {
   /** Backend lifecycle fields override stale renderer snapshots after detach/stop/close. */
   normalizeState(json: string): string {
     const state = record(JSON.parse(json));
+    state.mcpOrchestrationEnabled = this.orchestrationEnabled;
     const tasks =
       state.tasks && typeof state.tasks === 'object' && !Array.isArray(state.tasks)
         ? (state.tasks as Record<string, unknown>)
@@ -850,7 +919,6 @@ export class DelegationService {
         const project = raw as Record<string, unknown>;
         const policy = typeof project.id === 'string' ? this.policies.get(project.id) : undefined;
         if (policy) {
-          project.allowAgentTaskCreation = policy.allowAgentTaskCreation;
           project.allowPeerAccess = policy.allowPeerAccess;
         }
       }
