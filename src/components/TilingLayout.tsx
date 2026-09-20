@@ -207,10 +207,14 @@ export function TilingLayout() {
     const activeId = store.activeTaskId;
     const newTaskPanelOpen = store.showNewTaskPanel;
     const returningFromNewTask = wasNewTaskPanelOpen && !newTaskPanelOpen;
+    const openingNewTask = !wasNewTaskPanelOpen && newTaskPanelOpen;
     wasNewTaskPanelOpen = newTaskPanelOpen;
     if (!containerRef) return;
     if (focusMode()) return;
-    if (newTaskPanelOpen && !activeId) return;
+    // The draft scrolls itself into view. Don't rely on the draft's focus to
+    // cancel this scroll: an unfocused window (a link dropped from another app)
+    // fires no focus events, and the active task would pull the strip back.
+    if (newTaskPanelOpen && (!activeId || openingNewTask)) return;
     if (!activeId) {
       updateViewportState();
       return;

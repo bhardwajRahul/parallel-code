@@ -5,6 +5,7 @@ import { IPC } from '../../electron/ipc/channels';
 import { invoke } from '../lib/ipc';
 import { store, setStore } from '../store/core';
 import { setActiveTask, toggleNewTaskPanel } from '../store/navigation';
+import { setTaskFocusedPanel } from '../store/focused-panel';
 import { createTask } from '../store/tasks';
 import { deletePanelUserSize, getPanelUserSize, setPanelUserSize } from '../store/ui';
 import { TilingLayout } from './TilingLayout';
@@ -348,6 +349,78 @@ describe('inline task creation', () => {
     );
     expect(scrollOptions).toContainEqual(expect.objectContaining({ behavior: 'instant' }));
     expect(scrollOptions).not.toContainEqual(expect.objectContaining({ behavior: 'smooth' }));
+    scrollIntoView.mockRestore();
+    scrollTo.mockRestore();
+  });
+
+  it('keeps the draft in view when it opens in an unfocused window', async () => {
+    setStore('tasks', 'task', {
+      id: 'task',
+      name: 'Task',
+      projectId: 'project',
+      branchName: 'task/test',
+      worktreePath: '/repo/task',
+      agentIds: [],
+      shellAgentIds: [],
+      notes: '',
+      lastPrompt: '',
+    });
+    setStore('taskOrder', ['task']);
+    setActiveTask('task');
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+
+    // A link dragged in from another app leaves the window unfocused, and
+    // Chromium then withholds focus events, so the draft never reports focus.
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(() => {});
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
+    const scrollTo = vi.spyOn(Element.prototype, 'scrollTo');
+    toggleNewTaskPanel(true);
+    // Fixed frames rather than vi.waitFor: this asserts an absence, and polling
+    // could stop on the draft's scroll before the active task's scroll lands.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+
+    // The draft scrolls in instantly; a smooth scroll is the active task pulling
+    // the strip back to it.
+    const scrollOptions = [...scrollIntoView.mock.calls, ...scrollTo.mock.calls].map(
+      ([options]) => options,
+    );
+    expect(scrollOptions).toContainEqual(expect.objectContaining({ behavior: 'instant' }));
+    expect(scrollOptions).not.toContainEqual(expect.objectContaining({ behavior: 'smooth' }));
+    focus.mockRestore();
+    scrollIntoView.mockRestore();
+    scrollTo.mockRestore();
+  });
+
+  it('does not scroll to the active task while the draft holds focus in an unfocused window', async () => {
+    setStore('tasks', 'task', {
+      id: 'task',
+      name: 'Task',
+      projectId: 'project',
+      branchName: 'task/test',
+      worktreePath: '/repo/task',
+      agentIds: [],
+      shellAgentIds: [],
+      notes: '',
+      lastPrompt: '',
+    });
+    setStore('taskOrder', ['task']);
+    setActiveTask('task');
+    const prompt = await openDraft();
+    expect(document.activeElement).toBe(prompt);
+
+    // Chromium withholds the draft's focus events until the window regains
+    // focus, so the store flag lags DOM focus.
+    setStore('newTaskPanelFocused', false);
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
+    const scrollTo = vi.spyOn(Element.prototype, 'scrollTo');
+    setTaskFocusedPanel('task', 'notes');
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(scrollTo).not.toHaveBeenCalled();
+    hasFocus.mockRestore();
     scrollIntoView.mockRestore();
     scrollTo.mockRestore();
   });

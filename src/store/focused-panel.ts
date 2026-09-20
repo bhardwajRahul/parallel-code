@@ -2,6 +2,14 @@ import { store, setStore } from './core';
 
 let pendingFocus: { taskId: string; panel: string } | undefined;
 
+/** Whether the new-task draft holds focus, so a deferred task focus/scroll must not steal it. */
+function newTaskDraftHasFocus(): boolean {
+  if (store.newTaskPanelFocused) return true;
+  // Chromium withholds focus events while the window is unfocused (e.g. a link
+  // dragged in from another app), so the flag lags DOM focus until then.
+  return !!document.activeElement?.closest('[data-new-task-panel]') && !document.hasFocus();
+}
+
 /** Apply focus after batched selection changes and panel visibility effects settle. */
 export function scheduleTaskFocus(taskId: string, panel: string): void {
   if (store.activeTaskId !== taskId) return;
@@ -16,7 +24,7 @@ export function scheduleTaskFocus(taskId: string, panel: string): void {
       store.activeTaskId !== target.taskId ||
       store.sidebarFocused ||
       store.placeholderFocused ||
-      store.newTaskPanelFocused
+      newTaskDraftHasFocus()
     )
       return;
     triggerFocus(`${target.taskId}:${target.panel}`);
@@ -224,7 +232,7 @@ export function scrollTaskIntoView(taskId: string, behavior: ScrollBehavior = 's
       (store.focusMode && !store.showNewTaskPanel) ||
       store.activeTaskId !== target.taskId ||
       store.placeholderFocused ||
-      store.newTaskPanelFocused
+      newTaskDraftHasFocus()
     )
       return;
     const el = document.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(target.taskId)}"]`);
