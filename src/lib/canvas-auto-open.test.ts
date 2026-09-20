@@ -38,12 +38,41 @@ describe('nextCanvasOpen', () => {
   it('ignores reads, other files, failures and unknown ids', () => {
     const pending = new Map<string, string>();
     nextCanvasOpen(pending, pre('r', 'a.md', 'Read'), wt);
-    nextCanvasOpen(pending, pre('e', 'a.ts', 'Edit'), wt);
+    nextCanvasOpen(pending, pre('e', 'a.ts'), wt);
     expect(pending.size).toBe(0);
-    nextCanvasOpen(pending, pre('f', 'b.md', 'Edit'), wt);
+    nextCanvasOpen(pending, pre('f', 'b.md'), wt);
     expect(nextCanvasOpen(pending, { event: 'PostToolUseFailure', toolUseId: 'f' }, wt)).toBeNull();
     expect(nextCanvasOpen(pending, { event: 'PostToolUse', toolUseId: 'f' }, wt)).toBeNull();
     expect(nextCanvasOpen(pending, { event: 'PostToolUse', toolUseId: 'zz' }, wt)).toBeNull();
+  });
+
+  it('ignores edits to existing Markdown; only a full write opens it', () => {
+    const pending = new Map<string, string>();
+    for (const tool of ['Edit', 'MultiEdit', 'NotebookEdit']) {
+      nextCanvasOpen(pending, pre(tool, 'docs/a.md', tool), wt);
+    }
+    expect(pending.size).toBe(0);
+  });
+
+  it('ignores repo boilerplate docs and test or fixture folders', () => {
+    const pending = new Map<string, string>();
+    const skipped = [
+      'README.md',
+      'packages/ui/readme.markdown',
+      'CHANGELOG.md',
+      'AGENTS.md',
+      'CLAUDE.md',
+      'CONTRIBUTING.md',
+      'LICENSE.md',
+      '.github/pull_request_template.md',
+      'test/fixtures/sample.md',
+      'src/__fixtures__/doc.md',
+      'src/__snapshots__/x.md',
+    ];
+    skipped.forEach((path, i) => nextCanvasOpen(pending, pre(`s${i}`, path), wt));
+    expect(pending.size).toBe(0);
+    nextCanvasOpen(pending, pre('ok', 'docs/readme-notes.md'), wt);
+    expect(pending.get('ok')).toBe('docs/readme-notes.md');
   });
 
   it('drops the oldest pending write when the map is full', () => {
