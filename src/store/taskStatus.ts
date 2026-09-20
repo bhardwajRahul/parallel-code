@@ -967,6 +967,12 @@ function isAgentWorking(agentId: string, active: ReadonlySet<string>): boolean {
   return hook ? hook.state === 'working' : active.has(agentId);
 }
 
+/** Between turns with nothing asked of the user, by the same hook-first
+ *  precedence as the task status rather than the raw output heuristics. */
+export function isAgentSettled(agentId: string): boolean {
+  return !isAgentWorking(agentId, activeAgents()) && !isAgentBlockedOnInput(agentId);
+}
+
 function hasRunningAgentActivity(taskId: string, predicate: (id: string) => boolean): boolean {
   const task = store.tasks[taskId];
   if (!task) return false;

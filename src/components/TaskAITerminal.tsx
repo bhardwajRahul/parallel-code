@@ -22,7 +22,7 @@ import {
   toggleAITerminalLayout,
 } from '../store/store';
 import { markDirty } from '../lib/terminalFitManager';
-import { isAgentAskingQuestion, isAgentIdle } from '../store/taskStatus';
+import { isAgentAskingQuestion, isAgentSettled } from '../store/taskStatus';
 import { warn as logWarn } from '../lib/log';
 import { InfoBar } from './InfoBar';
 import { PromptHistory } from './PromptHistory';
@@ -148,7 +148,7 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
       if (props.task.initialPrompt) return 'Wait for the queued prompt before switching views';
       if (props.task.terminalInputPending)
         return 'Send or clear the terminal draft before switching views';
-      if (!isAgentIdle(firstAgentId()) || isAgentAskingQuestion(firstAgentId()))
+      if (!isAgentSettled(firstAgentId()))
         return `Wait for ${agentName()} to finish and resolve pending requests before switching views`;
     }
     return '';

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { TaskAITerminal } from './TaskAITerminal';
 import { store, setStore } from '../store/core';
 import { clearAgentActivity, markAgentSpawned, markAgentOutput } from '../store/taskStatus';
+import { applyAgentHookEvent } from '../store/agentHookStatus';
 import { nextTerminalInputPending } from '../lib/terminalInputPending';
 import { IPC } from '../../electron/ipc/channels';
 import { closeAgentInTask } from '../store/agents';
@@ -412,6 +413,35 @@ it('asks before quitting a live terminal, and does nothing until the user agrees
     IPC.AgentChat,
     expect.objectContaining({ action: 'handoffToChat', provider: 'claude' }),
   );
+});
+
+it('hands off once Claude reports its turn over, though the screen is still redrawing', async () => {
+  useClaudeCode();
+  setStore('tasks', 'task', 'agentSessionIds', { agent: claudeSession });
+  // The TUI keeps repainting its footer after `Stop`; the output heuristic
+  // alone reads that as work for another 15 seconds.
+  markAgentOutput('agent', new TextEncoder().encode('Worked for 12s\r\n? for shortcuts\r\n'));
+  applyAgentHookEvent({ agentId: 'agent', taskId: 'task', state: 'done', event: 'Stop', at: 1 });
+  mount();
+  clickChat();
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+  await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('chat'));
+});
+
+it('keeps the terminal while Claude reports a turn in flight, though the screen looks idle', () => {
+  useClaudeCode();
+  setStore('tasks', 'task', 'agentSessionIds', { agent: claudeSession });
+  applyAgentHookEvent({
+    agentId: 'agent',
+    taskId: 'task',
+    state: 'working',
+    event: 'UserPromptSubmit',
+    at: 1,
+  });
+  mount();
+  clickChat();
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('Wait for Claude to finish');
+  expect(store.tasks.task.mainAgentView).not.toBe('chat');
 });
 
 it('asks before closing a live chat to return to the terminal', async () => {
