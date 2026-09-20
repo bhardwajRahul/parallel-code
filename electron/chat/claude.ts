@@ -16,6 +16,7 @@ import type {
 import { stripAnsi } from '../shared/prompt-detect.js';
 import { readContextUsage } from '../shared/agent-chat-types.js';
 import { describePermissionUpdates, describeToolCall, visibleUserText } from './describe.js';
+import { appliedDiffs, proposedDiffs } from './claude-diffs.js';
 import { chatSettingSources, launchPermissionMode, settingsDefaultMode } from './settings-mode.js';
 import type { AgentChat, ChatStartOptions } from './types.js';
 
@@ -644,15 +645,22 @@ export class ClaudeChat implements AgentChat {
               };
             });
           }
+          const diffs = proposedDiffs(tool, input);
           this.upsert({
             id: string(block.id),
             kind: 'tool',
-            text: `${describeToolCall(tool, input)}\n\n${JSON.stringify(input, null, 2)}`,
+            // Commands and edits have their own display; any other tool shows its call.
+            text:
+              type === 'tool' || (type === 'files' && !diffs)
+                ? `${describeToolCall(tool, input)}\n\n${JSON.stringify(input, null, 2)}`
+                : '',
             activity: {
               type,
               files: typeof input.file_path === 'string' ? [input.file_path] : undefined,
               label: string(input.command) || string(input.file_path) || tool,
               status: 'running',
+              ...(type === 'command' ? { command: string(input.command) } : {}),
+              ...(diffs ? { diffs } : {}),
             },
           });
         }
@@ -662,17 +670,28 @@ export class ClaudeChat implements AgentChat {
           this.seenToolResults.add(resultId);
           const toolId = string(block.tool_use_id);
           const previous = this.state.items.find((item) => item.id === toolId);
+          const output = contentText(block.content);
+          const diffs = block.is_error
+            ? undefined
+            : appliedDiffs(previous, message.tool_use_result);
+          const shownAlone = !!previous?.activity?.command || !!previous?.activity?.diffs;
           this.upsert({
             id: toolId,
             kind: 'tool',
-            // A blank line so the call stays legible above its output, which for a
-            // failure is the error text the user came to read.
-            text: [previous?.text, contentText(block.content)].filter(Boolean).join('\n\n'),
+            // A command shows its output under the command line, and an edit its
+            // diff, whose confirmation adds nothing; a failure's text is the point.
+            // Otherwise a blank line keeps the call legible above its output.
+            text: shownAlone
+              ? previous?.activity?.diffs && !block.is_error
+                ? ''
+                : output
+              : [previous?.text, output].filter(Boolean).join('\n\n'),
             activity: {
               ...previous?.activity,
               type: previous?.activity?.type ?? 'tool',
               label: previous?.activity?.label ?? 'Tool activity',
               status: this.toolDecisions.get(toolId) ?? (block.is_error ? 'failed' : 'completed'),
+              ...(diffs ? { diffs } : {}),
             },
           });
         }

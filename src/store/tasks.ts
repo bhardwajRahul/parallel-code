@@ -7,6 +7,7 @@ import { asStoreVerificationRun } from '../lib/verification-run';
 import { IPC } from '../../electron/ipc/channels';
 import { getSkipPermissionsArgs } from '../../electron/shared/skip-permissions';
 import { CANVAS_INSTRUCTIONS } from '../../electron/shared/canvas-view';
+import type { ChatImage } from '../../electron/shared/agent-chat-types';
 import { store, setStore, cleanupPanelEntries } from './core';
 import { assignFreshSessionId } from './session-ids';
 import { effectiveAgentId } from './agent-select';
@@ -672,8 +673,8 @@ export async function sendPrompt(
   options: {
     /** App-composed prompts carry their own canvas contract, so none is appended. */
     appPrompt?: boolean;
-    /** Chat delivery, so the chat view streams the prompt through its own runtime. */
-    sendChat?: (text: string) => Promise<void>;
+    /** Images attached in the chat composer; terminal agents take text only. */
+    images?: ChatImage[];
     /** Cancel app-initiated delivery when its authorization changes. */
     signal?: AbortSignal;
   } = {},
@@ -698,8 +699,12 @@ export async function sendPrompt(
   if (isAgentChat(task, agentId)) {
     if (!options.appPrompt && !hasPromptedConversation && store.agents[agentId]?.canvasTools)
       effectiveText += `\n\n---\n${CANVAS_INSTRUCTIONS}`;
-    if (options.sendChat) await options.sendChat(effectiveText);
-    else await invoke(IPC.AgentChat, { action: 'send', agentId, text: effectiveText });
+    await invoke(IPC.AgentChat, {
+      action: 'send',
+      agentId,
+      text: effectiveText,
+      ...(options.images?.length ? { images: options.images } : {}),
+    });
     setTaskLastInputAt(taskId);
     setLastPrompt(taskId, text, agentId);
     if (task && !hasPromptedAgent)

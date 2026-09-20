@@ -1,16 +1,14 @@
-import { act, createElement } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { render } from 'solid-js/web';
+import { Show, createSignal } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RequestCard } from './RequestCard.react';
+import { RequestCard } from './RequestCard';
 import type { ChatRequest } from '../../../electron/shared/agent-chat-types';
 
-// The chat mounts into a shadow root in the app, and focus reads differently there:
-// `shadowRoot.activeElement` is null whenever focus sits outside it.
 let host: HTMLDivElement;
-let shadow: ShadowRoot;
 let composer: HTMLTextAreaElement;
 let container: HTMLDivElement;
-let root: Root;
+let dispose: () => void;
+let shown: (next: { request: ChatRequest; autoFocus: boolean } | undefined) => void;
 const respond = vi.fn(async () => undefined);
 const onResolved = vi.fn(() => composer.focus());
 const approval = (overrides: Partial<ChatRequest> = {}): ChatRequest => ({
@@ -33,32 +31,50 @@ const question = (): ChatRequest =>
       },
     ],
   });
-const focused = () => shadow.activeElement?.textContent;
+const focused = () => document.activeElement?.textContent;
 const button = (label: string) =>
   [...container.querySelectorAll('button')].find((node) => node.textContent === label);
-async function show(request: ChatRequest, autoFocus = true) {
-  await act(async () =>
-    root.render(
-      createElement(RequestCard, { request, respond, agentName: 'Claude', autoFocus, onResolved }),
-    ),
-  );
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+async function act(action: () => unknown) {
+  await action();
+  await settle();
 }
+/** Shows the card; the same request object keeps its card, as the store's reconcile does. */
+async function show(request: ChatRequest, autoFocus = true) {
+  await act(() => shown({ request, autoFocus }));
+}
+const hide = () => act(() => shown(undefined));
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   host = document.createElement('div');
   document.body.append(host);
-  shadow = host.attachShadow({ mode: 'open' });
+  host.className = 'chat-ui';
   container = document.createElement('div');
   composer = document.createElement('textarea');
-  shadow.append(container, composer);
-  root = createRoot(container);
+  host.append(container, composer);
+  const [current, setCurrent] = createSignal<{ request: ChatRequest; autoFocus: boolean }>();
+  shown = setCurrent;
+  dispose = render(
+    () => (
+      <Show when={current()?.request} keyed>
+        {(request) => (
+          <RequestCard
+            request={request}
+            respond={respond}
+            agentName="Claude"
+            autoFocus={current()?.autoFocus ?? false}
+            onResolved={onResolved}
+          />
+        )}
+      </Show>
+    ),
+    container,
+  );
 });
-afterEach(async () => {
-  await act(async () => root.unmount());
+afterEach(() => {
+  dispose();
   host.remove();
-  vi.unstubAllGlobals();
 });
 
 describe('approval card keyboard handling', () => {
@@ -81,7 +97,7 @@ describe('approval card keyboard handling', () => {
     try {
       composer.focus();
       await show(approval());
-      expect(shadow.activeElement).toBe(composer);
+      expect(document.activeElement).toBe(composer);
     } finally {
       modal.remove();
     }
@@ -96,11 +112,11 @@ describe('approval card keyboard handling', () => {
         }),
     );
     await show(approval());
-    await act(async () => button('Allow once')?.click());
-    await act(async () => root.render(null));
-    await act(async () => release());
+    await act(() => button('Allow once')?.click());
+    await hide();
+    await act(() => release());
     expect(onResolved).toHaveBeenCalledOnce();
-    expect(shadow.activeElement).toBe(composer);
+    expect(document.activeElement).toBe(composer);
   });
 
   it('does not restore focus after removal if the user moved to another input', async () => {
@@ -112,10 +128,10 @@ describe('approval card keyboard handling', () => {
         }),
     );
     await show(approval());
-    await act(async () => button('Allow once')?.click());
-    await act(async () => root.render(null));
+    await act(() => button('Allow once')?.click());
+    await hide();
     composer.focus();
-    await act(async () => release());
+    await act(() => release());
     expect(onResolved).not.toHaveBeenCalled();
   });
 
@@ -124,7 +140,7 @@ describe('approval card keyboard handling', () => {
     expect(focused()).toBe('Allow once');
     expect(button('Allow once')?.className).toContain('chat-request-default');
     // A focused button is what makes Enter mean "allow"; prove it reaches respond.
-    await act(async () => (shadow.activeElement as HTMLButtonElement).click());
+    await act(() => (document.activeElement as HTMLButtonElement).click());
     expect(respond).toHaveBeenCalledWith(approval(), 'accept', {});
     expect(onResolved).toHaveBeenCalled();
   });
@@ -139,14 +155,14 @@ describe('approval card keyboard handling', () => {
   it('leaves the keyboard alone for a chat the user is not working in', async () => {
     composer.focus();
     await show(approval(), false);
-    expect(shadow.activeElement).toBe(composer);
+    expect(document.activeElement).toBe(composer);
   });
 
   it('never pulls the caret out of a half-written message', async () => {
     composer.value = 'also please check the';
     composer.focus();
     await show(approval());
-    expect(shadow.activeElement).toBe(composer);
+    expect(document.activeElement).toBe(composer);
     // The card still marks its default, so Enter in the card means allow once.
     expect(button('Allow once')?.className).toContain('chat-request-default');
   });
@@ -165,22 +181,23 @@ describe('approval card keyboard handling', () => {
       () => new Promise<undefined>((resolve) => (release = () => resolve(undefined))),
     );
     await show(approval());
-    await act(async () => (shadow.activeElement as HTMLButtonElement).click());
+    await act(() => (document.activeElement as HTMLButtonElement).click());
     composer.focus(); // The user clicked away while the IPC call was in flight.
-    await act(async () => {
+    await act(() => {
       release();
     });
     expect(onResolved).not.toHaveBeenCalled();
-    expect(shadow.activeElement).toBe(composer);
+    expect(document.activeElement).toBe(composer);
   });
 
   it('does not re-grab focus when an older request resolves ahead of it', async () => {
-    await show(approval(), false);
+    const request = approval();
+    await show(request, false);
     const decline = button('Decline');
     decline?.focus();
     // The card ahead of this one resolved, so this one becomes the first request.
-    await show(approval(), true);
-    expect(shadow.activeElement).toBe(decline);
+    await show(request, true);
+    expect(document.activeElement).toBe(decline);
   });
 
   it('starts a question on its first answer control instead of a default choice', async () => {
@@ -205,7 +222,7 @@ describe('approval card contents', () => {
     expect(container.querySelector('.chat-request-note')?.textContent).toContain(
       'this checkout’s local settings',
     );
-    await act(async () => button('Always allow')?.click());
+    await act(() => button('Always allow')?.click());
     expect(respond).toHaveBeenCalledWith(remembered, 'accept-always', {});
   });
 

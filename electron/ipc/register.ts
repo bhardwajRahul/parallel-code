@@ -7,8 +7,11 @@ import { IPC } from './channels.js';
 import { DelegationService } from '../mcp/delegation.js';
 import type { TaskAuthorityInput } from '../shared/delegation-types.js';
 import { startAgentChat, getAgentChat, stopAgentChat, releaseChat } from '../chat/sessions.js';
-import { getChatConnection } from '../chat/protocol.js';
-import { isChatDecision, isChatPermissionMode } from '../shared/agent-chat-types.js';
+import {
+  isChatDecision,
+  isChatPermissionMode,
+  validateChatImages,
+} from '../shared/agent-chat-types.js';
 import {
   buildPtySpawnEnv,
   validateCommand,
@@ -564,7 +567,6 @@ export function registerAllHandlers(win: BrowserWindow): void {
       return;
     }
     const chat = getAgentChat(args.agentId);
-    if (args.action === 'connection') return getChatConnection(chat);
     if (args.action === 'setPermissionMode') {
       if (!isChatPermissionMode(args.permissionMode)) throw new Error('Invalid permission mode.');
       if (!chat.setPermissionMode) throw new Error('This agent cannot change its permission mode.');
@@ -580,7 +582,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       assertString(args.text, 'text');
       if (!args.text.trim() || args.text.length > 100_000)
         throw new Error('Enter a message of at most 100,000 characters.');
-      return chat.send(args.text);
+      return chat.send(args.text, validateChatImages(args.images));
     }
     if (args.action === 'interrupt') return chat.interrupt();
     if (args.action === 'respond') {

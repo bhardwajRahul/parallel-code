@@ -1414,31 +1414,34 @@ describe('sendPrompt', () => {
     };
     mockTasks['task-1'].agentIds = ['agent-1'];
     mockTasks['task-1'].mainAgentView = 'chat';
-    const deliver = vi.fn(async () => undefined);
-    await sendPrompt('task-1', 'agent-1', 'Create a mind map', { sendChat: deliver });
-    expect(deliver).toHaveBeenLastCalledWith(expect.stringContaining('canvas_open'));
+    const sentText = () => (mockInvoke.mock.lastCall?.[1] as { text: string }).text;
+    await sendPrompt('task-1', 'agent-1', 'Create a mind map');
+    expect(sentText()).toContain('canvas_open');
     expect(mockTasks['task-1'].lastPrompt).toBe('Create a mind map');
     items.push({ kind: 'user', text: 'Create a mind map' });
-    await sendPrompt('task-1', 'agent-1', 'Continue', { sendChat: deliver });
-    expect(deliver).toHaveBeenLastCalledWith('Continue');
+    await sendPrompt('task-1', 'agent-1', 'Continue');
+    expect(sentText()).toBe('Continue');
   });
 
-  it('delivers through the chat runtime with steps and records only accepted prompts', async () => {
+  it('delivers chat images with steps and records only accepted prompts', async () => {
     mockAgents = { 'agent-1': { status: 'running', def: { id: 'codex' } } };
     mockTasks['task-1'].agentIds = ['agent-1'];
     mockTasks['task-1'].mainAgentView = 'chat';
     mockTasks['task-1'].stepsEnabled = true;
-    const deliver = vi.fn(async () => undefined);
-    deliver.mockRejectedValueOnce(new Error('Disconnected'));
-    await expect(
-      sendPrompt('task-1', 'agent-1', 'hello chat', { sendChat: deliver }),
-    ).rejects.toThrow('Disconnected');
+    const images = [{ name: 'shot.png', mediaType: 'image/png' as const, data: 'AAAA' }];
+    mockInvoke.mockRejectedValueOnce(new Error('Disconnected'));
+    await expect(sendPrompt('task-1', 'agent-1', 'hello chat', { images })).rejects.toThrow(
+      'Disconnected',
+    );
     expect(mockTasks['task-1'].lastPrompt).toBe('');
-    await sendPrompt('task-1', 'agent-1', 'hello chat', { sendChat: deliver });
-    expect(deliver).toHaveBeenLastCalledWith(expect.stringContaining('hello chat'));
-    expect(deliver).toHaveBeenLastCalledWith(expect.stringContaining('For active statuses'));
+    await sendPrompt('task-1', 'agent-1', 'hello chat', { images });
+    expect(mockInvoke).toHaveBeenLastCalledWith(IPC.AgentChat, {
+      action: 'send',
+      agentId: 'agent-1',
+      text: expect.stringContaining('For active statuses'),
+      images,
+    });
     expect(mockTasks['task-1'].lastPrompt).toBe('hello chat');
-    expect(mockInvoke).not.toHaveBeenCalledWith(IPC.AgentChat, expect.anything());
     expect(writePayloads()).toEqual([]);
   });
 

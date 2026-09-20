@@ -1,22 +1,11 @@
-import {
-  For,
-  Show,
-  batch,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  onMount,
-  untrack,
-} from 'solid-js';
-import { reconcile, unwrap } from 'solid-js/store';
+import { For, Show, batch, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
+import { reconcile } from 'solid-js/store';
 import { Channel, invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import {
   type AgentChatState,
   type ChatPermissionMode,
 } from '../../electron/shared/agent-chat-types';
-import { chatMessages, type ChatConnection } from '../../electron/shared/chat-messages';
 import { store, setStore } from '../store/core';
 import { agentChatProvider } from '../store/agent-chat';
 import { saveState } from '../store/persistence';
@@ -25,23 +14,11 @@ import { registerAction, unregisterAction } from '../store/focus';
 import { registerFocusFn, unregisterFocusFn } from '../store/focused-panel';
 import type { Task } from '../store/types';
 import { isLandedTaskState } from '../store/landing';
-import { detectThemeTone } from '../lib/custom-theme';
 import { openFileInEditor, revealItemInDir } from '../lib/shell';
 import { openCanvasDocument } from '../store/canvas';
 import { isMarkdownPath } from '../lib/canvas-tabs';
-import { LOOK_PRESETS } from '../lib/look';
-import type { ChatActions, ChatProps, mountChat } from './chat/CopilotChat.react';
+import { ChatView, type ChatActions, type ChatProps } from './chat/ChatView';
 import './AgentChatView.css';
-
-/** Detach a frame from the store, which mutates the object it adopted whenever
- *  the next one arrives — including item objects, in place, when their ids
- *  match. A shallow copy is therefore not enough: what the renderer holds has
- *  to stay in step with the `messages` built from it at the same moment.
- *  This runs once per frame, not once per render, which is what matters — the
- *  render effect also reruns on every keystroke. */
-function detach(state: AgentChatState): AgentChatState {
-  return structuredClone(state);
-}
 
 export function AgentChatView(props: {
   task: Task;
@@ -55,19 +32,11 @@ export function AgentChatView(props: {
   const agentName = () => (provider() === 'claude' ? 'Claude' : 'Codex');
   const sessionKey = () =>
     provider() === 'claude' ? ('claudeChatSessionId' as const) : ('codexChatThreadId' as const);
-  // This view renders from its own mirror of the conversation rather than from
-  // the store. The store still gets every frame for the status readers outside
-  // this view, and is where a remount picks the conversation back up.
-  const [state, setState] = createSignal(
-    untrack(() => {
-      const stored = store.agents[props.agentId]?.chatState;
-      return stored && detach(unwrap(stored));
-    }),
-  );
+  // Each frame is reconciled into the store by item id, so the view keeps its DOM
+  // (and every open disclosure) while only the changed items re-render. The store
+  // is also where a remount picks the conversation back up.
+  const state = () => store.agents[props.agentId]?.chatState;
   const [error, setError] = createSignal('');
-  const [connection, setConnection] = createSignal<ChatConnection>();
-  const [view, setView] = createSignal<ReturnType<typeof mountChat>>();
-  let host: HTMLDivElement | undefined;
   let actions: ChatActions | undefined;
   let disposed = false;
   const [connecting, setConnecting] = createSignal(false);
@@ -75,7 +44,6 @@ export function AgentChatView(props: {
   channel.onmessage = (next) => {
     if (disposed || !store.agents[props.agentId]) return;
     batch(() => {
-      setState(detach(next));
       const firstPrompt = next.items.find((item) => item.kind === 'user');
       if (
         next.threadId &&
@@ -125,10 +93,7 @@ export function AgentChatView(props: {
         if (disposed) return;
         setStore('tasks', props.task.id, sessionKey(), threadId);
         const cleared = { status: 'starting', items: [], requests: [] } satisfies AgentChatState;
-        batch(() => {
-          setState(detach(cleared));
-          setStore('agents', props.agentId, 'chatState', reconcile(cleared));
-        });
+        setStore('agents', props.agentId, 'chatState', reconcile(cleared));
         void saveState();
       }
       const agent = store.agents[props.agentId];
@@ -149,11 +114,6 @@ export function AgentChatView(props: {
       });
       if (disposed || !store.agents[props.agentId]) return;
       setStore('agents', props.agentId, 'canvasTools', result?.canvasTools === true);
-      const next = await invoke<ChatConnection>(IPC.AgentChat, {
-        action: 'connection',
-        agentId: props.agentId,
-      });
-      if (!disposed) setConnection(next);
     } catch (error) {
       if (!disposed) setError(String(error));
     } finally {
@@ -229,8 +189,8 @@ export function AgentChatView(props: {
       }),
     onReloadModels: () => invoke(IPC.AgentChat, { action: 'models', agentId: props.agentId }),
     onDraft: (text) => setTaskPromptDraft(props.task.id, text),
-    onSend: async (text, deliver) => {
-      await sendPrompt(props.task.id, props.agentId, text, { sendChat: deliver });
+    onSend: async (text, images) => {
+      await sendPrompt(props.task.id, props.agentId, text, { images });
       if (props.task.promptDraft?.trim() === text) setTaskPromptDraft(props.task.id, '');
     },
     onStop: () => invoke(IPC.AgentChat, { action: 'interrupt', agentId: props.agentId }),
@@ -258,25 +218,11 @@ export function AgentChatView(props: {
       unregisterFocusFn(focusKey, focus);
       unregisterAction(actionKey, send);
     });
-    void import('./chat/CopilotChat.react')
-      .then((module) => {
-        if (disposed || !host) return;
-        setView(
-          module.mountChat(
-            host.attachShadow({ mode: 'open' }),
-            untrack(() => props.task),
-          ),
-        );
-      })
-      .catch((error) => {
-        if (!disposed) setError(String(error));
-      });
     void connect();
   });
   onCleanup(() => {
     disposed = true;
     channel.dispose();
-    view()?.dispose();
   });
   createEffect(() => {
     const prefill = props.task.prefillPrompt;
@@ -284,42 +230,6 @@ export function AgentChatView(props: {
       setTaskPromptDraft(props.task.id, prefill);
       clearPrefillPrompt(props.task.id);
     }
-  });
-  // Rebuilt only when the conversation itself changes — not when the draft,
-  // the theme or the landing state re-runs the render effect below.
-  const messages = createMemo(() => {
-    const current = state();
-    return current ? chatMessages(current) : [];
-  });
-  createEffect(() => {
-    const renderer = view();
-    const connected = connection();
-    const current = state();
-    if (!renderer || !connected || !current) return;
-    const custom = store.activeCustomThemeId
-      ? store.customThemes[store.activeCustomThemeId]
-      : undefined;
-    const dark = custom
-      ? detectThemeTone(custom.vars) === 'dark'
-      : LOOK_PRESETS.find((p) => p.id === store.themePreset)?.tone !== 'light';
-    renderer.update({
-      ...callbacks,
-      onReview: props.onReview ? reviewFile : undefined,
-      permissionMode: state()?.permissionMode ?? props.task.chatPermissionMode,
-      permissionsDisabled: props.task.skipPermissions,
-      onPermissionMode: provider() === 'claude' ? selectPermissionMode : undefined,
-      agentName: agentName(),
-      connection: connected,
-      state: current,
-      messages: messages(),
-      draft: props.task.promptDraft ?? '',
-      dark,
-      disabled: connecting() || isLandedTaskState(props.task.landingState),
-      // Read the focus state only while a request is pending. Every tiled task keeps
-      // its chat mounted, so subscribing unconditionally would re-render each one on
-      // any focus change elsewhere in the app.
-      active: current.requests.length > 0 && props.active,
-    });
   });
   const status = () =>
     state()?.status === 'closed'
@@ -438,7 +348,27 @@ export function AgentChatView(props: {
       <Show when={state()?.permissionNote}>
         <p class="codex-chat-note">{state()?.permissionNote}</p>
       </Show>
-      <div class="codex-chat-island" ref={host} />
+      <div class="codex-chat-island">
+        <Show when={state()}>
+          {(current) => (
+            <ChatView
+              {...callbacks}
+              onReview={props.onReview ? reviewFile : undefined}
+              permissionMode={current().permissionMode ?? props.task.chatPermissionMode}
+              permissionsDisabled={props.task.skipPermissions}
+              onPermissionMode={provider() === 'claude' ? selectPermissionMode : undefined}
+              agentName={agentName()}
+              state={current()}
+              memoryScope={props.task}
+              draft={props.task.promptDraft ?? ''}
+              disabled={connecting() || isLandedTaskState(props.task.landingState)}
+              // Only a focused panel with something to answer may take the keyboard;
+              // every tiled task keeps its chat mounted.
+              active={current().requests.length > 0 && props.active}
+            />
+          )}
+        </Show>
+      </div>
       <Show when={error() || state()?.error}>
         <div role="alert" class="codex-chat-error">
           {error() || state()?.error}

@@ -1,8 +1,10 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { readContextUsage } from '../shared/agent-chat-types.js';
+import { unifiedDiff, wholeFileDiff } from '../shared/chat-diffs.js';
 import type {
   ChatDecision,
+  ChatDiff,
   ChatItem,
   ChatImage,
   ChatModel,
@@ -13,6 +15,18 @@ type RecordValue = Record<string, unknown>;
 const record = (value: unknown): RecordValue =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as RecordValue) : {};
 const string = (value: unknown): string => (typeof value === 'string' ? value : '');
+
+/** Codex sends a whole file for an add or delete and a unified diff for an update. */
+function changeDiff(value: unknown): ChatDiff | undefined {
+  const change = record(value);
+  const path = string(change.path);
+  if (!path) return undefined;
+  const text = string(change.diff);
+  const kind = string(record(change.kind).type) || string(change.kind);
+  if (!/^@@ /m.test(text) && (kind === 'add' || kind === 'delete'))
+    return wholeFileDiff(path, text, kind === 'add' ? '+' : '-');
+  return unifiedDiff(path, text);
+}
 
 function chatItem(value: unknown, completed = true): ChatItem | undefined {
   const item = record(value);
@@ -67,9 +81,10 @@ function chatItem(value: unknown, completed = true): ChatItem | undefined {
     return {
       id,
       kind: 'tool',
-      text: `${string(item.command)}\n${string(item.aggregatedOutput)}`,
+      text: string(item.aggregatedOutput),
       activity: {
         type: 'command',
+        command: string(item.command),
         ...(files.length ? { files } : {}),
         label: string(item.command) || 'Shell command',
         status,
@@ -79,15 +94,17 @@ function chatItem(value: unknown, completed = true): ChatItem | undefined {
   }
   if (item.type === 'fileChange') {
     const changes = Array.isArray(item.changes) ? item.changes : [];
+    const diffs = changes.flatMap((change) => changeDiff(change) ?? []);
     return {
       id,
       kind: 'tool',
-      text: changes.map((c) => `${string(record(c).path)}\n${string(record(c).diff)}`).join('\n'),
+      text: '',
       activity: {
         type: 'files',
-        files: changes.map((change) => string(record(change).path)).filter(Boolean),
-        label: changes.length === 1 ? string(record(changes[0]).path) : `${changes.length} files`,
+        files: diffs.map((diff) => diff.path),
+        label: diffs.length === 1 ? diffs[0].path : `${diffs.length} files`,
         status,
+        diffs,
       },
     };
   }

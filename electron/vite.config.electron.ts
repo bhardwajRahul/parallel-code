@@ -1,7 +1,6 @@
 import path from 'path';
 import { defineConfig, type Plugin } from 'vite';
 import solid from 'vite-plugin-solid';
-import react from '@vitejs/plugin-react';
 
 const rootDir = path.resolve(process.cwd());
 const parentDir = path.resolve(rootDir, '..');
@@ -27,7 +26,7 @@ export const RENDERER_CSP = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: http: https:",
   "font-src 'self' data:",
-  "connect-src 'self' parallel-chat:",
+  "connect-src 'self'",
   "worker-src 'self' blob:",
   "media-src 'self' blob:",
   "object-src 'none'",
@@ -53,11 +52,7 @@ function rendererCspPlugin(): Plugin {
 
 export default defineConfig({
   base: './',
-  plugins: [
-    solid({ exclude: /\.react\.tsx$/ }),
-    react({ include: /\.react\.tsx$/ }),
-    rendererCspPlugin(),
-  ],
+  plugins: [solid(), rendererCspPlugin()],
   clearScreen: false,
   server: {
     port: 1421,

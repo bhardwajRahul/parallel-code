@@ -1,124 +1,105 @@
-:host {
-  display: block;
-  height: 100%;
-  min-height: 0;
-}
-.chat-root,
 .chat-ui {
   container-type: size;
   height: 100%;
   min-height: 0;
-}
-/* CopilotKit resets these tokens on every nested data-copilotkit boundary. */
-.chat-ui,
-.chat-ui [data-copilotkit] {
-  --background: var(--task-panel-bg, var(--bg-elevated));
-  --foreground: var(--fg);
-  --card: var(--chat-surface);
-  --card-foreground: var(--fg);
-  --popover: var(--chat-surface);
-  --popover-foreground: var(--fg);
-  --primary: var(--chat-accent);
-  --primary-foreground: var(--accent-text);
-  --secondary: var(--chat-surface);
-  --secondary-foreground: var(--fg);
-  --muted: var(--chat-surface);
-  --muted-foreground: var(--fg-muted);
-  --accent: var(--bg-hover);
-  --accent-foreground: var(--fg);
-  --border: var(--chat-border);
-  --input: var(--chat-border);
-  --ring: var(--border-focus);
-  --destructive: var(--error);
-}
-.chat-ui {
-  --cpk-font-sans: var(--font-ui);
-  --cpk-font-mono: var(--font-mono);
-  --cpk-default-font-family: var(--font-ui);
-  --cpk-default-mono-font-family: var(--font-mono);
-  --cpk-text-xs: 11px;
-  --cpk-text-sm: 12px;
-  --cpk-text-base: 13px;
-  --cpk-text-lg: 15px;
-  --cpk-text-xl: 18px;
-  --cpk-text-2xl: 20px;
-  --cpk-text-3xl: 22px;
   display: flex;
   flex-direction: column;
   color: var(--fg);
-  background: var(--background);
+  background: var(--task-panel-bg, var(--bg-elevated));
   font: 13px/1.5 var(--font-ui);
-  color-scheme: light;
 }
-.chat-ui.dark {
-  color-scheme: dark;
-}
-.chat-view {
+.chat-conversation {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
 }
 
 /* Conversation text carries the meaning, so it reads a step larger and looser
    than the surrounding chrome, which stays at 11–13px. */
-.chat-ui [class*='prose'] {
+.chat-markdown {
   font-size: 14px;
   line-height: 1.65;
   color: var(--fg);
-  --tw-prose-body: var(--fg);
-  --tw-prose-headings: var(--fg);
-  --tw-prose-bold: var(--fg);
-  --tw-prose-links: var(--link);
-  --tw-prose-code: var(--fg);
-  --tw-prose-pre-bg: var(--chat-surface);
 }
-.chat-ui [class*='prose'] > :is(p, ul, ol, pre, blockquote) {
+.chat-markdown > :is(p, ul, ol, pre, blockquote) {
   margin-block: 10px;
 }
-.chat-ui [class*='prose'] :is(h1, h2, h3, h4, h5, h6) {
+.chat-markdown :is(h1, h2, h3, h4, h5, h6) {
   margin-block: 18px 6px;
   font-weight: 600;
   line-height: 1.35;
 }
-.chat-ui [class*='prose'] h1 {
+.chat-markdown h1 {
   font-size: 17px;
 }
-.chat-ui [class*='prose'] h2 {
+.chat-markdown h2 {
   font-size: 15px;
 }
-.chat-ui [class*='prose'] :is(h3, h4, h5, h6) {
+.chat-markdown :is(h3, h4, h5, h6) {
   font-size: 14px;
 }
-.chat-ui [class*='prose'] > :first-child {
+.chat-markdown > :first-child {
   margin-top: 0;
 }
-.chat-ui [class*='prose'] > :last-child {
+.chat-markdown > :last-child {
   margin-bottom: 0;
 }
-.chat-ui [class*='prose'] :not(pre) > code {
+.chat-markdown :not(pre) > code {
   background: var(--chat-surface-strong);
-  border-radius: var(--radius-xs);
-  padding: 1px 4px;
   font-size: 0.92em;
 }
-/* Tailwind prose wraps inline code in literal backticks; the surface says it. */
-.chat-ui [class*='prose'] :not(pre) > code::before,
-.chat-ui [class*='prose'] :not(pre) > code::after {
-  content: none;
+.chat-markdown pre {
+  border: 1px solid var(--chat-border);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.chat-markdown a {
+  color: var(--link);
 }
 
-/* A hairline above each user turn: without it a long log has no scannable
-   boundary between "what I asked" and "what the agent did". */
-.chat-ui .copilotKitUserMessage {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border-subtle);
-}
-.chat-ui .copilotKitUserMessage:first-child {
-  margin-top: 0;
-  border-top: none;
-}
-.chat-ui .copilotKitUserMessage [class*='prose'] {
+/* The user's own words sit in a bubble on the right, as typed: line breaks kept,
+   no markdown, so a pasted log reads exactly as it was sent. */
+.chat-user-message {
+  width: fit-content;
+  max-width: 85%;
+  margin: 4px 0 0 auto;
+  padding: 8px 12px;
+  background: var(--chat-surface);
+  border: 1px solid var(--chat-border);
   border-radius: var(--radius-lg);
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.chat-message-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.chat-answer .chat-message-actions {
+  justify-content: flex-start;
+}
+:is(.chat-user-turn, .chat-answer):is(:hover, :focus-within) .chat-message-actions {
+  opacity: 1;
+}
+.chat-ui .chat-copy {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.chat-ui .chat-copy[data-copied='true']:enabled {
+  color: var(--success);
 }
 
 .chat-ui textarea {
@@ -128,20 +109,12 @@
 .chat-ui textarea::placeholder {
   color: var(--fg-muted);
 }
-.chat-ui [data-testid='copilot-send-button'] {
+.chat-send {
   background: var(--chat-accent);
   color: var(--accent-text);
 }
-.chat-ui [data-testid='copilot-send-button']:enabled:hover {
+.chat-send:enabled:hover {
   background: var(--accent-hover);
-}
-.chat-ui [data-testid='copilot-scroll-to-bottom'] {
-  background: var(--chat-surface);
-  border-color: var(--chat-border);
-  color: var(--fg);
-}
-.chat-ui [data-testid='copilot-scroll-to-bottom'] svg {
-  color: inherit;
 }
 .chat-ui button:focus-visible,
 .chat-ui summary:focus-visible,
@@ -211,6 +184,118 @@
   white-space: pre-wrap;
   border-radius: var(--radius-sm);
   background: var(--chat-surface);
+}
+
+/* A command reads like the terminal it ran in: the prompt line, then output. */
+.chat-command-line {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* Diffs: the change itself is the content, so each file gets a framed block with
+   full-width line colour. Signs and numbers are drawn, not text, so copying a
+   diff yields plain code. */
+.chat-diff {
+  margin: 0 8px 8px 10px;
+  border: 1px solid var(--chat-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.chat-diff-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px 3px 10px;
+  background: var(--chat-surface);
+  border-bottom: 1px solid var(--chat-border);
+  font-size: 11px;
+}
+.chat-ui .chat-diff-path {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font-family: var(--font-mono);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.chat-diff-header button:not(.chat-diff-path),
+.chat-diff-more {
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.chat-diff-more {
+  margin: 2px 4px 4px;
+}
+.chat-diff-stat {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.chat-diff-added {
+  color: var(--success);
+}
+.chat-diff-removed {
+  color: var(--error);
+}
+.chat-tool .chat-diff-body {
+  display: grid;
+  grid-template-columns: minmax(100%, max-content);
+  margin: 0;
+  padding: 4px 0;
+  max-height: 480px;
+  border-radius: 0;
+  background: transparent;
+  white-space: pre;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.chat-diff-line[data-kind='add'] {
+  background: var(--diff-add-bg);
+}
+.chat-diff-line[data-kind='del'] {
+  background: var(--diff-remove-bg);
+}
+.chat-diff-line[data-kind='hunk'],
+.chat-diff-line[data-kind='note'] {
+  color: var(--fg-muted);
+}
+.chat-diff-number {
+  display: inline-block;
+  width: 5ch;
+  padding-right: 1ch;
+  text-align: right;
+  color: var(--fg-muted);
+  opacity: 0.7;
+  user-select: none;
+}
+.chat-diff-text {
+  padding-right: 12px;
+}
+.chat-diff-text::before {
+  content: ' ';
+  display: inline-block;
+  width: 2.5ch;
+  text-align: center;
+}
+.chat-diff-line[data-kind='add'] .chat-diff-text::before {
+  content: '+';
+  color: var(--success);
+}
+.chat-diff-line[data-kind='del'] .chat-diff-text::before {
+  content: '−';
+  color: var(--error);
+}
+.chat-tool summary .chat-diff-stat {
+  margin-left: auto;
 }
 
 .chat-requests {
@@ -335,9 +420,6 @@
   /* The hint row below the composer carries the bottom gap. */
   padding: 8px 12px 6px;
 }
-.chat-ui [data-testid='copilot-input-overlay'] {
-  background: var(--background);
-}
 .chat-composer {
   display: flex;
   flex-direction: column;
@@ -364,10 +446,11 @@
   padding: 6px 8px;
   line-height: 22px;
 }
-.chat-composer [data-testid='copilot-send-button'] {
-  min-width: 32px;
+.chat-composer :is(.chat-send, .chat-stop) {
+  width: 32px;
   height: 32px;
   margin: 1px;
+  padding: 0;
   flex: none;
 }
 /* Worth reading only while the user is about to type into an empty composer, but
@@ -390,35 +473,12 @@
   opacity: 1;
 }
 @media (prefers-reduced-motion: reduce) {
-  .chat-composer-hint {
+  .chat-composer-hint,
+  .chat-message-actions {
     transition: none;
   }
 }
 
-.chat-ui [data-streamdown='code-block'] {
-  border: 1px solid var(--chat-border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-.chat-ui [data-streamdown='code-block-header'],
-.chat-ui [data-streamdown='code-block-body'] {
-  background: var(--chat-surface) !important;
-}
-.chat-ui [data-streamdown='code-block-header'] {
-  border-bottom: 1px solid var(--chat-border);
-}
-.chat-ui [data-streamdown='code-block-body'] {
-  padding: 12px 14px;
-  overflow-x: auto;
-  font-size: 12px;
-  line-height: 1.55;
-}
-.chat-ui.dark [data-streamdown='code-block-body'] span[style] {
-  color: var(--shiki-dark, var(--fg)) !important;
-}
-.chat-ui [data-streamdown='table-wrapper'] {
-  overflow-x: auto;
-}
 .chat-ui table {
   border-collapse: collapse;
   width: 100%;
@@ -498,17 +558,17 @@
 .chat-user-turn:first-child {
   margin-top: 0;
 }
+/* Dimmed until the agent confirms it, so a message that fails is not mistaken
+   for one the agent received. */
+.chat-user-sending .chat-user-message {
+  opacity: 0.6;
+}
 .chat-speaker {
   display: block;
   text-align: right;
   color: var(--fg-muted);
   font-size: 11px;
   font-weight: 600;
-}
-.chat-user-turn .copilotKitUserMessage {
-  margin-top: 4px;
-  padding-top: 0;
-  border-top: 0;
 }
 .chat-ui button {
   font: inherit;
@@ -675,8 +735,6 @@
   border: 0;
 }
 .chat-stop {
-  flex: none;
-  padding: 6px;
   border: 1px solid var(--chat-border);
   border-radius: var(--radius-sm);
   background: transparent;

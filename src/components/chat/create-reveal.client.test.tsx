@@ -1,22 +1,33 @@
-import { act, createElement } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { render } from 'solid-js/web';
+import { createSignal } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useReveal } from './use-reveal.react';
+import { createReveal } from './create-reveal';
 
 let container: HTMLDivElement;
-let root: Root;
+let dispose: (() => void) | undefined;
+let setInput: (next: { text: string; running: boolean }) => void;
 let motion: MediaQueryList;
 let now: number;
 let frameId: number;
 const frames = new Map<number, FrameRequestCallback>();
-function Text({ text, running }: { text: string; running: boolean }) {
-  return createElement('span', null, useReveal(text, running));
-}
+const act = async (action: () => unknown) => {
+  await action();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+};
 async function update(text: string, running: boolean) {
-  await act(async () => root.render(createElement(Text, { text, running })));
+  if (dispose) return act(() => setInput({ text, running }));
+  const [input, set] = createSignal({ text, running });
+  setInput = set;
+  dispose = render(() => {
+    const shown = createReveal(
+      () => input().text,
+      () => input().running,
+    );
+    return <span>{shown()}</span>;
+  }, container);
+  await act(() => undefined);
 }
 beforeEach(() => {
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   now = 0;
   frameId = 0;
   frames.clear();
@@ -29,10 +40,10 @@ beforeEach(() => {
   motion = matchMedia('(prefers-reduced-motion: reduce)');
   vi.stubGlobal('matchMedia', () => motion);
   container = document.createElement('div');
-  root = createRoot(container);
+  dispose = undefined;
 });
-afterEach(async () => {
-  await act(async () => root.unmount());
+afterEach(() => {
+  dispose?.();
   expect(frames.size).toBe(0);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -43,7 +54,7 @@ describe('smooth reveal', () => {
     const text = 'Start ' + '🙂'.repeat(100);
     await update(text, true);
     expect(container.textContent).toBe('Start ');
-    await act(async () => {
+    await act(() => {
       now = 50;
       const pending = [...frames.values()];
       frames.clear();
