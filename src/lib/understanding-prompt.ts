@@ -43,7 +43,7 @@ CARD is {"label":"SHORT UPPERCASE LABEL","title":"one short claim","body":"short
 Required on every card: label, title, body, tone. Optional: whyItMatters, ${suggestQuestions ? 'questions, ' : ''}form, diagram, comparison, refs.
 title states the card's takeaway as one short, complete claim of at most about twelve words, not a topic: "Each task gets its own working copy", not "Worktree isolation". Reading only the titles in order must give the whole argument; the body is the evidence for the claim.
 Never exceed these character caps: label ${caps.label}, title ${caps.title}, body ${caps.body}, whyItMatters ${caps.whyItMatters}, text diagram source ${caps.textDiagram}, mermaid diagram source ${caps.mermaidDiagram}, comparison side label ${caps.comparisonLabel}, comparison side text ${caps.comparisonText}. At most ${caps.refs} refs per card. Output that exceeds a cap is rejected outright.
-${suggestQuestions ? `questions is optional: suggest 0-${caps.questions} short, specific questions of at most ${caps.question} characters each that explore a real boundary, trade-off or assumption tied to this card. Do not repeat answered facts or ask generic questions. Omit questions when nothing useful remains to ask.\n` : ''}tone is exactly one of: "neutral" (plain explanation), "important" (the reader must not miss this), "risk" (something can break, cost time or lose data), "uncertainty" (genuinely unknown or merely assumed), "mechanical" (dry plumbing detail, low attention).
+${suggestQuestions ? `questions is optional: suggest 0-${caps.questions} short, specific questions of at most ${caps.question} characters each that explore a real boundary, trade-off or assumption tied to this card. Do not repeat answered facts or ask generic questions. Omit questions when nothing useful remains to ask.\n` : ''}tone is exactly one of: "neutral" (plain explanation), "important" (the reader must not miss this), "risk" (something can break, cost time or lose data), "uncertainty" (genuinely unknown or merely assumed), "mechanical" (dry plumbing detail, low attention; keep its body to one or two sentences).
 form gives different ideas different shapes. Omit it for an ordinary card; otherwise it is exactly one of:
 - "takeaway": one claim that stands on its own; the body is a single supporting sentence.
 - "comparison": before/after or two choices; requires "comparison" with exactly two sides, each a short label and the consequence of that side. The body is a one- or two-sentence caption.
@@ -78,6 +78,7 @@ function tourShapeInstructions(kind: UnderstandingTourKind): string {
 "cards" is the rest of the spine, read one card at a time. Prefer 3 to 7 cards (hard maximum ${TOUR_CARD_LIMITS.maxCards}); use fewer for a small subject.
 When one concrete scenario naturally connects the material, introduce it early (for example "two tasks edit the same file") and reuse it across the relevant cards. Otherwise explain each idea directly; do not force a running example or invent one.
 The last card is ${CLOSING_CARD[kind]}
+Place "mechanical" cards after the others, just before the bottom line, so the cards that matter come first.
 The whole tour must be readable in 30 seconds to 2 minutes.`;
 }
 
