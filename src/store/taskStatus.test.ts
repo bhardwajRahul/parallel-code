@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { expectDefined, type MockStoreHarness } from './test-helpers';
+import { READY_AGENT_FRAME_FIXTURES } from '../../electron/mcp/agent-frame-fixtures';
 
 // Mock the SolidJS store before importing the module under test.
 let mockAutoTrustFolders = false;
@@ -876,6 +877,111 @@ describe('terminal redraw activity', () => {
 
     expect(getTaskDotStatus('task-1')).toBe('busy');
   });
+
+  describe('agent prompt above a footer', () => {
+    // Claude's input box and Gemini's composer are not the last line, and
+    // Gemini keeps its composer visible while working.
+    const claudePrompt = [
+      '────────────────────────────────',
+      '❯ ',
+      '────────────────────────────────',
+      '⏵⏵ accept edits on (shift+tab to cycle)',
+    ].join('\r\n');
+    const geminiPrompt = 'workspace /repo branch main\r\n> Type your message or @path/to/file';
+
+    it.each([
+      ['Claude', claudePrompt],
+      ['Gemini', geminiPrompt],
+    ])('goes idle shortly after a quiet %s prompt', (_name, prompt) => {
+      markAgentSpawned('agent-1');
+      markAgentOutput('agent-1', encode('\x1b[H\x1b[2J' + prompt), 'task-1');
+      expect(isAgentIdle('agent-1')).toBe(false);
+
+      vi.advanceTimersByTime(2_000);
+      expect(isAgentIdle('agent-1')).toBe(true);
+    });
+
+    it.each(READY_AGENT_FRAME_FIXTURES.map((f) => [f.name, f.frame]))(
+      'goes idle shortly after the recorded frame: %s',
+      (_name, frame) => {
+        markAgentSpawned('agent-1');
+        markAgentOutput('agent-1', encode('\x1b[H\x1b[2J' + frame), 'task-1');
+
+        vi.advanceTimersByTime(2_000);
+        expect(isAgentIdle('agent-1')).toBe(true);
+      },
+    );
+
+    // Gemini and Copilot show a cancel hint beside a visible composer while working.
+    it.each([
+      ['Gemini', '⠋ Thinking… (esc to cancel, 5s)\r\n' + geminiPrompt],
+      ['Copilot', '◎ Thinking (Esc to cancel)\r\n❯ \r\nMode: interactive | Claude Sonnet 4.5'],
+    ])('keeps the long timeout while a %s cancel hint is visible', (_name, frame) => {
+      markAgentSpawned('agent-1');
+      markAgentOutput('agent-1', encode('\x1b[H\x1b[2J' + frame), 'task-1');
+
+      vi.advanceTimersByTime(2_000);
+      expect(isAgentIdle('agent-1')).toBe(false);
+
+      vi.advanceTimersByTime(13_000);
+      expect(isAgentIdle('agent-1')).toBe(true);
+    });
+
+    it('stays busy while spinner output keeps arriving with the prompt visible', () => {
+      markAgentSpawned('agent-1');
+      for (let i = 0; i < 10; i += 1) {
+        markAgentOutput('agent-1', encode('\x1b[H\x1b[2J⠋ Thinking…\r\n' + geminiPrompt), 'task-1');
+        vi.advanceTimersByTime(500);
+      }
+
+      expect(isAgentIdle('agent-1')).toBe(false);
+    });
+
+    it('returns an already-idle agent to idle quickly when its prompt redraws off the last line', () => {
+      markAgentSpawned('agent-1');
+      markAgentOutput('agent-1', encode('\x1b[H\x1b[2J' + claudePrompt), 'task-1');
+      vi.advanceTimersByTime(2_000);
+      expect(isAgentIdle('agent-1')).toBe(true);
+
+      // A resize or tab switch reprints the same prompt (not on the last line).
+      markAgentOutput('agent-1', encode('\x1b[H\x1b[2J' + claudePrompt), 'task-1');
+      expect(isAgentIdle('agent-1')).toBe(false);
+
+      vi.advanceTimersByTime(2_000);
+      expect(isAgentIdle('agent-1')).toBe(true);
+    });
+
+    it('restores the long timeout when work follows a visible prompt', () => {
+      markAgentSpawned('agent-1');
+      markAgentOutput('agent-1', encode('\x1b[H\x1b[2J' + claudePrompt), 'task-1');
+      // Inside the reset throttle window.
+      vi.advanceTimersByTime(100);
+      markAgentOutput('agent-1', encode('\r\nRunning tests...'), 'task-1');
+
+      vi.advanceTimersByTime(5_000);
+      expect(isAgentIdle('agent-1')).toBe(false);
+    });
+  });
+
+  describe('shell terminals are not agent composers', () => {
+    // A shell running Vim or a Starship-themed prompt can show an
+    // AGENT_READY_TAIL_PATTERNS match (e.g. "-- INSERT --") on a line that
+    // isn't the terminal's last line. That must not arm the 2s agent-prompt
+    // confirmation timer meant for Claude/Gemini composers — a shell that
+    // is genuinely busy (editing a file) should keep the normal 15s timeout.
+    it('keeps a shell active for the full idle timeout when a prompt-like line is not the tail', () => {
+      setMockTask('task-1', { agentIds: [], shellAgentIds: ['shell-1'] });
+
+      markAgentOutput('shell-1', encode('-- INSERT --\r\nsome buffer text'), 'task-1');
+      expect(getTaskAttentionState('task-1')).toBe('shell_busy');
+
+      vi.advanceTimersByTime(2_000);
+      expect(getTaskAttentionState('task-1')).toBe('shell_busy');
+
+      vi.advanceTimersByTime(13_000);
+      expect(getTaskAttentionState('task-1')).toBe('idle');
+    });
+  });
 });
 
 describe('task attention state', () => {
@@ -1401,6 +1507,17 @@ describe('hook-reported agent status', () => {
     expect(isAgentAskingQuestion('agent-1')).toBe(true);
     expect(getTaskAttentionState('task-1')).toBe('active');
     expect(getTaskOpenQuestion('task-1')).toBeNull();
+  });
+
+  it('lets hook state decide whether the agent is idle', () => {
+    hook('agent-1', 'working');
+    markAgentOutput('agent-1', new TextEncoder().encode('\r\n❯\r\nfooter'), 'task-1');
+    vi.advanceTimersByTime(2_000);
+    expect(isAgentIdle('agent-1')).toBe(false);
+
+    markAgentOutput('agent-1', new TextEncoder().encode('Building project...'), 'task-1');
+    hook('agent-1', 'done', 'Stop');
+    expect(isAgentIdle('agent-1')).toBe(true);
   });
 
   it('drops to idle on Stop while the prompt is still being redrawn', () => {

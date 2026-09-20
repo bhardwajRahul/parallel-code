@@ -53,6 +53,7 @@ interface AgentTrackingState {
   lastDataAt?: number;
   lastIdleResetAt?: number;
   idleTimer?: ReturnType<typeof setTimeout>;
+  idleConfirmPending?: boolean;
   outputTailBuffer: string;
   decoder: TextDecoder;
   lastAnalysisAt?: number;
@@ -558,6 +559,15 @@ const [activeAgents, setActiveAgents] = createSignal<Set<string>>(new Set());
 // AI agents routinely go silent for 10-30s during normal work (thinking,
 // API calls, tool use), so this needs to be long enough to cover those pauses.
 const IDLE_TIMEOUT_MS = 15_000;
+// A visible agent prompt that is not the last line (Claude's input box, Gemini's
+// composer) can stay on screen mid-turn. Working agents keep repainting spinners
+// and elapsed timers (at least once per second), so a prompt followed by this
+// much silence is idle. Mirrors herdr's pending-idle confirmation.
+const PROMPT_IDLE_CONFIRM_MS = 2_000;
+// Gemini and Copilot keep their composer visible beside this hint while working
+// (herdr's working marker for both). Checked per chunk, not in the shared busy
+// patterns, so a hint left in the tail cannot stall auto-send after the turn.
+const WORKING_CANCEL_HINT_PATTERN = /\besc\s+(?:again\s+)?(?:to\s+)?cancel\b/i;
 // Throttle reactive updates while already active.
 const THROTTLE_MS = 1_000;
 
@@ -594,14 +604,16 @@ function removeFromActive(agentId: string): void {
   });
 }
 
-function resetIdleTimer(agentId: string): void {
+function resetIdleTimer(agentId: string, timeoutMs = IDLE_TIMEOUT_MS): void {
   const state = getAgentState(agentId);
   state.lastIdleResetAt = Date.now();
+  state.idleConfirmPending = timeoutMs < IDLE_TIMEOUT_MS;
   if (state.idleTimer !== undefined) clearTimeout(state.idleTimer);
   state.idleTimer = setTimeout(() => {
     removeFromActive(agentId);
     state.idleTimer = undefined;
-  }, IDLE_TIMEOUT_MS);
+    state.idleConfirmPending = false;
+  }, timeoutMs);
 }
 
 function cancelPendingAnalysis(state: AgentTrackingState): void {
@@ -872,10 +884,21 @@ export function markAgentOutput(agentId: string, data: Uint8Array, taskId?: stri
     return;
   }
 
+  // Plain shells aren't agent composers — a Vim "-- INSERT --" status line or
+  // a Starship "❯" prompt can match AGENT_READY_TAIL_PATTERNS without the
+  // shell being between turns, so they keep the normal 15s idle timeout.
+  const isShellTerminal = !!(taskId && store.tasks[taskId]?.shellAgentIds.includes(agentId));
+  if (readiness.ready && !isShellTerminal && !WORKING_CANCEL_HINT_PATTERN.test(composerOutput)) {
+    addToActive(agentId);
+    resetIdleTimer(agentId, PROMPT_IDLE_CONFIRM_MS);
+    return;
+  }
+
   // Non-prompt output — agent is producing real work.
   if (activeAgents().has(agentId)) {
     const lastReset = state.lastIdleResetAt ?? 0;
-    if (now - lastReset < THROTTLE_MS) return;
+    // A pending prompt confirmation must not survive real work.
+    if (now - lastReset < THROTTLE_MS && !state.idleConfirmPending) return;
     resetIdleTimer(agentId);
     return;
   }
@@ -889,12 +912,13 @@ export function getAgentOutputTail(agentId: string): string {
   return agentStates.get(agentId)?.outputTailBuffer ?? '';
 }
 
-/** True when the agent is NOT producing output (e.g. sitting at a prompt). */
+/** True when the agent is not mid-turn (e.g. sitting at a prompt). Hook state
+ *  wins over output heuristics, as in the task status. */
 export function isAgentIdle(agentId: string): boolean {
   const agent = store.agents[agentId];
   if (agent && isAgentChat(store.tasks[agent.taskId], agentId))
     return agent.chatState?.status === 'ready';
-  return !activeAgents().has(agentId);
+  return !isAgentWorking(agentId, activeAgents());
 }
 
 /** Lightweight busy marker — adds to active set + resets idle timer.

@@ -20,6 +20,8 @@ module.exports = {
         pathNot: [
           '^electron/ipc/channels\\.ts',
           '^electron/mcp/prompt-detect\\.ts',
+          // recorded agent frames (pure data) shared with renderer status tests
+          '^electron/mcp/agent-frame-fixtures\\.ts',
           '^electron/mcp/validation\\.ts',
           '^electron/agent-hooks/status\\.ts',
           '^electron/shared/',
