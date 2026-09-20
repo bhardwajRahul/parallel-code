@@ -58,10 +58,9 @@ export function TourCard(props: { card: TourCardData; onOpenRef?: (ref: TourRef)
       class="understanding-card"
       data-tone={tone()}
       aria-label={props.card.title}
-      style={{
-        '--tour-tone': TONE_COLOR[tone()],
-        color: tone() === 'mechanical' ? theme.fgMuted : theme.fg,
-      }}
+      // Every tone reads at full contrast; a mechanical card's low priority
+      // shows in its muted label and plain rule, not in dimmed prose.
+      style={{ '--tour-tone': TONE_COLOR[tone()], color: theme.fg }}
     >
       <p
         class="understanding-card-label"

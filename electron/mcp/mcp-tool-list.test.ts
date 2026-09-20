@@ -181,6 +181,7 @@ it('describes tour_publish with the caps the validator enforces', () => {
   );
   expect(tool?.description).toContain(`at most ${AGENT_TOUR_LIMITS.context} characters`);
   expect(tool?.description).toContain(TOUR_TONES.join(', '));
+  expect(tool?.description).toContain('keep mechanical cards to one or two sentences');
   expect(tool?.description).toContain('as a tour');
   expect(tool?.description).toContain('follow-up');
 });

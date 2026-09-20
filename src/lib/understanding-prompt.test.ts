@@ -81,6 +81,13 @@ describe('buildPlanTourPrompt', () => {
     expect(prompt).toContain('bottom line');
   });
 
+  it('keeps mechanical cards short and places them before the bottom line', () => {
+    expect(prompt).toContain('keep its body to one or two sentences');
+    expect(prompt).toContain(
+      'Place "mechanical" cards after the others, just before the bottom line',
+    );
+  });
+
   it('adds plan-specific guidance', () => {
     expect(prompt).toContain('is this direction sound?');
     expect(prompt).toContain('Implementation checklists');
