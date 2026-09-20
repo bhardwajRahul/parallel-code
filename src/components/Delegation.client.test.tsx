@@ -56,6 +56,7 @@ beforeEach(() => {
     def: store.availableAgents[0],
     resumed: false,
     status: 'running',
+    capabilities: { profile: 'ordinary', canCreate: true, peers: true },
     generation: 0,
     exitCode: null,
     signal: null,
@@ -75,17 +76,21 @@ afterEach(() => {
   setDelegationStates('parent', { attempts: [], messages: [], paused: false });
 });
 
-it('hides inactive collaboration and offers tools restart when coordinating and enabled', () => {
+it('offers tools restart after enabling MCP for a session without tools', () => {
   setStore('tasks', 'parent', 'agentSessionIds', { agent: 'conversation' });
   dispose = render(() => <DelegationPanel task={store.tasks.parent} />, host);
   expect(host.querySelector('[aria-label="Task collaboration"]')).toBeNull();
-  setStore('tasks', 'parent', 'delegationPaused', true);
+  setStore('agents', 'agent', 'capabilities', undefined);
   expect(button('Restart and resume Claude')).toBeDefined();
   setStore('mcpOrchestrationEnabled', false);
   expect(button('Restart and resume Claude')).toBeUndefined();
   setStore('mcpOrchestrationEnabled', true);
   expect(button('Restart and resume Claude')).toBeDefined();
-  setStore('tasks', 'parent', 'delegationPaused', false);
+  setStore('agents', 'agent', 'capabilities', {
+    profile: 'ordinary',
+    canCreate: true,
+    peers: true,
+  });
   setStore('tasks', 'parent', 'delegationParent', true);
   expect(host.querySelector('[aria-label="Task collaboration"]')).toBeNull();
 });

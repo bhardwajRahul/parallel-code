@@ -188,14 +188,20 @@ function assertTaskCanReceiveInput(taskId: string, agentId: string): void {
   }
 }
 
-async function writeToAgentWhenReady(taskId: string, agentId: string, data: string): Promise<void> {
+async function writeToAgentWhenReady(
+  taskId: string,
+  agentId: string,
+  data: string,
+  signal?: AbortSignal,
+): Promise<void> {
   const deadline = Date.now() + AGENT_WRITE_READY_TIMEOUT_MS;
   let lastErr: unknown;
 
   while (Date.now() <= deadline) {
+    signal?.throwIfAborted();
     assertTaskCanReceiveInput(taskId, agentId);
     try {
-      await invoke(IPC.WriteToAgent, { agentId, data });
+      await invoke(IPC.WriteToAgent, { agentId, data, ...(signal ? { automation: true } : {}) });
       return;
     } catch (err) {
       lastErr = err;
@@ -668,8 +674,11 @@ export async function sendPrompt(
     appPrompt?: boolean;
     /** Chat delivery, so the chat view streams the prompt through its own runtime. */
     sendChat?: (text: string) => Promise<void>;
+    /** Cancel app-initiated delivery when its authorization changes. */
+    signal?: AbortSignal;
   } = {},
 ): Promise<void> {
+  options.signal?.throwIfAborted();
   const task = store.tasks[taskId];
   assertTaskCanReceiveInput(taskId, agentId);
   const promptedAgentIds = task?.promptedAgentIds ?? [];
@@ -704,7 +713,7 @@ export async function sendPrompt(
   // the PromptInput textarea, the xterm.js terminal loses DOM focus.  For agents
   // that enable focus tracking (\x1b[?1004h), xterm.js sends \x1b[O (Focus Out)
   // to the PTY, which may suspend readline input processing; \x1b[I re-activates it.
-  await writeToAgentWhenReady(taskId, agentId, '\x1b[I');
+  await writeToAgentWhenReady(taskId, agentId, '\x1b[I', options.signal);
   // MCP server instructions are not always surfaced by the CLI. Include the
   // canvas contract with the first explicit mention of a session, including resumes.
   // Check availability after waiting for startup to finish.
@@ -722,9 +731,10 @@ export async function sendPrompt(
     taskId,
     agentId,
     useBracketed ? `${BRACKETED_PASTE_START}${effectiveText}${BRACKETED_PASTE_END}` : effectiveText,
+    options.signal,
   );
   await new Promise((r) => setTimeout(r, pasteDelayMs(effectiveText)));
-  await writeToAgentWhenReady(taskId, agentId, '\r');
+  await writeToAgentWhenReady(taskId, agentId, '\r', options.signal);
   // App sends bypass xterm's onData handler, which normally clears this flag on Enter.
   if (agentId === task?.agentIds[0]) setTaskTerminalInputPending(taskId, false);
   // Recorded only after delivery, so a failed write does not silence the guidance.
@@ -1279,18 +1289,20 @@ export function initMCPListeners(): () => void {
         hadTask: hasCoordinatorTask,
         userEdited: existing?.userEdited ?? false,
       });
-      const hasNewNotifications =
+      const overlapsHeldNotification =
         existing?.userEdited &&
-        evt.notificationIds.length > (existing.notificationIds?.length ?? 0);
-      if (hasNewNotifications && existing) {
-        // New completions arrived while the user was editing — preserve their edit,
-        // just update the batch metadata and show a hidden-count badge.
+        evt.notificationIds.some((id) => existing.notificationIds.includes(id));
+      if (overlapsHeldNotification && existing) {
+        // Re-staging held completions must not re-enable automatic delivery. Keep
+        // the draft and count only newly added completions, including mixed batches.
         setStore('tasks', evt.coordinatorTaskId, 'stagedNotification', {
           ...existing,
           batchId: evt.batchId,
           notificationIds: evt.notificationIds,
           autoFireAt: evt.autoFireAt,
-          hiddenCompletionCount: (existing.hiddenCompletionCount ?? 0) + 1,
+          hiddenCompletionCount:
+            (existing.hiddenCompletionCount ?? 0) +
+            evt.notificationIds.filter((id) => !existing.notificationIds.includes(id)).length,
         });
       } else {
         // Fresh staging or re-stage after user's edited send — reset to clean state

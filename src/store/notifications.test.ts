@@ -194,6 +194,44 @@ describe('staged notification store logic', () => {
     expect(mockTasks['task-1'].stagedNotification?.userEdited).toBe(false);
   });
 
+  it.each([
+    { ids: ['n1', 'n2'], added: 0 },
+    { ids: ['n2', 'n1'], added: 0 },
+    { ids: ['n1'], added: 0 },
+    { ids: ['n1', 'n3'], added: 1 },
+    { ids: ['n1', 'n2', 'n3', 'n4'], added: 2 },
+  ])('holds a canceled batch across overlapping restaging: $ids', ({ ids, added }) => {
+    setTask('task-1');
+    stageHandler({
+      coordinatorTaskId: 'task-1',
+      batchId: 'original',
+      notificationIds: ['n1', 'n2'],
+      text: 'Held draft',
+      autoFireAt: 1000,
+    });
+    setStagedNotificationUserEdited('task-1');
+    const restaged = {
+      coordinatorTaskId: 'task-1',
+      batchId: 'restaged',
+      notificationIds: ids,
+      text: 'Replacement summary',
+      autoFireAt: 301000,
+    };
+    stageHandler(restaged);
+    stageHandler({ ...restaged, batchId: 'restaged-again', autoFireAt: 601000 });
+    expect(mockTasks['task-1'].stagedNotification).toEqual({
+      batchId: 'restaged-again',
+      notificationIds: ids,
+      text: 'Held draft',
+      autoFireAt: 601000,
+      userEdited: true,
+      hiddenCompletionCount: added,
+    });
+    clearStagedNotification('task-1');
+    stageHandler({ ...restaged, batchId: 'fresh', notificationIds: ['fresh-id'] });
+    expect(mockTasks['task-1'].stagedNotification?.userEdited).toBe(false);
+  });
+
   it('clears the staged notification', () => {
     setTask('task-1');
 

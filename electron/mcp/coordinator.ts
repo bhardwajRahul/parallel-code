@@ -1114,8 +1114,7 @@ export class Coordinator {
     };
     if (this.integratingTaskIds.has(taskId)) throw new Error('Task integration is in progress.');
     // Replacing an existing PTY does not consume an additional task slot.
-    if (task.status !== 'exited' && task.status !== 'error')
-      return Object.assign(() => {}, { assertAllowed });
+    if (this.isChildInFlight(task)) return Object.assign(() => {}, { assertAllowed });
     const parentId = task.coordinatorTaskId;
     const pending = this.pendingCreateCounts.get(parentId) ?? 0;
     const limit = clampCoordinatorConcurrentTasks(
@@ -1164,11 +1163,18 @@ export class Coordinator {
     return children.map((task) => task.id);
   }
 
+  private isChildInFlight(task: CoordinatedTask): boolean {
+    return (
+      (task.status !== 'exited' && task.status !== 'error') ||
+      getActiveAgentIds().some((agentId) => getAgentMeta(agentId)?.taskId === task.id)
+    );
+  }
+
   private countInFlightSubTasks(coordinatorId: string): number {
     let count = 0;
     for (const task of this.tasks.values()) {
       if (task.coordinatorTaskId !== coordinatorId) continue;
-      if (task.status === 'exited' || task.status === 'error') continue;
+      if (!this.isChildInFlight(task)) continue;
       count++;
     }
     return count;

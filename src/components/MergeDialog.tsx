@@ -35,6 +35,8 @@ export function MergeDialog(props: MergeDialogProps) {
   const [merging, setMerging] = createSignal(false);
   const [squash, setSquash] = createSignal(false);
   const [cleanupAfterMerge, setCleanupAfterMerge] = createSignal(false);
+  const requiresSeparateClose = () =>
+    Boolean(props.task.delegationParent || props.task.coordinatorMode);
   const [squashMessage, setSquashMessage] = createSignal('');
   const [rebasing, setRebasing] = createSignal(false);
   const [rebaseError, setRebaseError] = createSignal('');
@@ -495,12 +497,18 @@ export function MergeDialog(props: MergeDialogProps) {
             >
               <input
                 type="checkbox"
-                checked={cleanupAfterMerge()}
+                checked={!requiresSeparateClose() && cleanupAfterMerge()}
+                disabled={requiresSeparateClose()}
                 onChange={(e) => setCleanupAfterMerge(e.currentTarget.checked)}
                 style={{ cursor: 'pointer' }}
               />
               Delete branch and worktree after merge
             </label>
+            <Show when={requiresSeparateClose()}>
+              <p style={{ 'font-size': '12px', color: theme.fgMuted, margin: '6px 0 0' }}>
+                Merge first, then close this task to detach its children safely.
+              </p>
+            </Show>
           </Show>
           <label
             style={{
@@ -580,7 +588,7 @@ export function MergeDialog(props: MergeDialogProps) {
         void mergeTask(taskId, {
           squash: squash(),
           message: squash() ? squashMessage() || undefined : undefined,
-          cleanup: cleanupAfterMerge(),
+          cleanup: !requiresSeparateClose() && cleanupAfterMerge(),
         })
           .then(() => {
             onDone();

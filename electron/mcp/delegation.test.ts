@@ -54,6 +54,7 @@ let core: {
   resumeChildren: ReturnType<typeof vi.fn>;
 };
 let persist: () => void;
+let prepareParent: ReturnType<typeof vi.fn<() => Promise<void>>>;
 
 function task(taskId: string, extra: Partial<TaskAuthorityInput> = {}): TaskAuthorityInput {
   return {
@@ -166,10 +167,11 @@ beforeEach(() => {
     resumeChildren: vi.fn(),
   };
   persist = vi.fn();
+  prepareParent = vi.fn(async () => {});
   service = new DelegationService({
     coordinator: async () => core as unknown as Coordinator,
     currentCoordinator: () => core as unknown as Coordinator,
-    prepareParent: async () => {},
+    prepareParent,
     sessions: () => sessions,
     changed: vi.fn(),
     persist,
@@ -347,6 +349,67 @@ describe('delegation authority and creation', () => {
     await expect(service.assertDirectMergeAllowed('/project-link', 'child')).rejects.toThrow(
       'Review',
     );
+  });
+
+  it.each([{ delegationParent: true }, { coordinatorMode: true }])(
+    'requires separate merge and close for parents: %j',
+    async (parentPolicy) => {
+      await register('parent', parentPolicy);
+      mocks.realpath.mockImplementation(async (value: string) =>
+        value === '/project-link' ? '/repo' : value,
+      );
+      await expect(
+        service.assertDirectMergeAllowed('/project-link', 'feature', true),
+      ).rejects.toThrow('Merge first, then close this task');
+      await expect(
+        service.assertDirectMergeAllowed('/project-link', 'feature', false),
+      ).resolves.toBeUndefined();
+      expect(core.detachChildren).not.toHaveBeenCalled();
+      expect(mocks.remove).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['preparation', 'launch'] as const)(
+    'protects a first child while %s is pending from merge cleanup and close',
+    async (phase) => {
+      await register('parent');
+      let release: () => void = () => {};
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      if (phase === 'preparation') prepareParent.mockImplementationOnce(() => pending);
+      else
+        core.createTask.mockImplementationOnce(async () => {
+          await pending;
+          return childRecord();
+        });
+      const created = service.create(assignment());
+      expect(service.getTask('parent')?.delegationParent).toBe(true);
+      expect(persist).toHaveBeenCalled();
+      await vi.waitFor(() =>
+        expect(phase === 'preparation' ? prepareParent : core.createTask).toHaveBeenCalled(),
+      );
+      await expect(service.assertDirectMergeAllowed('/repo', 'feature', true)).rejects.toThrow(
+        'Merge first, then close this task',
+      );
+      await expect(service.request({ action: 'unregister', taskId: 'parent' })).rejects.toThrow(
+        'Close parent through the detach operation',
+      );
+      await expect(service.closeParent('parent', true)).rejects.toThrow('still settling');
+      expect(core.detachChildren).not.toHaveBeenCalled();
+      expect(mocks.remove).not.toHaveBeenCalled();
+      release();
+      await created;
+      await service.closeParent('parent', true);
+      expect(mocks.remove).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('allows merge cleanup for tasks without children', async () => {
+    await register('ordinary');
+    await expect(
+      service.assertDirectMergeAllowed('/repo', 'feature', true),
+    ).resolves.toBeUndefined();
   });
 
   it('can resume a detached task without creating a parent coordinator', async () => {

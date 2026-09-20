@@ -1,7 +1,7 @@
-import { clearStagedNotification } from '../store/tasks';
+import { clearStagedNotification, setStagedNotificationUserEdited } from '../store/tasks';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
-import { createSignal } from 'solid-js';
+import { createSignal, untrack } from 'solid-js';
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PromptInput } from './PromptInput';
@@ -49,6 +49,7 @@ vi.mock('../store/store', () => ({
 
 vi.mock('../store/tasks', () => ({
   clearStagedNotification: vi.fn(),
+  setStagedNotificationUserEdited: vi.fn(),
   setTaskTerminalInputPendingFromQuestion: vi.fn(),
 }));
 
@@ -296,7 +297,9 @@ it('automatically sends opted-in child updates for an ordinary task', async () =
   );
   try {
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(sendPrompt).toHaveBeenCalledWith('ordinary', 'agent-1', 'Child complete');
+    expect(sendPrompt).toHaveBeenCalledWith('ordinary', 'agent-1', 'Child complete', {
+      signal: expect.any(AbortSignal),
+    });
     expect(invoke).toHaveBeenCalledWith(IPC.MCP_CoordinatorNotificationAck, {
       coordinatorTaskId: 'ordinary',
       batchId: 'batch',
@@ -304,6 +307,69 @@ it('automatically sends opted-in child updates for an ordinary task', async () =
     expect(clearStagedNotification).toHaveBeenCalledWith('ordinary');
   } finally {
     cleanup();
+    vi.useRealTimers();
+  }
+});
+
+it('cancels an in-flight automatic delivery when MCP is disabled, even if enabled again', async () => {
+  vi.useFakeTimers();
+  vi.mocked(invoke).mockClear();
+  vi.mocked(sendPrompt).mockClear();
+  vi.mocked(clearStagedNotification).mockClear();
+  const [enabled, setEnabled] = createSignal(true);
+  Object.defineProperty(storeMock, 'mcpOrchestrationEnabled', { configurable: true, get: enabled });
+  const [staged, setStaged] = createSignal({
+    batchId: 'batch',
+    notificationIds: ['child'],
+    text: 'Child complete',
+    autoFireAt: 0,
+    userEdited: false,
+  });
+  vi.mocked(setStagedNotificationUserEdited).mockImplementationOnce(() =>
+    setStaged((batch) => ({ ...batch, userEdited: true })),
+  );
+  let finish: (() => void) | undefined;
+  let deliverySignal: AbortSignal | undefined;
+  vi.mocked(sendPrompt).mockImplementationOnce((_taskId, _agentId, _text, options) => {
+    deliverySignal = options?.signal;
+    return new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+  });
+  storeMock.tasks = { ordinary: { id: 'ordinary', agentIds: ['agent-1'] } };
+  const container = document.createElement('div');
+  document.body.append(container);
+  const cleanup = render(
+    () => (
+      <PromptInput
+        taskId="ordinary"
+        taskName="Ordinary"
+        agentId="agent-1"
+        autoSendChildUpdates
+        stagedNotification={staged()}
+      />
+    ),
+    container,
+  );
+  try {
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(deliverySignal?.aborted).toBe(false);
+    setEnabled(false);
+    setEnabled(true);
+    expect(deliverySignal?.aborted).toBe(true);
+    finish?.();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(untrack(staged).userEdited).toBe(true);
+    expect(sendPrompt).toHaveBeenCalledTimes(1);
+    expect(invoke).not.toHaveBeenCalledWith(IPC.MCP_CoordinatorNotificationAck, expect.anything());
+    expect(clearStagedNotification).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    Object.defineProperty(storeMock, 'mcpOrchestrationEnabled', {
+      configurable: true,
+      writable: true,
+      value: true,
+    });
     vi.useRealTimers();
   }
 });

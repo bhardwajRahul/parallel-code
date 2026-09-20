@@ -328,6 +328,11 @@ export class DelegationService {
     this.emit(assignment.parentTaskId);
     try {
       const task = this.requireTask(assignment.parentTaskId);
+      if (!task.delegationParent) {
+        task.delegationParent = true;
+        this.options.persist();
+        this.options.parentCreated?.(task.taskId);
+      }
       const snapshot = await this.snapshot(task.taskId);
       assertLaunch();
       if (
@@ -374,8 +379,6 @@ export class DelegationService {
         childAuthority.agentCommand = command;
         childAuthority.agentArgs = args;
       }
-      task.delegationParent = true;
-      this.options.parentCreated?.(task.taskId);
       this.options.persist();
       attempt.status = 'created';
       attempt.taskId = child.id;
@@ -801,6 +804,14 @@ export class DelegationService {
     deleteBranch: boolean,
   ): Promise<{ detachedChildIds: string[] }> {
     const task = this.requireTask(taskId);
+    if (
+      [...this.attempts.values()].some(
+        (attempt) => attempt.parentTaskId === taskId && attempt.status === 'starting',
+      )
+    )
+      throw new DelegationError(
+        'A child launch is still settling. Retry closing after it finishes or is canceled.',
+      );
     task.closing = true;
     task.delegationPaused = true;
     try {
@@ -855,16 +866,21 @@ export class DelegationService {
     );
   }
 
-  async assertDirectMergeAllowed(projectRoot: string, branchName: string): Promise<void> {
+  async assertDirectMergeAllowed(
+    projectRoot: string,
+    branchName: string,
+    cleanup = false,
+  ): Promise<void> {
     const canonicalRoot = await realpath(projectRoot);
     for (const task of this.tasks.values()) {
-      if (
-        !task.closed &&
-        task.projectRoot === canonicalRoot &&
-        task.branchName === branchName &&
-        task.integrationPolicy === 'review'
-      )
+      if (task.closed || task.projectRoot !== canonicalRoot || task.branchName !== branchName)
+        continue;
+      if (task.integrationPolicy === 'review')
         throw new DelegationError('Review this delegated result before merging it.');
+      if (cleanup && (task.delegationParent || task.coordinatorMode))
+        throw new DelegationError(
+          'Merge first, then close this task to detach its children safely.',
+        );
     }
   }
 

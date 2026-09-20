@@ -1184,6 +1184,62 @@ describe('sendPrompt', () => {
     mockTasks = { 'task-1': { agentIds: [], shellAgentIds: [], lastPrompt: '' } };
   });
 
+  it('cancels an automated prompt during readiness retries', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    mockInvoke.mockRejectedValue(new Error('agent not found'));
+    const sending = sendPrompt('task-1', 'agent-1', 'Child complete', {
+      signal: controller.signal,
+    });
+    const result = expect(sending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.advanceTimersByTimeAsync(0);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(50);
+    await result;
+    expect(writePayloads()).toEqual(['\x1b[I']);
+    expect(mockTasks['task-1'].lastPrompt).toBe('');
+    vi.useRealTimers();
+  });
+
+  it('does not write the automated body if policy changes while focus delivery is pending', async () => {
+    const controller = new AbortController();
+    mockInvoke.mockImplementationOnce(async () => {
+      controller.abort();
+    });
+    await expect(
+      sendPrompt('task-1', 'agent-1', 'Child complete', { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(writePayloads()).toEqual(['\x1b[I']);
+    expect(mockTasks['task-1'].lastPrompt).toBe('');
+  });
+
+  it('cancels automatic Enter during the paste delay without changing manual delivery', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const sending = sendPrompt('task-1', 'agent-1', 'Child complete', {
+      signal: controller.signal,
+    });
+    const result = expect(sending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(writePayloads()).toEqual(['\x1b[I', 'Child complete']);
+    expect(mockInvoke).toHaveBeenLastCalledWith(IPC.WriteToAgent, {
+      agentId: 'agent-1',
+      data: 'Child complete',
+      automation: true,
+    });
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(500);
+    await result;
+    expect(writePayloads()).not.toContain('\r');
+    expect(mockTasks['task-1'].lastPrompt).toBe('');
+    mockInvoke.mockClear();
+    const manual = sendPrompt('task-1', 'agent-1', 'Manual prompt');
+    await vi.advanceTimersByTimeAsync(500);
+    await manual;
+    expect(writePayloads()).toEqual(['\x1b[I', 'Manual prompt', '\r']);
+    vi.useRealTimers();
+  });
+
   it('wraps prompt text in bracketed paste when the agent enabled it', async () => {
     mockIsAgentBracketedPasteEnabled.mockReturnValue(true);
 

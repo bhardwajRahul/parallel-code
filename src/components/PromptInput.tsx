@@ -29,7 +29,11 @@ import {
   setTaskTerminalInputPending,
   showNotification,
 } from '../store/store';
-import { clearStagedNotification, setTaskTerminalInputPendingFromQuestion } from '../store/tasks';
+import {
+  clearStagedNotification,
+  setStagedNotificationUserEdited,
+  setTaskTerminalInputPendingFromQuestion,
+} from '../store/tasks';
 import { taskUsesAgentChat } from '../store/agent-chat';
 import { isLandedTaskState } from '../store/landing';
 import { processAutoFireTick } from './autofire-tick';
@@ -431,6 +435,13 @@ export function PromptInput(props: PromptInputProps) {
 
   // --- Staged coordinator notification auto-fire ---
   let autoFireInterval: number | undefined;
+  let autoFireAbortController: AbortController | undefined;
+  createEffect(() => {
+    if (!props.autoSendChildUpdates || !store.mcpOrchestrationEnabled) {
+      autoFireAbortController?.abort();
+    }
+  });
+  onCleanup(() => autoFireAbortController?.abort());
   function executeAutoFire(staged: NonNullable<typeof props.stagedNotification>) {
     if (!props.autoSendChildUpdates || !store.mcpOrchestrationEnabled) return;
     if (autoFireInterval !== undefined) {
@@ -439,9 +450,19 @@ export function PromptInput(props: PromptInputProps) {
     }
     const taskId = props.taskId;
     const agentId = props.agentId;
+    autoFireAbortController?.abort();
+    const controller = new AbortController();
+    autoFireAbortController = controller;
+    const holdCanceledBatch = () => {
+      if (props.stagedNotification?.batchId === staged.batchId) {
+        setStagedNotificationUserEdited(taskId);
+      }
+    };
+    controller.signal.addEventListener('abort', holdCanceledBatch, { once: true });
     void (async () => {
       try {
-        await sendPrompt(taskId, agentId, staged.text);
+        await sendPrompt(taskId, agentId, staged.text, { signal: controller.signal });
+        if (controller.signal.aborted) return;
         await invoke(IPC.MCP_CoordinatorNotificationAck, {
           coordinatorTaskId: taskId,
           batchId: staged.batchId,
@@ -451,8 +472,13 @@ export function PromptInput(props: PromptInputProps) {
         setTaskPromptDraftActive(taskId, false);
         logWarn('autofire', 'auto-fire succeeded', { taskId });
       } catch (e) {
+        holdCanceledBatch();
+        if (controller.signal.aborted) return;
         logWarn('autofire', 'auto-fire failed', { taskId, err: String(e) });
         console.error('[coordinator] Auto-fire failed:', e);
+      } finally {
+        controller.signal.removeEventListener('abort', holdCanceledBatch);
+        if (autoFireAbortController === controller) autoFireAbortController = undefined;
       }
     })();
   }

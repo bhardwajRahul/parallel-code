@@ -949,6 +949,9 @@ export function registerAllHandlers(win: BrowserWindow): void {
   ipcMain.handle(IPC.WriteToAgent, (_e, args) => {
     assertString(args.agentId, 'agentId');
     assertString(args.data, 'data');
+    if (args.automation === true && !delegation.isOrchestrationEnabled()) {
+      throw new Error('Agent orchestration is disabled');
+    }
     if (args.taskId !== undefined) {
       assertString(args.taskId, 'taskId');
       if (coordinator?.isAutomationWriteInFlight(args.taskId)) return false;
@@ -1119,10 +1122,10 @@ export function registerAllHandlers(win: BrowserWindow): void {
   ipcMain.handle(IPC.MergeTask, async (_e, args) => {
     const projectRoot = projectRootArg(args);
     const branchName = branchNameArg(args);
-    await delegation.assertDirectMergeAllowed(projectRoot, branchName);
     assertBoolean(args.squash, 'squash');
     assertOptionalString(args.message, 'message');
     assertOptionalBoolean(args.cleanup, 'cleanup');
+    await delegation.assertDirectMergeAllowed(projectRoot, branchName, args.cleanup ?? false);
     const baseBranch = optionalBaseBranch(args);
     const worktreePath = optionalWorktreePath(args);
     return mergeTask(

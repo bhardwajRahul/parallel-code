@@ -9,11 +9,15 @@ import { IPC } from './channels.js';
 import { startRemoteServer } from '../remote/server.js';
 import * as remote from '../remote/server.js';
 import * as chats from '../chat/sessions.js';
+import * as git from './git.js';
+import * as tasks from './tasks.js';
+import { DelegationService } from '../mcp/delegation.js';
 import type { ParallelCodeMcpConfig } from '../mcp/agent-args.js';
 
-const { handlers, spawnAgent, onPtyEvent, getAgentMeta } = vi.hoisted(() => ({
+const { handlers, spawnAgent, onPtyEvent, getAgentMeta, writeToAgent } = vi.hoisted(() => ({
   handlers: new Map<string, (event: unknown, args: Record<string, unknown>) => unknown>(),
   spawnAgent: vi.fn(),
+  writeToAgent: vi.fn(),
   getAgentMeta: vi.fn<
     () => { taskId: string; agentId: string; isShell: boolean; canvasTools: boolean } | null
   >(() => null),
@@ -36,6 +40,7 @@ vi.mock('electron', () => ({
 vi.mock('./pty.js', async (original) => ({
   ...(await original<typeof import('./pty.js')>()),
   spawnAgent,
+  writeToAgent,
   getAgentMeta,
   onPtyEvent,
   // Chat startup resolves its command in PATH; CI has no agent CLI installed.
@@ -807,3 +812,87 @@ it.each([
     expect(fs.existsSync(configPath)).toBe(false);
   },
 );
+
+it('rejects unsafe parent merge cleanup before Git runs, without relying on a renderer task ID', async () => {
+  const win = {
+    on: vi.fn(),
+    isDestroyed: () => false,
+    webContents: { send: vi.fn() },
+  } as unknown as BrowserWindow;
+  registerAllHandlers(win);
+  const guard = vi
+    .spyOn(DelegationService.prototype, 'assertDirectMergeAllowed')
+    .mockRejectedValue(
+      new Error('Merge first, then close this task to detach its children safely.'),
+    );
+  const merge = vi.spyOn(git, 'mergeTask');
+  await expect(
+    handlers.get(IPC.MergeTask)?.(undefined, {
+      projectRoot: '/repo',
+      branchName: 'task/parent',
+      squash: false,
+      cleanup: true,
+    }),
+  ).rejects.toThrow('Merge first, then close this task');
+  expect(guard).toHaveBeenCalledWith('/repo', 'task/parent', true);
+  expect(merge).not.toHaveBeenCalled();
+});
+
+it('blocks automatic renderer writes immediately when orchestration is disabled, preserving manual writes', () => {
+  const enabled = vi
+    .spyOn(DelegationService.prototype, 'isOrchestrationEnabled')
+    .mockReturnValue(false);
+  const win = {
+    on: vi.fn(),
+    isDestroyed: () => false,
+    webContents: { send: vi.fn() },
+  } as unknown as BrowserWindow;
+  registerAllHandlers(win);
+  const write = handlers.get(IPC.WriteToAgent);
+  expect(write).toBeDefined();
+  expect(() => write?.(undefined, { agentId: 'agent', data: '\r', automation: true })).toThrow(
+    'Agent orchestration is disabled',
+  );
+  expect(writeToAgent).not.toHaveBeenCalled();
+  write?.(undefined, { agentId: 'agent', data: 'Manual prompt' });
+  expect(writeToAgent).toHaveBeenCalledWith('agent', 'Manual prompt');
+  enabled.mockReturnValue(true);
+  write?.(undefined, { agentId: 'agent', data: 'Child update', automation: true });
+  expect(writeToAgent).toHaveBeenCalledWith('agent', 'Child update');
+});
+
+it('routes deletion of a parent with a pending first child through guarded close', async () => {
+  const win = {
+    on: vi.fn(),
+    isDestroyed: () => false,
+    webContents: { send: vi.fn() },
+  } as unknown as BrowserWindow;
+  registerAllHandlers(win);
+  vi.spyOn(DelegationService.prototype, 'getTask').mockReturnValue({
+    taskId: 'parent',
+    name: 'Parent',
+    projectId: 'project',
+    projectRoot: '/repo',
+    worktreePath: '/repo/.worktrees/parent',
+    branchName: 'task/parent',
+    gitIsolation: 'worktree',
+    agentCommand: 'codex',
+    agentArgs: [],
+    delegationParent: true,
+  });
+  const close = vi
+    .spyOn(DelegationService.prototype, 'closeParent')
+    .mockRejectedValue(new Error('A child launch is still settling.'));
+  const remove = vi.spyOn(tasks, 'deleteTask');
+  await expect(
+    handlers.get(IPC.DeleteTask)?.(undefined, {
+      taskId: 'parent',
+      agentIds: [],
+      projectRoot: '/repo',
+      branchName: 'task/parent',
+      deleteBranch: true,
+    }),
+  ).rejects.toThrow('still settling');
+  expect(close).toHaveBeenCalledWith('parent', true);
+  expect(remove).not.toHaveBeenCalled();
+});

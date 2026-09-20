@@ -14,6 +14,8 @@ import {
   mockNextTask,
   mockWriteToAgent,
   mockKillAgent,
+  mockGetActiveAgentIds,
+  mockGetAgentMeta,
   getOutputCb,
   getSpawnHandler,
   getExitHandler,
@@ -228,6 +230,23 @@ describe('ordinary delegation lifecycle', () => {
     const retry = coordinator.reserveChildRestart(child.id);
     retry.assertAllowed();
     retry();
+  });
+
+  it('keeps a child slot occupied while a secondary pane survives its primary', async () => {
+    const child = await create();
+    getExitHandler()(child.agentId, { exitCode: 0 });
+    mockGetActiveAgentIds.mockReturnValue(['secondary']);
+    mockGetAgentMeta.mockReturnValue({ taskId: child.id });
+    mockNextTask({ id: 'task-2' });
+
+    await expect(create()).rejects.toThrow('concurrency');
+    // Restarting this same child replaces its existing slot, even at the limit.
+    const reservation = coordinator.reserveChildRestart(child.id);
+    reservation.assertAllowed();
+    reservation();
+
+    mockGetActiveAgentIds.mockReturnValue([]);
+    await expect(create()).resolves.toMatchObject({ id: 'task-2' });
   });
 
   it('keeps unexpected child exits visible even with an active waiter', async () => {

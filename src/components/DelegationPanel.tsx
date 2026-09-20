@@ -82,12 +82,20 @@ export function DelegationPanel(props: {
       state: 'handled',
     });
   }
-  const rolloutAgents = () =>
-    props.task.agentIds
+  const rolloutAgents = () => {
+    if (
+      !store.mcpOrchestrationEnabled ||
+      props.task.coordinatedBy ||
+      props.task.coordinatorMode ||
+      props.task.gitIsolation !== 'worktree'
+    )
+      return [];
+    return props.task.agentIds
       .map((id) => store.agents[id])
       .filter(
         (agent) => agent && !agent.capabilities?.canCreate && isSupportedDelegationAgent(agent.def),
       );
+  };
   const canResume = (agentId: string) => {
     const agent = store.agents[agentId];
     return (
@@ -110,7 +118,8 @@ export function DelegationPanel(props: {
         coordinating() ||
         props.task.coordinatedBy ||
         props.task.stagedNotification ||
-        messages().length > 0
+        messages().length > 0 ||
+        rolloutAgents().length > 0
       }
     >
       <section
@@ -278,14 +287,7 @@ export function DelegationPanel(props: {
             </For>
           </details>
         </Show>
-        <Show
-          when={
-            store.mcpOrchestrationEnabled &&
-            !props.task.coordinatedBy &&
-            !props.task.coordinatorMode &&
-            props.task.gitIsolation === 'worktree'
-          }
-        >
+        <Show when={rolloutAgents().length > 0}>
           <For each={rolloutAgents()}>
             {(agent) => (
               <div>
