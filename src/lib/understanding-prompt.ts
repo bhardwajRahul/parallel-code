@@ -39,7 +39,7 @@ CARD is {"label":"SHORT UPPERCASE LABEL","title":"one line","body":"short markdo
 Required on every card: label, title, body, tone. Optional: whyItMatters, diagram, refs.
 title is a headline of at most about ten words, never a sentence with clauses; the body carries the explanation.
 Never exceed these character caps: label ${caps.label}, title ${caps.title}, body ${caps.body}, whyItMatters ${caps.whyItMatters}, text diagram source ${caps.textDiagram}, mermaid diagram source ${caps.mermaidDiagram}. At most ${caps.refs} refs per card. Output that exceeds a cap is rejected outright.
-tone is exactly one of: "neutral" (plain explanation), "important" (the reader must not miss this), "risk" (something can break, cost time or lose data), "uncertainty" (genuinely unknown or merely assumed), "mechanical" (dry plumbing detail, low attention).
+tone is exactly one of: "neutral" (plain explanation), "important" (the reader must not miss this), "risk" (something can break, cost time or lose data), "uncertainty" (genuinely unknown or merely assumed), "mechanical" (dry plumbing detail, low attention; keep its body to one or two sentences).
 Write decision-ready understanding, not documentation:
 - Omit anything that would not change a high-level decision. Compression is the point.
 - One idea per card. If a card needs "and", split it or drop the weaker half.
@@ -57,6 +57,7 @@ function tourShapeInstructions(): string {
   return `"gist" is required and is the whole explanation compressed into one card: a reader who stops there still gets the point. It opens the tour as its first card, so it must read as one, not as a preface to the others. Label it exactly "${GIST_LABEL}".
 "cards" is the rest of the spine, read one card at a time. Prefer 3 to 7 cards (hard maximum ${TOUR_CARD_LIMITS.maxCards}); use fewer for a small subject.
 The last card is the bottom line: the mental model or the verdict the reader should keep.
+Place "mechanical" cards after the others, just before the bottom line, so the cards that matter come first.
 The whole tour must be readable in 30 seconds to 2 minutes.`;
 }
 
