@@ -197,6 +197,32 @@ it.each(['working', 'draft', 'queued prompt'] as const)(
   },
 );
 
+it('hands a fresh Codex terminal with its idle placeholder over to Chat', async () => {
+  mocks.invoke.mockResolvedValueOnce({});
+  setStore('tasks', 'task', 'codexChatThreadId', 'stale-thread');
+  markAgentSpawned('agent');
+  mount();
+  clickChat();
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('Wait for Codex');
+
+  markAgentOutput(
+    'agent',
+    new TextEncoder().encode('› Ask Codex to do anything\r\n? for shortcuts  100% context left'),
+  );
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+  clickChat();
+  await vi.waitFor(() => expect(store.tasks.task.mainAgentView).toBe('chat'));
+  expect(mocks.invoke).toHaveBeenCalledWith(IPC.AgentChat, {
+    action: 'handoffToChat',
+    agentId: 'agent',
+  });
+  expect(store.tasks.task.codexChatThreadId).toBeUndefined();
+  expect(mocks.invoke).toHaveBeenCalledWith(
+    IPC.AgentChat,
+    expect.objectContaining({ action: 'start', threadId: undefined }),
+  );
+});
+
 it('reports the reason that holds now, not the one that was clicked on', () => {
   setStore('tasks', 'task', 'initialPrompt', 'Queued instruction');
   mount();

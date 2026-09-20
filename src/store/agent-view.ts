@@ -42,8 +42,8 @@ function agentHandoffSessionId(task: Task, agentId: string, mode: MainAgentView)
 export function agentViewHandsOff(task: Task, agentId: string, mode: MainAgentView): boolean {
   const provider = agentChatProvider(agentId);
   if (!provider) return false;
-  // Codex reads its session id out of the CLI as it quits, so it always has one
-  // to carry. Claude's is assigned up front: without it there is nothing to join.
+  // Codex always quits the CLI, reading either its resume id or an unsaved-session
+  // footer. Claude's id is assigned up front: without it there is nothing to join.
   return provider === 'codex' || !!agentHandoffSessionId(task, agentId, mode);
 }
 
