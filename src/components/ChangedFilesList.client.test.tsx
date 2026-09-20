@@ -50,6 +50,83 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   throw new Error('Timed out waiting for mounted ChangedFilesList state');
 }
 
+describe('ChangedFilesList markdown canvas button', () => {
+  it('shows the canvas button on markdown rows only and opens the file on click', async () => {
+    const files: ChangedFile[] = [
+      { path: 'docs/notes.md', status: 'M', lines_added: 1, lines_removed: 0, committed: false },
+      { path: 'src/example.ts', status: 'M', lines_added: 1, lines_removed: 0, committed: false },
+      { path: 'docs/old.md', status: 'D', lines_added: 0, lines_removed: 3, committed: false },
+    ];
+    const onOpenMarkdownClick = vi.fn();
+    vi.mocked(invoke).mockImplementation(((channel: string) => {
+      if (channel === IPC.GetUncommittedChangedFiles) return Promise.resolve(files);
+      return Promise.reject(new Error(`Unexpected IPC call: ${channel}`));
+    }) as typeof invoke);
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    disposers.push(
+      render(
+        () => (
+          <ChangedFilesList
+            worktreePath="/task"
+            isActive
+            selectedCommit={UNCOMMITTED_SELECTION}
+            onOpenMarkdownClick={onOpenMarkdownClick}
+          />
+        ),
+        container,
+      ),
+    );
+
+    await waitFor(() => container.querySelector('.changed-files-open-canvas-btn') !== null);
+
+    const canvasButton = container.querySelector<HTMLButtonElement>(
+      '.changed-files-open-canvas-btn',
+    );
+    const mdRow = canvasButton?.closest('.file-row');
+    expect(mdRow?.querySelector('span[title="docs/notes.md"]')).not.toBeNull();
+    const tsRow = [...container.querySelectorAll('.file-row')].find((row) =>
+      row.querySelector('span[title="src/example.ts"]'),
+    );
+    expect(tsRow?.querySelector('.changed-files-open-canvas-btn')).toBeNull();
+    expect(tsRow?.querySelector('.changed-files-open-editor-btn')).not.toBeNull();
+    const deletedRow = [...container.querySelectorAll('.file-row')].find((row) =>
+      row.querySelector('span[title="docs/old.md"]'),
+    );
+    expect(deletedRow?.querySelector('.changed-files-open-canvas-btn')).toBeNull();
+
+    canvasButton?.click();
+    expect(onOpenMarkdownClick).toHaveBeenCalledTimes(1);
+    expect(onOpenMarkdownClick.mock.calls[0][0]).toMatchObject({ path: 'docs/notes.md' });
+  });
+
+  it('hides the canvas button without a handler', async () => {
+    const files: ChangedFile[] = [
+      { path: 'docs/notes.md', status: 'M', lines_added: 1, lines_removed: 0, committed: false },
+    ];
+    vi.mocked(invoke).mockImplementation(((channel: string) => {
+      if (channel === IPC.GetUncommittedChangedFiles) return Promise.resolve(files);
+      return Promise.reject(new Error(`Unexpected IPC call: ${channel}`));
+    }) as typeof invoke);
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    disposers.push(
+      render(
+        () => (
+          <ChangedFilesList worktreePath="/task" isActive selectedCommit={UNCOMMITTED_SELECTION} />
+        ),
+        container,
+      ),
+    );
+
+    await waitFor(() => container.querySelector('.file-row') !== null);
+    expect(container.querySelector('.changed-files-open-canvas-btn')).toBeNull();
+    expect(container.querySelector('.changed-files-open-editor-btn')).not.toBeNull();
+  });
+});
+
 describe('ChangedFilesList coverage inventory fallbacks', () => {
   it('uses a tour inventory without polling live files or coverage', () => {
     const file: ChangedFile = {

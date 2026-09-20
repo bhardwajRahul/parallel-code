@@ -2388,7 +2388,8 @@ html:is(
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-hover));
 }
 
-.changed-files-open-editor-btn {
+.changed-files-open-editor-btn,
+.changed-files-open-canvas-btn {
   position: absolute;
   right: 5px;
   top: 50%;
@@ -2401,14 +2402,24 @@ html:is(
     background 0.12s ease;
 }
 
+/* The canvas button sits left of the editor button when both are revealed;
+   the editor button keeps its long-standing rightmost spot. */
+.file-row:has(.changed-files-open-editor-btn:not(:disabled)) .changed-files-open-canvas-btn {
+  right: 29px;
+}
+
 .file-row:hover .changed-files-open-editor-btn:not(:disabled),
-.changed-files-open-editor-btn:focus-visible {
+.changed-files-open-editor-btn:focus-visible,
+.file-row:hover .changed-files-open-canvas-btn,
+.changed-files-open-canvas-btn:focus-visible {
   opacity: 1;
   pointer-events: auto;
 }
 
 .changed-files-open-editor-btn:hover:not(:disabled),
-.changed-files-open-editor-btn:focus-visible {
+.changed-files-open-editor-btn:focus-visible,
+.changed-files-open-canvas-btn:hover,
+.changed-files-open-canvas-btn:focus-visible {
   color: var(--fg) !important;
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated)) !important;
 }

@@ -1,5 +1,11 @@
 import { Show, onMount } from 'solid-js';
-import { getProject, setActiveTask, setTaskFocusedPanel, isPanelFocused } from '../store/store';
+import {
+  getProject,
+  setActiveTask,
+  setTaskFocusedPanel,
+  isPanelFocused,
+  openCanvasDocument,
+} from '../store/store';
 import { ChangedFilesList } from './ChangedFilesList';
 import { CommitTreeOverlay } from './CommitTreeOverlay';
 import {
@@ -12,7 +18,7 @@ import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
 import { useFocusRegistration } from '../lib/focus-registration';
 import type { Task } from '../store/types';
-import type { CommitInfo } from '../ipc/types';
+import type { ChangedFile, CommitInfo } from '../ipc/types';
 import type { ChangeTourController } from '../lib/create-change-tour';
 import { getTaskDiffBaseBranch } from '../lib/load-task-diff';
 import { ChangeTourButton } from './ChangeTourButton';
@@ -50,6 +56,11 @@ export function TaskChangedFilesSection(props: TaskChangedFilesSectionProps) {
   const focusChangedFilesPanel = () => {
     setActiveTask(props.task.id);
     setTaskFocusedPanel(props.task.id, 'changed-files');
+  };
+  const openMarkdownInCanvas = (file: ChangedFile) => {
+    setActiveTask(props.task.id);
+    openCanvasDocument(props.task.id, file.path);
+    setTaskFocusedPanel(props.task.id, 'canvas');
   };
 
   let changedFilesRef: HTMLDivElement | undefined;
@@ -182,6 +193,7 @@ export function TaskChangedFilesSection(props: TaskChangedFilesSectionProps) {
           onFileClick={(file) => props.onDiffFileClick(file.path)}
           onFileCountChange={props.onFileCountChange}
           onOpenInEditorClick={focusChangedFilesPanel}
+          onOpenMarkdownClick={openMarkdownInCanvas}
           ref={(el) => (changedFilesRef = el)}
         />
       </div>
