@@ -228,4 +228,43 @@ describe('setupAutosave scheduling', () => {
       );
     }
   });
+
+  it('does not re-serialize large task data on each keystroke, but still saves the text', () => {
+    const id = 'typing-autosave';
+    const previousOrder = [...store.taskOrder];
+    const bigText = 'x'.repeat(100_000);
+    setStore('tasks', id, {
+      id,
+      name: 'Typing',
+      projectId: 'p1',
+      worktreePath: '/typing',
+      branchName: '',
+      agentIds: [],
+      shellAgentIds: [],
+      notes: '',
+      lastPrompt: '',
+      promptHistory: [{ text: bigText, sentAt: 1 }],
+    });
+    setStore('taskOrder', [...previousOrder, id]);
+    const stringify = vi.spyOn(JSON, 'stringify');
+    try {
+      withAutosave(() => {
+        stringify.mockClear();
+        for (const text of ['h', 'he', 'hel']) setTaskPromptDraft(id, text);
+        for (const text of ['n', 'no']) setStore('tasks', id, 'notes', text);
+        const serialized = stringify.mock.results.map((r) => String(r.value));
+        expect(serialized.every((s) => s.length < bigText.length)).toBe(true);
+        vi.advanceTimersByTime(AUTOSAVE_DEBOUNCE_MS);
+        expect(mockSaveState).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      stringify.mockRestore();
+      setStore('taskOrder', previousOrder);
+      setStore(
+        produce((state) => {
+          delete state.tasks['typing-autosave'];
+        }),
+      );
+    }
+  });
 });

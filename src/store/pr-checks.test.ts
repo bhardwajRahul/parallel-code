@@ -175,4 +175,56 @@ describe('startPrChecksSubscription branch PR detection', () => {
     expect(store.tasks['task-2'].prUrl).toBeUndefined();
     disposeRoot?.();
   });
+
+  it('limits concurrent branch probes and probes the rest as slots free up', async () => {
+    const ids = Array.from({ length: 10 }, (_, i) => `task-${i}`);
+    setStore('taskOrder', ids);
+    setStore(
+      'tasks',
+      Object.fromEntries(
+        ids.map((id) => [
+          id,
+          {
+            id,
+            name: id,
+            projectId: 'project-1',
+            branchName: `task/${id}`,
+            worktreePath: `/repo/.worktrees/${id}`,
+            agentIds: [],
+            shellAgentIds: [],
+            notes: '',
+            lastPrompt: '',
+            gitIsolation: 'worktree' as const,
+          },
+        ]),
+      ),
+    );
+    const pending: Array<(value: { url: null }) => void> = [];
+    mockInvoke.mockImplementation(
+      () => new Promise<{ url: null }>((resolve) => pending.push(resolve)),
+    );
+    const probedPaths = () =>
+      mockInvoke.mock.calls
+        .filter(([channel]) => channel === IPC.DetectPrForBranch)
+        .map(([, args]) => (args as { worktreePath: string }).worktreePath);
+
+    let disposeRoot: (() => void) | undefined;
+    createRoot((dispose) => {
+      disposeRoot = dispose;
+      startPrChecksSubscription();
+    });
+    await flushPromises();
+    expect(probedPaths()).toHaveLength(4);
+
+    pending.shift()?.({ url: null });
+    await flushPromises();
+    expect(probedPaths()).toHaveLength(5);
+
+    while (pending.length > 0) {
+      pending.shift()?.({ url: null });
+      await flushPromises();
+    }
+    expect([...probedPaths()].sort()).toEqual(ids.map((id) => `/repo/.worktrees/${id}`).sort());
+    disposeRoot?.();
+  });
 });

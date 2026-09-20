@@ -14,9 +14,8 @@ const parentDir = path.resolve(rootDir, '..');
  * - script-src: the bundle plus 'wasm-unsafe-eval' for shiki's oniguruma
  *   engine (WebAssembly instantiation is blocked without it).
  * - style-src 'unsafe-inline': Solid `style={{}}` attributes plus the style
- *   elements xterm, Monaco, and mermaid inject.
+ *   elements xterm and mermaid inject.
  * - img-src http(s): images linked from rendered markdown (notes, plans).
- * - worker-src blob:: Monaco language workers.
  *
  * Applied at build time only: the dev server injects its own client and HMR
  * socket, which this policy would block.
@@ -28,7 +27,7 @@ export const RENDERER_CSP = [
   "img-src 'self' data: blob: http: https:",
   "font-src 'self' data:",
   "connect-src 'self' parallel-chat:",
-  "worker-src 'self' blob:",
+  "worker-src 'self'",
   "media-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'none'",

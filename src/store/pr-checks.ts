@@ -16,6 +16,9 @@ import type { Task } from './types';
 export { getPrChecks, type PrChecksState } from './pr-checks-state';
 const BRANCH_PR_DETECT_INTERVAL_MS = 60_000;
 const BRANCH_PR_DETECT_RETRY_MS = 2 * 60_000;
+// Each probe spawns `git remote` + `gh pr list`; cap them so a startup scan
+// over many tasks doesn't burst dozens of processes and GitHub API calls.
+const MAX_CONCURRENT_BRANCH_PROBES = 4;
 
 function parsePrUrl(url: string | undefined): string | null {
   if (!url) return null;
@@ -99,6 +102,8 @@ export function startPrChecksSubscription(): () => void {
       })
       .finally(() => {
         pendingBranchProbes.delete(taskId);
+        // Hand the freed slot to a task the capped scan skipped.
+        scanForBranchPrs();
       });
   };
 
@@ -122,6 +127,7 @@ export function startPrChecksSubscription(): () => void {
       ) {
         continue;
       }
+      if (pendingBranchProbes.size >= MAX_CONCURRENT_BRANCH_PROBES) continue;
       branchProbeByTaskId.set(taskId, { key: candidate.key, attemptedAt: now });
       detectBranchPr(taskId, candidate);
     }
