@@ -17,6 +17,8 @@ let mockTasks: Record<string, TaskLike> = {};
 interface TaskLike {
   id: string;
   agentIds: string[];
+  lastPrompt?: string;
+  promptHistory?: Array<{ text: string; agentId?: string }>;
   mainAgentView?: 'terminal' | 'chat';
   claudeChatSessionId?: string;
   selectedAgentId?: string;
@@ -184,6 +186,52 @@ describe('switchAgent', () => {
     });
     expect(mockAgents['agent-1'].spawnDelayMs).toBeUndefined();
     expect(mockMarkAgentSpawned).toHaveBeenCalledWith('agent-1');
+  });
+});
+
+describe('prompt history on a new conversation', () => {
+  beforeEach(() => {
+    mockAgents = {
+      'agent-1': exitedAgent({ id: 'agent-1' }),
+      'agent-2': exitedAgent({ id: 'agent-2' }),
+    };
+    mockTasks = {
+      'task-1': {
+        id: 'task-1',
+        agentIds: ['agent-1', 'agent-2'],
+        lastPrompt: 'second pane',
+        promptHistory: [
+          { text: 'legacy' },
+          { text: 'first pane', agentId: 'agent-1' },
+          { text: 'second pane', agentId: 'agent-2' },
+        ],
+      },
+    };
+  });
+
+  it.each([
+    ['switching CLI', () => switchAgent('agent-1', { ...codexDef, id: 'claude' })],
+    ['a fresh restart', () => restartAgent('agent-1', false)],
+    ['closing the pane', () => closeAgentInTask('task-1', 'agent-1')],
+  ])('drops only that agent’s prompts after %s', async (_, act) => {
+    await act();
+    // Untagged entries predate tagging and belong to the main agent.
+    expect(mockTasks['task-1'].promptHistory).toEqual([
+      { text: 'second pane', agentId: 'agent-2' },
+    ]);
+    expect(mockTasks['task-1'].lastPrompt).toBe('second pane');
+  });
+
+  it('keeps prompts when resuming the same conversation', () => {
+    restartAgent('agent-1', true);
+    expect(mockTasks['task-1'].promptHistory).toHaveLength(3);
+  });
+
+  it('empties the history when the last agent with prompts starts over', () => {
+    restartAgent('agent-2', false);
+    restartAgent('agent-1', false);
+    expect(mockTasks['task-1'].promptHistory).toBeUndefined();
+    expect(mockTasks['task-1'].lastPrompt).toBe('');
   });
 });
 

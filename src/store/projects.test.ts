@@ -195,6 +195,17 @@ describe('relinkProject session ids', () => {
     expect(store.tasks['doc-agent-docs'].agentSessionIds?.a).toEqual(expect.any(String));
   });
 
+  it('drops the prompts sent to the conversation it replaced', async () => {
+    seed('claude', undefined);
+    setStore('tasks', 'doc-agent-docs', {
+      lastPrompt: 'old',
+      promptHistory: [{ text: 'old', agentId: 'a' }],
+    });
+    expect(await relinkProject('docs')).toBe(true);
+    expect(store.tasks['doc-agent-docs'].promptHistory).toBeUndefined();
+    expect(store.tasks['doc-agent-docs'].lastPrompt).toBe('');
+  });
+
   // Codex assigns its own, so an id invented here would name a session that
   // never existed.
   it('leaves a Codex pane without one', async () => {

@@ -11,7 +11,7 @@ import { store, setStore, cleanupPanelEntries } from './core';
 import { assignFreshSessionId } from './session-ids';
 import { effectiveAgentId } from './agent-select';
 import { saveState } from './persistence';
-import { MAX_PROMPT_HISTORY } from '../lib/prompt-history';
+import { MAX_PROMPT_HISTORY, promptHistoryOf } from '../lib/prompt-history';
 import { setTaskFocusedPanel, shellPanelId } from './focused-panel';
 import { getProject, getProjectPath, getProjectBranchPrefix, isProjectMissing } from './projects';
 import { setPendingShellCommand } from '../lib/bookmarks';
@@ -751,8 +751,7 @@ export async function sendPrompt(
 export function setLastPrompt(taskId: string, text: string, agentId?: string): void {
   const task = store.tasks[taskId];
   if (!task || !text.trim()) return;
-  // Preserve the one prompt available in saves made before history was recorded.
-  const history = task.promptHistory ?? (task.lastPrompt ? [{ text: task.lastPrompt }] : []);
+  const history = promptHistoryOf(task);
   setStore(
     'tasks',
     taskId,
@@ -762,7 +761,7 @@ export function setLastPrompt(taskId: string, text: string, agentId?: string): v
       {
         text,
         sentAt: Date.now(),
-        agentName: agentId ? store.agents[agentId]?.def?.name : undefined,
+        agentId,
       },
     ].slice(-MAX_PROMPT_HISTORY),
   );

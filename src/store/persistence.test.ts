@@ -1683,7 +1683,7 @@ describe('prompt history persistence', () => {
   it.each([false, true])('restores and saves history for collapsed=%s', async (collapsed) => {
     const history = [
       { text: 'First prompt' },
-      { text: 'Second\nmultiline prompt', sentAt: 1700000000000, agentName: 'Codex' },
+      { text: 'Second\nmultiline prompt', sentAt: 1700000000000, agentId: 'agent-1' },
     ];
     mockInvoke.mockResolvedValueOnce(
       JSON.stringify({

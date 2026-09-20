@@ -2,14 +2,14 @@ import { For, Show, createEffect, createSignal, createUniqueId, onCleanup } from
 import { Portal } from 'solid-js/web';
 import { createAnchorEffect, createHeldSignal, placeBelow } from '../lib/floating';
 import type { BelowAnchor } from '../lib/floating';
-import type { PromptHistoryEntry, Task } from '../store/types';
+import type { Task } from '../store/types';
+import { promptHistoryOf } from '../lib/prompt-history';
 
 export function PromptHistory(props: { task: Task; emptyLabel: string }) {
   const id = createUniqueId();
   const held = createHeldSignal<boolean>(150);
   const open = () => held.value() === true;
-  const history = (): PromptHistoryEntry[] =>
-    props.task.promptHistory ?? (props.task.lastPrompt ? [{ text: props.task.lastPrompt }] : []);
+  const history = () => promptHistoryOf(props.task);
   const [position, setPosition] = createSignal<BelowAnchor>({ top: 0, right: 0, maxHeight: 360 });
   let anchor: HTMLButtonElement | undefined;
   let popover: HTMLDivElement | undefined;
@@ -33,6 +33,14 @@ export function PromptHistory(props: { task: Task; emptyLabel: string }) {
         360,
       ),
     );
+  });
+  createEffect(() => {
+    if (!open()) return;
+    // Newest prompts are last. Deferred until the placed max-height lands, or the
+    // popover would scroll against its stale height and stop short of the end.
+    queueMicrotask(() => {
+      if (popover) popover.scrollTop = popover.scrollHeight;
+    });
   });
   createEffect(() => {
     if (!open()) return;
@@ -113,31 +121,25 @@ export function PromptHistory(props: { task: Task; emptyLabel: string }) {
               'max-height': `${Math.min(360, position().maxHeight)}px`,
             }}
           >
-            <div class="prompt-history-heading">
-              Prompt history <span>{history().length}</span>
-            </div>
             <Show when={history().length} fallback={<p>No prompts sent yet.</p>}>
               <ol>
                 <For each={history()}>
-                  {(entry, index) => (
+                  {(entry) => (
                     <li>
-                      <div class="prompt-history-meta">
-                        <span>
-                          #{index() + 1}
-                          {entry.agentName ? ` · ${entry.agentName}` : ''}
-                        </span>
-                        <Show when={entry.sentAt}>
-                          {(time) => (
-                            <time title={new Date(time()).toLocaleString()}>
-                              {new Date(time()).toLocaleTimeString([], {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </time>
-                          )}
-                        </Show>
-                      </div>
                       <p>{entry.text}</p>
+                      <Show when={entry.sentAt}>
+                        {(time) => (
+                          <time
+                            class="prompt-history-meta"
+                            title={new Date(time()).toLocaleString()}
+                          >
+                            {new Date(time()).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </time>
+                        )}
+                      </Show>
                     </li>
                   )}
                 </For>

@@ -190,8 +190,8 @@ function restoredPromptHistory(value: unknown): Task['promptHistory'] {
           'sentAt' in entry && typeof entry.sentAt === 'number' && Number.isFinite(entry.sentAt)
             ? entry.sentAt
             : undefined,
-        agentName:
-          'agentName' in entry && typeof entry.agentName === 'string' ? entry.agentName : undefined,
+        agentId:
+          'agentId' in entry && typeof entry.agentId === 'string' ? entry.agentId : undefined,
       },
     ];
   });

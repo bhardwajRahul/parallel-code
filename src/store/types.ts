@@ -164,7 +164,7 @@ export type CanvasTabKind = CanvasTab['kind'];
 export interface PromptHistoryEntry {
   text: string;
   sentAt?: number;
-  agentName?: string;
+  agentId?: string;
 }
 
 export interface Task {

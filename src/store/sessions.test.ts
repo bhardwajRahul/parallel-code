@@ -14,6 +14,8 @@ const state: {
       agentIds: string[];
       agentSessionIds?: Record<string, string>;
       codexChatHandoff?: { threadId: string };
+      lastPrompt?: string;
+      promptHistory?: Array<{ text: string; agentId?: string }>;
     }
   >;
 } = { tasks: {} };
@@ -94,6 +96,19 @@ describe('resumeAgentSession', () => {
     resumeAgentSession('t1', 'a2', 'selected-session');
     expect(state.tasks.t1.codexChatHandoff).toEqual({ threadId: 'primary-handoff' });
   });
+  it('drops the pane’s prompts only when picking a different session', () => {
+    const history = [
+      { text: 'a1 prompt', agentId: 'a1' },
+      { text: 'a2 prompt', agentId: 'a2' },
+    ];
+    state.tasks.t1.promptHistory = history;
+    state.tasks.t1.agentSessionIds = { a1: 'current' };
+    resumeAgentSession('t1', 'a1', 'current');
+    expect(state.tasks.t1.promptHistory).toEqual(history);
+    resumeAgentSession('t1', 'a1', 'older');
+    expect(state.tasks.t1.promptHistory).toEqual([{ text: 'a2 prompt', agentId: 'a2' }]);
+  });
+
   it('stores the id and restarts with resume', () => {
     resumeAgentSession('t1', 'a1', 'session-42');
     expect(state.tasks.t1.agentSessionIds).toEqual({ a1: 'session-42' });

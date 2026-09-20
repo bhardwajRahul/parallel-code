@@ -5,6 +5,7 @@ import { sessionAgentForCommand, type SessionRecord } from '../../electron/share
 import { canResumeSessionId } from '../../electron/shared/session-resume';
 import { store, setStore } from './core';
 import { restartAgent } from './agents';
+import { forgetAgentPrompts } from '../lib/prompt-history';
 import { saveState } from './persistence';
 import { warn as logWarn, errMessage } from '../lib/log';
 
@@ -48,6 +49,8 @@ export function resumeAgentSession(taskId: string, agentId: string, sessionId: s
       const task = s.tasks[taskId];
       if (!task) return;
       task.agentSessionIds ??= {};
+      // Another conversation's prompts would read as this one's.
+      if (task.agentSessionIds[agentId] !== sessionId) forgetAgentPrompts(task, agentId);
       task.agentSessionIds[agentId] = sessionId;
       // An explicit picker choice replaces an earlier chat-to-terminal handoff.
       if (task.agentIds[0] === agentId) task.codexChatHandoff = undefined;

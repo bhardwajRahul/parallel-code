@@ -1484,8 +1484,8 @@ describe('sendPrompt', () => {
     await sendPrompt('task-1', 'agent-1', 'continue');
     expect(mockTasks['task-1'].promptHistory).toEqual([
       { text: 'Earlier prompt' },
-      { text: 'continue', sentAt: expect.any(Number), agentName: 'Codex' },
-      { text: 'continue', sentAt: expect.any(Number), agentName: 'Codex' },
+      { text: 'continue', sentAt: expect.any(Number), agentId: 'agent-1' },
+      { text: 'continue', sentAt: expect.any(Number), agentId: 'agent-1' },
     ]);
   });
 

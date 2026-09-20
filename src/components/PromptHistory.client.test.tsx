@@ -46,7 +46,7 @@ describe('PromptHistory', () => {
     const { button } = mount({
       lastPrompt: 'Second prompt',
       promptHistory: [
-        { text: 'First prompt\nwith another line', sentAt: 1700000000000, agentName: 'Codex' },
+        { text: 'First prompt\nwith another line', sentAt: 1700000000000 },
         { text: '<script>plain text</script>' },
         { text: 'Second prompt' },
       ],
@@ -60,6 +60,8 @@ describe('PromptHistory', () => {
       'Second prompt',
     ]);
     expect(popover?.querySelector('script')).toBeNull();
+    // Entries carry only their time and text; untimed legacy entries show just text.
+    expect([...document.querySelectorAll('li')].map((li) => li.children.length)).toEqual([2, 1, 1]);
     button.dispatchEvent(new MouseEvent('mouseleave'));
     popover?.dispatchEvent(new MouseEvent('mouseenter'));
     vi.advanceTimersByTime(200);
@@ -83,6 +85,14 @@ describe('PromptHistory', () => {
     expect(document.querySelector('[role="region"]')).toBeNull();
     expect(document.activeElement).toBe(button);
     expect(button.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('opens scrolled to the newest prompt', async () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(900);
+    const { button } = mount({ promptHistory: [{ text: 'Old' }, { text: 'New' }] });
+    button.click();
+    await Promise.resolve();
+    expect(document.querySelector<HTMLElement>('[role="region"]')?.scrollTop).toBe(900);
   });
 
   it('shows an empty state and closes on an outside click', () => {

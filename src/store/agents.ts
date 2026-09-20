@@ -9,6 +9,7 @@ import { saveState } from './persistence';
 import { refreshUsage, usageProviderForAgent } from './usage';
 import { assignFreshSessionId } from './session-ids';
 import { widenTaskColumnForAgentPanes } from './task-column';
+import { forgetAgentPrompts } from '../lib/prompt-history';
 
 export async function loadAgents(): Promise<void> {
   const defaults = await invoke<AgentDef[]>(IPC.ListAgents);
@@ -68,6 +69,7 @@ export async function closeAgentInTask(taskId: string, agentId: string): Promise
 
       const idx = t.agentIds.indexOf(agentId);
       if (idx === -1 || t.agentIds.length <= 1) return;
+      forgetAgentPrompts(t, agentId);
 
       if (idx === 0) {
         t.mainAgentView = undefined;
@@ -144,6 +146,8 @@ export function restartAgent(agentId: string, useResumeArgs: boolean): void {
           s.agents[agentId].requireResumeSuccess = undefined;
           const agent = s.agents[agentId];
           assignFreshSessionId(s, agent.taskId, agentId, agent.def.command);
+          const task = s.tasks[agent.taskId];
+          if (task) forgetAgentPrompts(task, agentId);
         }
       }
     }),
@@ -158,6 +162,8 @@ export function switchAgent(agentId: string, newDef: AgentDef): void {
         // Switching CLI starts a fresh conversation, and the new CLI may not
         // take an assigned id at all — so re-decide rather than carry over.
         assignFreshSessionId(s, s.agents[agentId].taskId, agentId, newDef.command);
+        const task = s.tasks[s.agents[agentId].taskId];
+        if (task) forgetAgentPrompts(task, agentId);
         s.agents[agentId].def = newDef;
         s.agents[agentId].status = 'running';
         s.agents[agentId].canvasTools = undefined;

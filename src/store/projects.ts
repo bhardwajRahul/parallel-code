@@ -8,6 +8,7 @@ import { sanitizeBranchPrefix } from '../lib/branch-name';
 import { documentAgentTaskId } from '../documents/task-id';
 import { clearAgentActivity } from './taskStatus';
 import { assignFreshSessionId } from './session-ids';
+import { forgetAgentPrompts } from '../lib/prompt-history';
 import { delegationRequest, registerTaskAuthority } from './delegation';
 
 export const PASTEL_HUES = [0, 30, 60, 120, 180, 210, 260, 300, 330];
@@ -264,6 +265,7 @@ export async function relinkProject(projectId: string): Promise<boolean> {
           // session that already exists, so reusing this pane's old id would
           // stop it launching at all after the project moves.
           assignFreshSessionId(s, task.id, id, agent.def.command);
+          forgetAgentPrompts(s.tasks[task.id], id);
           agent.resumed = false;
           agent.attachExisting = false;
           agent.status = 'running';
