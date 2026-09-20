@@ -8,6 +8,7 @@ import type {
   Query,
   Options,
   SDKUserMessage,
+  SDKSessionInfo,
   SessionMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { ClaudeChat } from './claude.js';
@@ -78,6 +79,9 @@ function harness(
         Object.assign(output, controls) as unknown as Query,
     ),
     getSessionMessages: vi.fn(async () => history),
+    getSessionInfo: vi.fn(async (sessionId: string) =>
+      sessionId === 'unwritten' ? undefined : ({ sessionId } as SDKSessionInfo),
+    ),
   };
   const publish = vi.fn();
   const chat = new ClaudeChat(
@@ -617,6 +621,17 @@ describe('Claude chat adapter', () => {
     await expect(h.chat.start()).rejects.toThrow(
       /exited before it was ready[\s\S]*command not found/,
     );
+  });
+
+  it('starts a session under a handed-over id that Claude never wrote', async () => {
+    // A terminal launched with --session-id writes nothing until its first turn, so
+    // resuming the id it hands to Chat would fail with "No conversation found".
+    const h = harness([], 'unwritten');
+    await h.chat.start();
+    expect(h.sdk.getSessionInfo).toHaveBeenCalledWith('unwritten', { dir: '/worktree' });
+    expect(h.options().resume).toBeUndefined();
+    expect(h.options().sessionId).toBe('unwritten');
+    expect(h.chat.state.threadId).toBe('unwritten');
   });
 
   it('refuses a task-specific config directory before opening a session', async () => {

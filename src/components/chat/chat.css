@@ -514,7 +514,6 @@
   font: inherit;
 }
 .chat-toolbar,
-.chat-context-actions,
 .chat-composer-settings {
   display: flex;
   align-items: center;
@@ -528,7 +527,6 @@
   border-bottom: 1px solid var(--chat-border);
 }
 .chat-toolbar button,
-.chat-context-actions button,
 .chat-interrupt,
 .chat-review,
 .chat-file button,

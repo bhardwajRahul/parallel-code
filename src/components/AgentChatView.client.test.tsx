@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   chatProps: undefined as ChatProps | undefined,
   disposeView: vi.fn(),
   openFileInEditor: vi.fn(async () => {}),
+  revealItemInDir: vi.fn(async () => {}),
   openCanvasDocument: vi.fn(),
   channel: undefined as
     | { onmessage: ((state: AgentChatState) => void) | null; dispose: () => void }
@@ -31,7 +32,10 @@ vi.mock('../lib/ipc', () => ({
   },
 }));
 vi.mock('../store/persistence', () => ({ saveState: mocks.saveState }));
-vi.mock('../lib/shell', () => ({ openFileInEditor: mocks.openFileInEditor }));
+vi.mock('../lib/shell', () => ({
+  openFileInEditor: mocks.openFileInEditor,
+  revealItemInDir: mocks.revealItemInDir,
+}));
 vi.mock('../store/canvas', () => ({ openCanvasDocument: mocks.openCanvasDocument }));
 vi.mock('../store/tasks', () => ({
   sendPrompt: mocks.sendPrompt,
@@ -184,6 +188,8 @@ describe('Codex chat view', () => {
     chat.onOpenFile?.('README.md:12');
     chat.onOpenFile?.('./README.md:12');
     chat.onOpenFile?.('/worktree/docs/design.md:10:2');
+    chat.onOpenFile?.('/home/me/Downloads/report.csv:4');
+    expect(mocks.revealItemInDir.mock.calls).toEqual([['/home/me/Downloads/report.csv']]);
     expect(mocks.openFileInEditor.mock.calls).toEqual([
       ['/worktree', 'src/app.ts'],
       ['/worktree', 'src/app.ts'],
@@ -193,6 +199,23 @@ describe('Codex chat view', () => {
       ['task-1', 'README.md'],
       ['task-1', 'docs/design.md'],
     ]);
+  });
+
+  it('references dropped files inside the worktree relatively and others absolutely', async () => {
+    const paths = new Map<File, string>();
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: { getPathForFile: (file: File) => paths.get(file) ?? '' },
+    });
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    const chat = await tick();
+    const inside = new File(['x'], 'app.ts');
+    const outside = new File(['x'], 'report.pdf');
+    paths.set(inside, '/worktree/src/app.ts');
+    paths.set(outside, '/home/me/Downloads/report.pdf');
+    expect(chat.dropPathFor?.(inside)).toBe('src/app.ts');
+    expect(chat.dropPathFor?.(outside)).toBe('/home/me/Downloads/report.pdf');
+    expect(chat.dropPathFor?.(new File(['x'], 'from-browser.png'))).toBeUndefined();
   });
 
   it('blocks New chat and Reconnect throughout initial startup and replacement', async () => {

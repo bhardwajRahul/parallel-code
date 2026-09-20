@@ -21,7 +21,7 @@ import type { AgentChat, ChatStartOptions } from './types.js';
 
 type ClaudeSDK = Pick<
   typeof import('@anthropic-ai/claude-agent-sdk'),
-  'query' | 'getSessionMessages'
+  'query' | 'getSessionMessages' | 'getSessionInfo'
 >;
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value)
@@ -110,7 +110,13 @@ export class ClaudeChat implements AgentChat {
     this.sdk = sdk;
     const sessionId = this.opts.threadId ?? randomUUID();
     this.state.threadId = sessionId;
-    if (this.opts.threadId) {
+    // A terminal launched with --session-id writes no transcript until its first
+    // turn, yet hands that id to Chat. Resuming it fails, so start it here instead;
+    // the id stays shared with the terminal either way.
+    const resume =
+      !!this.opts.threadId && !!(await sdk.getSessionInfo(sessionId, { dir: this.opts.cwd }));
+    if (this.isClosed()) throw new Error('Claude chat stopped while connecting.');
+    if (resume) {
       const history = await sdk.getSessionMessages(sessionId, { dir: this.opts.cwd });
       for (const message of history) this.receive(message);
       this.settleActivities();
@@ -132,7 +138,7 @@ export class ClaudeChat implements AgentChat {
         cwd: this.opts.cwd,
         env: this.opts.env,
         pathToClaudeCodeExecutable: this.opts.command,
-        ...(this.opts.threadId ? { resume: sessionId } : { sessionId }),
+        ...(resume ? { resume: sessionId } : { sessionId }),
         systemPrompt: { type: 'preset', preset: 'claude_code' },
         settingSources: chatSettingSources(),
         includePartialMessages: true,

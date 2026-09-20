@@ -26,7 +26,7 @@ import { registerFocusFn, unregisterFocusFn } from '../store/focused-panel';
 import type { Task } from '../store/types';
 import { isLandedTaskState } from '../store/landing';
 import { detectThemeTone } from '../lib/custom-theme';
-import { openFileInEditor } from '../lib/shell';
+import { openFileInEditor, revealItemInDir } from '../lib/shell';
 import { openCanvasDocument } from '../store/canvas';
 import { isMarkdownPath } from '../lib/canvas-tabs';
 import { LOOK_PRESETS } from '../lib/look';
@@ -194,9 +194,14 @@ export function AgentChatView(props: {
     | 'onReloadModels'
     | 'onOpenFile'
     | 'onListFiles'
+    | 'dropPathFor'
   > = {
     onListFiles: () =>
       invoke<string[]>(IPC.ListDocumentFiles, { projectRoot: props.task.worktreePath }),
+    dropPathFor: (file) => {
+      const path = window.electron.getPathForFile?.(file) ?? '';
+      return path ? relativePath(path) : undefined;
+    },
     onOpenFile: (path) => {
       // The shell opens files, so remove agent citation locations before routing.
       const relative = relativePath(path.replace(/:\d+(?::\d+)?$/, '')).replace(/^\.\//, '');
@@ -206,6 +211,10 @@ export function AgentChatView(props: {
         !relative.split('/').includes('..')
       )
         openCanvasDocument(props.task.id, relative);
+      // Outside the worktree (a dropped download, say) the editor channel refuses the
+      // path, and opening it with its default app would run whatever an agent cites.
+      else if (relative.startsWith('/'))
+        void revealItemInDir(relative).catch((error) => setError(String(error)));
       else
         void openFileInEditor(props.task.worktreePath, relative).catch((error) =>
           setError(String(error)),
@@ -426,11 +435,6 @@ export function AgentChatView(props: {
           </button>
         </Show>
       </div>
-      <Show when={store.remoteAccess.enabled}>
-        <p class="codex-chat-note">
-          Phone access supports Terminal only; this chat is available on desktop.
-        </p>
-      </Show>
       <Show when={state()?.permissionNote}>
         <p class="codex-chat-note">{state()?.permissionNote}</p>
       </Show>
