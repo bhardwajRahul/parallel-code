@@ -1,3 +1,6 @@
+import { DelegationReviewDialog } from './DelegationReviewDialog';
+import { DelegationPanel } from './DelegationPanel';
+import { canUsePeerComposer, usePeerComposer } from '../store/delegation';
 import { TaskMindMap } from './TaskMindMap';
 import { Show, createSignal, createEffect, createMemo, onMount, onCleanup, batch } from 'solid-js';
 import {
@@ -68,6 +71,7 @@ const CHANGED_FILES_PANEL_AUTO_MAX = 'min(300px, 33vh)';
 const NOTES_PANEL_AUTO_MAX = 'min(400px, 33vh)';
 
 export function TaskPanel(props: TaskPanelProps) {
+  const autoSendChildUpdates = () => props.task.autoSendChildUpdates ?? props.task.coordinatorMode;
   const eslintQualityFindingProvider = createEslintQualityFindingProvider(
     () => props.task.worktreePath,
   );
@@ -78,7 +82,7 @@ export function TaskPanel(props: TaskPanelProps) {
   const [nowMs, setNowMs] = createSignal(Date.now());
   createEffect(() => {
     const n = props.task.stagedNotification;
-    const hasActiveCountdown = Boolean(n && !n.userEdited);
+    const hasActiveCountdown = Boolean(autoSendChildUpdates() && n && !n.userEdited);
     if (!props.task.stepsEnabled && !hasActiveCountdown) return;
     const id = window.setInterval(() => setNowMs(Date.now()), hasActiveCountdown ? 1_000 : 30_000);
     onCleanup(() => clearInterval(id));
@@ -483,7 +487,7 @@ export function TaskPanel(props: TaskPanelProps) {
         taskName={props.task.name}
         agentId={firstAgentId()}
         coordinatedBy={props.task.coordinatedBy}
-        coordinatorMode={props.task.coordinatorMode}
+        autoSendChildUpdates={autoSendChildUpdates()}
         controlledBy={props.task.controlledBy}
         stagedNotification={props.task.stagedNotification}
         nowMs={nowMs}
@@ -591,7 +595,7 @@ export function TaskPanel(props: TaskPanelProps) {
               aiTerminalChild,
               ...(props.task.stepsEnabled ? [stepsSectionChild] : []),
               ...(!isAgentChat(props.task, firstAgentId()) &&
-              (store.showPromptInput || props.task.coordinatorMode)
+              (store.showPromptInput || autoSendChildUpdates())
                 ? [promptInputChild]
                 : []),
             ]}
@@ -614,7 +618,7 @@ export function TaskPanel(props: TaskPanelProps) {
                   children={[
                     aiTerminalChild,
                     ...(!isAgentChat(props.task, firstAgentId()) &&
-                    (store.showPromptInput || props.task.coordinatorMode)
+                    (store.showPromptInput || autoSendChildUpdates())
                       ? [promptInputChild]
                       : []),
                   ]}
@@ -684,7 +688,12 @@ export function TaskPanel(props: TaskPanelProps) {
         closingError={props.task.closingError}
         onRetry={() => retryCloseTask(props.task.id)}
       />
-      <Show when={!!props.task.coordinatedBy || !!props.task.coordinatorMode}>
+      <Show
+        when={
+          !!props.task.coordinatedBy ||
+          (!!autoSendChildUpdates() && !!props.task.stagedNotification)
+        }
+      >
         <div
           style={{
             background: theme.bgElevated,
@@ -702,9 +711,7 @@ export function TaskPanel(props: TaskPanelProps) {
               gap: '12px',
             }}
           >
-            <span>
-              {props.task.coordinatorMode ? 'Auto delivery enabled' : 'Coordinated sub-task'}
-            </span>
+            <span>{autoSendChildUpdates() ? 'Automatic child updates' : 'Child task'}</span>
             <Show
               when={!!props.task.stagedNotification && !props.task.stagedNotification.userEdited}
             >
@@ -749,9 +756,28 @@ export function TaskPanel(props: TaskPanelProps) {
           </div>
         </Show>
       </Show>
-      <Show when={props.task.coordinatorMode}>
+      <Show when={props.task.coordinatorMode || props.task.delegationParent}>
         <SubTaskStrip coordinatorTaskId={props.task.id} />
       </Show>
+      <DelegationPanel
+        task={props.task}
+        canUseComposer={(message) =>
+          canUsePeerComposer(
+            props.task,
+            message,
+            promptHandle,
+            store.showPromptInput && !isAgentChat(props.task, firstAgentId()),
+          )
+        }
+        onUseComposer={(message) =>
+          usePeerComposer(
+            props.task,
+            message,
+            promptHandle,
+            store.showPromptInput && !isAgentChat(props.task, firstAgentId()),
+          )
+        }
+      />
       <TaskBranchAdoptionBanner task={props.task} />
       <div
         class="task-header-stack"
@@ -794,6 +820,11 @@ export function TaskPanel(props: TaskPanelProps) {
           children={canvasVisible() ? [mainChild, canvasChild] : [mainChild]}
         />
       </div>
+      <DelegationReviewDialog
+        task={props.task}
+        open={showMergeConfirm() && props.task.integrationPolicy === 'review'}
+        onClose={() => setShowMergeConfirm(false)}
+      />
       <CloseTaskDialog
         open={showCloseConfirm()}
         task={props.task}
@@ -801,7 +832,7 @@ export function TaskPanel(props: TaskPanelProps) {
       />
       <Show when={props.task.gitIsolation !== 'none' && !isLandedTask()}>
         <MergeDialog
-          open={showMergeConfirm()}
+          open={showMergeConfirm() && props.task.integrationPolicy !== 'review'}
           task={props.task}
           initialCleanup={
             props.task.externalWorktree

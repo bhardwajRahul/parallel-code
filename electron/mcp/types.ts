@@ -2,7 +2,11 @@ import type { VerificationRun } from '../ipc/shared-types.js';
 
 // Shared types for the MCP coordinating-agent system.
 
+import type { IntegrationPolicy } from '../shared/delegation-types.js';
+export type { IntegrationPolicy } from '../shared/delegation-types.js';
+
 export interface CoordinatedTask {
+  integrationPolicy?: IntegrationPolicy;
   id: string;
   name: string;
   projectId: string;
@@ -63,6 +67,9 @@ export interface PendingNotification {
 export type CoordinatorLifecycle = 'starting' | 'ready' | 'closing' | 'closed';
 
 export interface CoordinatorState {
+  automaticNotifications?: boolean;
+  paused?: boolean;
+  launchEpoch?: number;
   taskId: string;
   lifecycle: CoordinatorLifecycle;
   projectId: string;
@@ -147,6 +154,7 @@ export interface LandSelfInput {
 // --- API request/response types ---
 
 export interface ApiTaskSummary {
+  integrationPolicy?: IntegrationPolicy;
   id: string;
   name: string;
   branchName: string;

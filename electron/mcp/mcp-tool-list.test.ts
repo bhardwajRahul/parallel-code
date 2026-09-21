@@ -178,3 +178,68 @@ it('advertises a self-contained reasoning example that the transaction engine ac
   expect(history.snapshots[0].records).toHaveLength(3);
   expect(history.snapshots[0].relations[0]).toMatchObject({ source: 'finding', target: 'cause' });
 });
+
+describe('session capability tool sets', () => {
+  const canvas = [
+    'mindmap_read',
+    'mindmap_update',
+    'reasoning_read',
+    'reasoning_update',
+    'canvas_open',
+  ];
+  const supervision = [
+    'list_tasks',
+    'get_task_status',
+    'send_prompt',
+    'wait_for_idle',
+    'get_task_diff',
+    'get_task_output',
+    'wait_for_signal_done',
+  ];
+  const names = (
+    profile: 'ordinary' | 'child-review' | 'child-automatic',
+    canCreate = false,
+    peers = false,
+  ) => selectTools('task', '', false, { profile, canCreate, peers }).map((tool) => tool.name);
+
+  it('exposes exact ordinary rights separately from agent creation consent', () => {
+    expect(names('ordinary')).toEqual([...canvas, ...supervision]);
+    expect(names('ordinary', true)).toEqual([...canvas, 'create_task', ...supervision]);
+  });
+
+  it('never grants children creation even if a malformed capability requests it', () => {
+    expect(names('child-review', true)).toEqual([...canvas, 'signal_done']);
+    expect(names('child-automatic', true)).toEqual([...canvas, 'land_self', 'signal_done']);
+  });
+
+  it('adds only exact-session held-message tools when enabled', () => {
+    expect(names('child-review', false, true)).toEqual([
+      ...canvas,
+      'signal_done',
+      'list_agent_sessions',
+      'get_agent_output',
+      'send_agent_prompt',
+      'wait_for_agent_prompt',
+    ]);
+  });
+
+  it('uses bounded completion guidance without telling agents to self-land or auto-merge', () => {
+    const tools = selectTools('parent', '', false, {
+      profile: 'ordinary',
+      canCreate: true,
+      peers: false,
+    });
+    for (const name of ['wait_for_idle', 'wait_for_signal_done'])
+      expect(
+        tools.find((tool) => tool.name === name)?.inputSchema.properties.timeoutMs,
+      ).toMatchObject({ default: 30000, maximum: 60000 });
+    const child = selectTools('child', '', false, {
+      profile: 'child-review',
+      canCreate: false,
+      peers: false,
+    });
+    expect(child.find((tool) => tool.name === 'signal_done')?.description).not.toContain(
+      'Use land_self',
+    );
+  });
+});

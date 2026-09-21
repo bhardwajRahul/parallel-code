@@ -23,6 +23,9 @@ import {
   mockWriteToAgent,
   mockSubscribeToAgent,
   mockGetAgentScrollback,
+  mockGetActiveAgentIds,
+  mockGetAgentMeta,
+  mockKillAgent,
   mockGetChangedFiles,
   mockGetAllFileDiffs,
   mockGetDiffBaseSha,
@@ -1509,6 +1512,10 @@ describe('Coordinator land_self', () => {
 
   it('lands, cleans up resources, and closes the task record', async () => {
     const { deleteTask: mockDeleteTask } = await import('../ipc/tasks.js');
+    mockGetActiveAgentIds.mockReturnValueOnce(['secondary', 'unrelated']);
+    mockGetAgentMeta
+      .mockReturnValueOnce({ taskId: 'task-1' })
+      .mockReturnValueOnce({ taskId: 'other' });
 
     const result = await coordinator.landSelf('task-1', { verification, summary: 'done' });
 
@@ -1520,6 +1527,11 @@ describe('Coordinator land_self', () => {
     });
     expect(vi.mocked(mergeTask)).toHaveBeenCalled();
     expect(vi.mocked(mockDeleteTask)).toHaveBeenCalled();
+    expect(mockKillAgent).toHaveBeenCalledWith('secondary');
+    expect(mockKillAgent).not.toHaveBeenCalledWith('unrelated');
+    expect(vi.mocked(mockDeleteTask)).toHaveBeenCalledWith(
+      expect.objectContaining({ agentIds: expect.arrayContaining(['secondary']) }),
+    );
     expect(coordinator.getTask('task-1')).toBeUndefined();
     expect(mockNotifyRenderer).toHaveBeenCalledWith(
       'mcp_task_closed',
@@ -1932,6 +1944,7 @@ describe('Coordinator sub-agent spawn settings', () => {
     expect(mockSpawnAgent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ command: 'claude' }),
+      expect.any(Function),
     );
   });
 
@@ -1941,6 +1954,7 @@ describe('Coordinator sub-agent spawn settings', () => {
     expect(mockSpawnAgent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ command: '/usr/local/bin/claude' }),
+      expect.any(Function),
     );
   });
 
@@ -1950,6 +1964,7 @@ describe('Coordinator sub-agent spawn settings', () => {
     expect(mockSpawnAgent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ envFile: '~/.config/parallel-code/claude.env' }),
+      expect.any(Function),
     );
   });
 
@@ -2002,6 +2017,7 @@ describe('Coordinator sub-agent spawn settings', () => {
     expect(mockSpawnAgent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ cwd: '/tmp/test' }),
+      expect.any(Function),
     );
   });
 
@@ -2018,6 +2034,7 @@ describe('Coordinator sub-agent spawn settings', () => {
         // Args are the agent args (not docker exec wrapper)
         args: expect.not.arrayContaining(['exec']),
       }),
+      expect.any(Function),
     );
     // Coordinator container name is NOT in the args (sub-task has its own container)
     const spawnArgs = mockSpawnAgent.mock.calls[0][1].args as string[];
@@ -2030,6 +2047,7 @@ describe('Coordinator sub-agent spawn settings', () => {
     expect(mockSpawnAgent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ command: 'claude' }),
+      expect.any(Function),
     );
     const spawnCall = mockSpawnAgent.mock.calls[0][1] as { dockerMode?: boolean; args: string[] };
     expect(spawnCall.dockerMode).toBeUndefined();

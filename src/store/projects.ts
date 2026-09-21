@@ -8,6 +8,7 @@ import { sanitizeBranchPrefix } from '../lib/branch-name';
 import { documentAgentTaskId } from '../documents/task-id';
 import { clearAgentActivity } from './taskStatus';
 import { assignFreshSessionId } from './session-ids';
+import { delegationRequest, registerTaskAuthority } from './delegation';
 
 export const PASTEL_HUES = [0, 30, 60, 120, 180, 210, 260, 300, 330];
 
@@ -90,6 +91,7 @@ export function updateProject(
   updates: Partial<
     Pick<
       Project,
+      | 'allowPeerAccess'
       | 'name'
       | 'color'
       | 'branchPrefix'
@@ -114,6 +116,8 @@ export function updateProject(
     produce((s) => {
       const idx = s.projects.findIndex((p) => p.id === projectId);
       if (idx === -1) return;
+      if (updates.allowPeerAccess !== undefined)
+        s.projects[idx].allowPeerAccess = updates.allowPeerAccess;
       if (updates.name !== undefined) s.projects[idx].name = updates.name;
       if (updates.color !== undefined) s.projects[idx].color = updates.color;
       if (updates.branchPrefix !== undefined)
@@ -156,7 +160,16 @@ export function updateProject(
  *  register, so a change here has to be pushed to the ones already running. */
 function syncCoordinatorVerifyCommand(projectId: string, verifyCommand: string | undefined): void {
   for (const task of Object.values(store.tasks)) {
-    if (!task.coordinatorMode || task.projectId !== projectId) continue;
+    if (task.projectId !== projectId) continue;
+    if (!task.coordinatorMode) {
+      if (task.delegationParent) {
+        const agent = task.agentIds[0] ? store.agents[task.agentIds[0]]?.def : task.savedAgentDef;
+        void registerTaskAuthority(task, agent).catch((error: unknown) =>
+          console.warn('Could not update delegation verification:', error),
+        );
+      }
+      continue;
+    }
     if (task.mcpStartupStatus !== 'ready') continue;
     invoke(IPC.MCP_CoordinatorRegistered, {
       coordinatorTaskId: task.id,
@@ -275,4 +288,16 @@ export async function relinkProject(projectId: string): Promise<boolean> {
 
 export function isProjectMissing(projectId: string): boolean {
   return projectId in store.missingProjectIds;
+}
+
+/** Peer permission changes take effect in the main process before the UI reports success. */
+export async function updateProjectCoordination(
+  projectId: string,
+  allowPeerAccess: boolean,
+): Promise<void> {
+  await delegationRequest({
+    action: 'projectPolicy',
+    policy: { projectId, allowPeerAccess },
+  });
+  updateProject(projectId, { allowPeerAccess });
 }

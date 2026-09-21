@@ -21,7 +21,18 @@ ${verifyLine}2. Ask questions if requirements are unclear or if you are about to
 /** Tells the agent the backend runs the full check at land time and hands back
  *  only failures, so it does targeted checks instead of flooding its own
  *  context with a full-suite run. */
-export function buildSubTaskPreamble(verifyCommand?: string): string {
+export function buildSubTaskPreamble(
+  verifyCommand?: string,
+  integrationPolicy?: 'review' | 'automatic',
+): string {
+  if (integrationPolicy === 'review')
+    return `[SUB-TASK MODE] Complete the assigned work for user review.
+Verify your changes${verifyCommand ? ` with \`${verifyCommand}\`` : ' with the relevant tests'}, then commit them. Keep injected Parallel Code guidance out of commits; remove runtime sub-task blocks before committing their files.
+Call signal_done when your committed result is ready. Do not merge, call land_self, or delete your worktree. User approval is required for integration. Ask questions when requirements are unclear.
+
+---
+`;
+
   if (!verifyCommand) return preamble('');
   return preamble(
     `   - You do not need to run \`${verifyCommand}\` yourself: land_self runs it in your ` +

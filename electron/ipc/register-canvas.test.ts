@@ -9,11 +9,15 @@ import { IPC } from './channels.js';
 import { startRemoteServer } from '../remote/server.js';
 import * as remote from '../remote/server.js';
 import * as chats from '../chat/sessions.js';
+import * as git from './git.js';
+import * as tasks from './tasks.js';
+import { DelegationService } from '../mcp/delegation.js';
 import type { ParallelCodeMcpConfig } from '../mcp/agent-args.js';
 
-const { handlers, spawnAgent, onPtyEvent, getAgentMeta } = vi.hoisted(() => ({
+const { handlers, spawnAgent, onPtyEvent, getAgentMeta, writeToAgent } = vi.hoisted(() => ({
   handlers: new Map<string, (event: unknown, args: Record<string, unknown>) => unknown>(),
   spawnAgent: vi.fn(),
+  writeToAgent: vi.fn(),
   getAgentMeta: vi.fn<
     () => { taskId: string; agentId: string; isShell: boolean; canvasTools: boolean } | null
   >(() => null),
@@ -36,6 +40,7 @@ vi.mock('electron', () => ({
 vi.mock('./pty.js', async (original) => ({
   ...(await original<typeof import('./pty.js')>()),
   spawnAgent,
+  writeToAgent,
   getAgentMeta,
   onPtyEvent,
   // Chat startup resolves its command in PATH; CI has no agent CLI installed.
@@ -51,6 +56,7 @@ afterEach(async () => {
   await handlers.get(IPC.StopRemoteServer)?.(undefined, {});
   handlers.clear();
   vi.clearAllMocks();
+  getAgentMeta.mockReturnValue(null);
   vi.restoreAllMocks();
   for (const agent of ['startup-test-agent', 'cleanup-test-agent'])
     fs.rmSync(path.join(os.tmpdir(), `parallel-code-canvas-${agent}.json`), { force: true });
@@ -84,6 +90,7 @@ it('gives chat a separate canvas token and config and removes both on close', as
     port: 7777,
     registerCanvasAgent: register,
     unregisterCanvasAgent: unregister,
+    getSessionAgents: () => [],
     hasCanvasAgents: () => false,
     stop: vi.fn(async () => {}),
   } as unknown as Awaited<ReturnType<typeof startRemoteServer>>;
@@ -133,6 +140,7 @@ it.each(['transport', 'configuration'])(
       port: 7777,
       registerCanvasAgent: vi.fn(() => 'test-secret'),
       unregisterCanvasAgent: vi.fn(),
+      getSessionAgents: () => [],
       hasCanvasAgents: () => false,
       stop: vi.fn(async () => {}),
     } as unknown as Awaited<ReturnType<typeof startRemoteServer>>;
@@ -156,7 +164,7 @@ it.each(['transport', 'configuration'])(
       env: { KEEP: 'value' },
     };
     expect(await handlers.get(IPC.SpawnAgent)?.(undefined, args)).toEqual({ canvasTools: false });
-    expect(spawnAgent).toHaveBeenCalledWith(win, args);
+    expect(spawnAgent).toHaveBeenCalledWith(win, args, expect.any(Function));
     if (failure === 'configuration')
       expect(server.unregisterCanvasAgent).toHaveBeenCalledWith('agent');
   },
@@ -187,7 +195,7 @@ it.each([
     };
     await handlers.get(IPC.SpawnAgent)?.(undefined, args);
     expect(start).not.toHaveBeenCalled();
-    expect(spawnAgent).toHaveBeenCalledWith(win, args);
+    expect(spawnAgent).toHaveBeenCalledWith(win, args, expect.any(Function));
   },
 );
 
@@ -231,6 +239,7 @@ it('starts an ordinary Codex terminal with canvas MCP when the development port 
         canvasTools: true,
         args: ['--config', expect.stringContaining('mcp_servers.parallel-code=')],
       }),
+      expect.any(Function),
     );
     const config = JSON.parse(
       fs.readFileSync(
@@ -287,6 +296,7 @@ it.each([IPC.KillAgent, IPC.KillAllAgents])(
       port: 7777,
       registerCanvasAgent: vi.fn(),
       unregisterCanvasAgent: vi.fn(),
+      getSessionAgents: () => [],
       hasCanvasAgents: () => false,
       stop: vi.fn(async () => {}),
     } as unknown as Awaited<ReturnType<typeof startRemoteServer>>;
@@ -322,7 +332,7 @@ it('preserves the configured capability when reattaching, without reconfiguring 
     webContents: { send: vi.fn() },
   } as unknown as BrowserWindow;
   registerAllHandlers(win);
-  getAgentMeta.mockReturnValueOnce({
+  getAgentMeta.mockReturnValue({
     taskId: 'task',
     agentId: 'agent',
     isShell: false,
@@ -342,7 +352,11 @@ it('preserves the configured capability when reattaching, without reconfiguring 
   };
   expect(await handlers.get(IPC.SpawnAgent)?.(undefined, args)).toEqual({ canvasTools: true });
   expect(start).not.toHaveBeenCalled();
-  expect(spawnAgent).toHaveBeenCalledWith(win, { ...args, canvasTools: true });
+  expect(spawnAgent).toHaveBeenCalledWith(
+    win,
+    { ...args, canvasTools: true },
+    expect.any(Function),
+  );
 });
 
 it('deletes the credential file when the agent exits', async () => {
@@ -357,6 +371,7 @@ it('deletes the credential file when the agent exits', async () => {
     port: 7777,
     registerCanvasAgent: vi.fn(() => 'test-secret'),
     unregisterCanvasAgent: vi.fn(),
+    getSessionAgents: () => [],
     hasCanvasAgents: () => false,
     stop: vi.fn(async () => {}),
   } as unknown as Awaited<ReturnType<typeof startRemoteServer>>;
@@ -396,6 +411,7 @@ it('refuses to narrow the bind while Docker agents on macOS use the canvas', asy
     bindHost: '0.0.0.0',
     registerCanvasAgent: vi.fn(() => 'test-secret'),
     unregisterCanvasAgent: vi.fn(),
+    getSessionAgents: () => [],
     hasCanvasAgents: () => true,
     forgetRememberedDevices: vi.fn(),
     rebind: vi.fn(async () => {}),
@@ -440,6 +456,7 @@ it('ends phone access but keeps the canvas transport on loopback while agents us
     bindHost: '0.0.0.0',
     registerCanvasAgent: vi.fn(() => 'test-secret'),
     unregisterCanvasAgent: vi.fn(),
+    getSessionAgents: () => [],
     hasCanvasAgents: () => true,
     forgetRememberedDevices: vi.fn(),
     rebind: vi.fn(async (host: string) => {
@@ -488,6 +505,7 @@ function mockServer(overrides: { platform?: string } = {}) {
     unregisterCanvasAgent: vi.fn((agentId: string) => {
       agents.delete(agentId);
     }),
+    getSessionAgents: () => [],
     hasCanvasAgents: () => agents.size > 0,
     enableRememberedDevices: vi.fn(),
     forgetRememberedDevices: vi.fn(),
@@ -564,7 +582,7 @@ it('leaves a same-id restart its canvas token when the spawn it replaced is canc
   await expect(first).rejects.toThrow('Agent startup cancelled');
   // The cancelled spawn owns nothing any more; tearing down would strand the restart
   // with a revoked token and a deleted --mcp-config file.
-  expect(server.unregisterCanvasAgent).not.toHaveBeenCalled();
+  expect(server.unregisterCanvasAgent).toHaveBeenCalledTimes(1);
   expect(
     fs.existsSync(path.join(os.tmpdir(), 'parallel-code-canvas-cleanup-test-agent.json')),
   ).toBe(true);
@@ -612,7 +630,12 @@ it('shares one listener between a manual start and a canvas spawn that overlap',
   expect(await manual).toMatchObject({ port: 7777 });
   expect(await spawn).toEqual({ canvasTools: true });
   expect(start).toHaveBeenCalledTimes(1);
-  expect(server.registerCanvasAgent).toHaveBeenCalledWith('task', 'startup-test-agent');
+  expect(server.registerCanvasAgent).toHaveBeenCalledWith(
+    'task',
+    'startup-test-agent',
+    undefined,
+    undefined,
+  );
   expect(server.rebind).not.toHaveBeenCalled();
   expect(await handlers.get(IPC.GetRemoteStatus)?.(undefined, {})).toMatchObject({ enabled: true });
 });
@@ -716,7 +739,12 @@ it('defers the idle stop while a rebind is in flight and gives the spawn a live 
     expect(await docker).toEqual({ canvasTools: true });
     // The rebound listener had no user left once the rebind settled; the spawn got a fresh one.
     expect(loopback.stop).toHaveBeenCalledTimes(1);
-    expect(wide.registerCanvasAgent).toHaveBeenCalledWith('task', 'docker-test-agent');
+    expect(wide.registerCanvasAgent).toHaveBeenCalledWith(
+      'task',
+      'docker-test-agent',
+      undefined,
+      undefined,
+    );
     expect(await handlers.get(IPC.GetRemoteStatus)?.(undefined, {})).toMatchObject({
       enabled: true,
     });
@@ -757,4 +785,114 @@ it('releases a transport started for a spawn that was killed during startup', as
   expect(await handlers.get(IPC.GetRemoteStatus)?.(undefined, {})).toMatchObject({
     enabled: false,
   });
+});
+
+it.each([
+  { command: 'claude', args: ['--mcp-config', 'custom.json'] },
+  { command: 'custom-agent', args: [] },
+  { command: 'bash', args: [], isShell: true },
+  { command: 'claude', args: [], canvasMcp: false },
+])(
+  'revokes prior credentials when a replacement cannot receive app-managed tools: %j',
+  async (replacement) => {
+    mockCanvasBundle();
+    registerAllHandlers(testWindow());
+    const server = mockServer();
+    vi.spyOn(remote, 'startRemoteServer').mockResolvedValueOnce(asHandle(server));
+    const agentId = 'cleanup-test-agent';
+    await handlers.get(IPC.SpawnAgent)?.(undefined, canvasSpawn(agentId));
+    const configPath = path.join(os.tmpdir(), `parallel-code-canvas-${agentId}.json`);
+    expect(fs.existsSync(configPath)).toBe(true);
+    getAgentMeta.mockReturnValue({ taskId: 'task', agentId, isShell: false, canvasTools: true });
+    const before = server.unregisterCanvasAgent.mock.calls.length;
+    await handlers.get(IPC.SpawnAgent)?.(undefined, canvasSpawn(agentId, replacement));
+    expect(server.unregisterCanvasAgent.mock.calls.length).toBe(before + 1);
+    expect(server.registerCanvasAgent).toHaveBeenCalledTimes(1);
+    expect(server.hasCanvasAgents()).toBe(false);
+    expect(fs.existsSync(configPath)).toBe(false);
+  },
+);
+
+it('rejects unsafe parent merge cleanup before Git runs, without relying on a renderer task ID', async () => {
+  const win = {
+    on: vi.fn(),
+    isDestroyed: () => false,
+    webContents: { send: vi.fn() },
+  } as unknown as BrowserWindow;
+  registerAllHandlers(win);
+  const guard = vi
+    .spyOn(DelegationService.prototype, 'assertDirectMergeAllowed')
+    .mockRejectedValue(
+      new Error('Merge first, then close this task to detach its children safely.'),
+    );
+  const merge = vi.spyOn(git, 'mergeTask');
+  await expect(
+    handlers.get(IPC.MergeTask)?.(undefined, {
+      projectRoot: '/repo',
+      branchName: 'task/parent',
+      squash: false,
+      cleanup: true,
+    }),
+  ).rejects.toThrow('Merge first, then close this task');
+  expect(guard).toHaveBeenCalledWith('/repo', 'task/parent', true);
+  expect(merge).not.toHaveBeenCalled();
+});
+
+it('blocks automatic renderer writes immediately when orchestration is disabled, preserving manual writes', () => {
+  const enabled = vi
+    .spyOn(DelegationService.prototype, 'isOrchestrationEnabled')
+    .mockReturnValue(false);
+  const win = {
+    on: vi.fn(),
+    isDestroyed: () => false,
+    webContents: { send: vi.fn() },
+  } as unknown as BrowserWindow;
+  registerAllHandlers(win);
+  const write = handlers.get(IPC.WriteToAgent);
+  expect(write).toBeDefined();
+  expect(() => write?.(undefined, { agentId: 'agent', data: '\r', automation: true })).toThrow(
+    'Agent orchestration is disabled',
+  );
+  expect(writeToAgent).not.toHaveBeenCalled();
+  write?.(undefined, { agentId: 'agent', data: 'Manual prompt' });
+  expect(writeToAgent).toHaveBeenCalledWith('agent', 'Manual prompt');
+  enabled.mockReturnValue(true);
+  write?.(undefined, { agentId: 'agent', data: 'Child update', automation: true });
+  expect(writeToAgent).toHaveBeenCalledWith('agent', 'Child update');
+});
+
+it('routes deletion of a parent with a pending first child through guarded close', async () => {
+  const win = {
+    on: vi.fn(),
+    isDestroyed: () => false,
+    webContents: { send: vi.fn() },
+  } as unknown as BrowserWindow;
+  registerAllHandlers(win);
+  vi.spyOn(DelegationService.prototype, 'getTask').mockReturnValue({
+    taskId: 'parent',
+    name: 'Parent',
+    projectId: 'project',
+    projectRoot: '/repo',
+    worktreePath: '/repo/.worktrees/parent',
+    branchName: 'task/parent',
+    gitIsolation: 'worktree',
+    agentCommand: 'codex',
+    agentArgs: [],
+    delegationParent: true,
+  });
+  const close = vi
+    .spyOn(DelegationService.prototype, 'closeParent')
+    .mockRejectedValue(new Error('A child launch is still settling.'));
+  const remove = vi.spyOn(tasks, 'deleteTask');
+  await expect(
+    handlers.get(IPC.DeleteTask)?.(undefined, {
+      taskId: 'parent',
+      agentIds: [],
+      projectRoot: '/repo',
+      branchName: 'task/parent',
+      deleteBranch: true,
+    }),
+  ).rejects.toThrow('still settling');
+  expect(close).toHaveBeenCalledWith('parent', true);
+  expect(remove).not.toHaveBeenCalled();
 });

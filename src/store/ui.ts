@@ -217,13 +217,6 @@ export function setVerboseLogging(enabled: boolean): void {
   setStore('verboseLogging', enabled);
 }
 
-export function setCoordinatorModeEnabled(enabled: boolean): void {
-  setStore('coordinatorModeEnabled', enabled);
-  invoke(IPC.SetCoordinatorModeEnabled, { enabled }).catch((e) =>
-    console.warn('Failed to set coordinator mode backend:', e),
-  );
-}
-
 export function setDefaultStepsEnabled(enabled: boolean): void {
   setStore('defaultStepsEnabled', enabled);
 }

@@ -22,6 +22,7 @@ docs/*
 !docs/reasoning-graph.md
 !docs/reasoning-graph-view-plan.md
 !docs/reasoning-graph-research.md
+!docs/design-doc.md
 
 # Sandbox bind-mount artifacts from user home (not project files).
 # Root-anchored so legitimate nested files with these names are still tracked.

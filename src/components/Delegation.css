@@ -1,0 +1,58 @@
+.delegation-surface {
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.delegation-surface h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.delegation-surface p {
+  margin: 8px 0;
+}
+
+.delegation-surface button,
+.delegation-button {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.delegation-surface button:hover:not(:disabled),
+.delegation-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.delegation-surface .btn-primary {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.delegation-surface button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.delegation-surface small {
+  color: var(--fg-muted);
+}
+
+/* Collaboration stays visible without displacing the terminal working area. */
+.delegation-panel {
+  flex-shrink: 0;
+  max-height: 30vh;
+  overflow: auto;
+}
+
+.delegation-panel summary {
+  padding: 4px 0;
+  cursor: pointer;
+  color: var(--fg-muted);
+}

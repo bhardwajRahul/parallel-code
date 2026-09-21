@@ -348,6 +348,7 @@ function App() {
   onMount(async () => {
     // Before the first await: restored agents start firing hooks as soon as
     // loadState spawns them, and IPC does not replay what nobody listened to.
+    const stopMCPListeners = initMCPListeners();
     const stopAgentHookStatusListener = startAgentHookStatusListener();
     const stopCanvasAutoOpen = startCanvasAutoOpen();
     // Listen for plan content pushed from backend plan watcher
@@ -481,7 +482,8 @@ function App() {
         continue;
       // Skip if coordinator restore failed — hydrating into a broken coordinator leaves
       // children with stale MCP wiring and misleading 'ready' status.
-      if (store.tasks[task.coordinatedBy]?.mcpStartupStatus !== 'ready') continue;
+      const parent = store.tasks[task.coordinatedBy];
+      if (!parent || (parent.coordinatorMode && parent.mcpStartupStatus !== 'ready')) continue;
       const projectRoot = store.projects.find((p) => p.id === task.projectId)?.path;
       if (!projectRoot) continue;
       markTaskMcpPending(task.id);
@@ -495,6 +497,7 @@ function App() {
           baseBranch: task.baseBranch,
           worktreePath: task.worktreePath,
           coordinatorTaskId: task.coordinatedBy,
+          integrationPolicy: task.integrationPolicy,
           controlledBy: task.controlledBy,
           agentId: task.agentIds[0],
           signalDoneAt: task.signalDoneAt,
@@ -557,7 +560,7 @@ function App() {
     setupAutosave();
     startTaskStatusPolling();
     startUsagePolling();
-    const stopMCPListeners = initMCPListeners();
+
     const stopNotificationWatcher = startDesktopNotificationWatcher(windowFocused);
     const stopPrChecksSubscription = startPrChecksSubscription();
     const stopUpdateSubscription = startUpdateSubscription();

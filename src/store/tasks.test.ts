@@ -121,7 +121,6 @@ vi.mock('./completion', () => ({
 }));
 vi.mock('../lib/log', () => ({ warn: vi.fn() }));
 vi.mock('../lib/clean-task-name', () => ({ cleanTaskName: vi.fn() }));
-vi.mock('./coordinator-preamble', () => ({ COORDINATOR_PREAMBLE: '' }));
 vi.mock('./sidebar-order', () => ({
   getCoordinatorChildren: vi.fn(),
   computeSidebarDraggableTaskOrder: vi.fn(() =>
@@ -920,7 +919,7 @@ describe('MCP startup status transitions', () => {
   });
 });
 
-describe('createTask coordinator base branch prompt', () => {
+describe('createTask delegation options', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     const harness = expectDefined(core.harness, 'mock store harness');
@@ -928,27 +927,27 @@ describe('createTask coordinator base branch prompt', () => {
     mockTasks = {};
     mockAgents = {};
     mockTaskOrder = [];
+    mockDefaultStepsEnabled = false;
+    mockAgentEnvFiles = { 'agent-def': '~/.config/parallel-code/claude.env' };
     vi.mocked(getProjectPath).mockReturnValue('/repo');
+    mockProjects = [{ id: 'proj-1', path: '/repo' }];
     vi.mocked(getProjectBranchPrefix).mockReturnValue('task');
     vi.mocked(isProjectMissing).mockReturnValue(false);
     mockInvoke.mockImplementation((channel: string) => {
       if (channel === IPC.CreateTask) {
         return Promise.resolve({
-          id: 'coord-1',
-          branch_name: 'task/coordinator-work',
-          worktree_path: '/repo/.worktrees/coordinator-work',
+          id: 'parent-1',
+          branch_name: 'task/parent-work',
+          worktree_path: '/repo/.worktrees/parent-work',
         });
-      }
-      if (channel === IPC.StartMCPServer) {
-        return Promise.resolve({ mcpLaunchArgs: ['--mcp-config', '/tmp/coord.json'] });
       }
       return Promise.resolve(undefined);
     });
   });
 
-  it('tells coordinators to base sub-tasks on the coordinator branch, not its base branch', async () => {
-    await createTask({
-      name: 'Coordinator',
+  async function createParent(options = {}) {
+    return createTask({
+      name: 'Parent',
       agentDef: {
         id: 'agent-def',
         name: 'Claude',
@@ -961,51 +960,55 @@ describe('createTask coordinator base branch prompt', () => {
       projectId: 'proj-1',
       gitIsolation: 'worktree',
       baseBranch: 'main',
-      initialPrompt: 'Pick a task',
-      coordinatorMode: true,
+      initialPrompt: 'Work through this backlog',
+      ...options,
+    });
+  }
+
+  it('keeps backlog instructions as the prompt and prepares authority without eager MCP', async () => {
+    await createParent({
+      autoMergeChildren: true,
+      autoSendChildUpdates: true,
+      propagateSkipPermissions: true,
+      maxConcurrentTasks: 5,
     });
 
-    expect(mockTasks['coord-1'].initialPrompt).toContain(
-      'Use `task/coordinator-work` as the baseBranch for all sub-tasks.',
-    );
-    expect(mockTasks['coord-1'].initialPrompt).not.toContain(
-      'Use `main` as the baseBranch for all sub-tasks.',
-    );
-    expect(mockInvoke).toHaveBeenCalledWith(
-      IPC.StartMCPServer,
-      expect.objectContaining({ coordinatorBranch: 'task/coordinator-work' }),
-    );
-    expect(mockInvoke).toHaveBeenCalledWith(
-      IPC.MCP_CoordinatorRegistered,
-      expect.objectContaining({ coordinatorBranch: 'task/coordinator-work' }),
-    );
+    expect(mockTasks['parent-1']).toMatchObject({
+      initialPrompt: 'Work through this backlog',
+      savedInitialPrompt: 'Work through this backlog',
+      autoMergeChildren: true,
+      autoSendChildUpdates: true,
+      propagateSkipPermissions: true,
+      maxConcurrentTasks: 5,
+    });
+    expect(mockTasks['parent-1'].coordinatorMode).toBeUndefined();
+    expect(mockTasks['parent-1'].controlledBy).toBeUndefined();
+    expect(mockTasks['parent-1'].mcpStartupStatus).toBeUndefined();
+    expect(mockInvoke.mock.calls.some(([channel]) => channel === IPC.StartMCPServer)).toBe(false);
+    expect(
+      mockInvoke.mock.calls.some(([channel]) => channel === IPC.MCP_CoordinatorRegistered),
+    ).toBe(false);
+    expect(mockInvoke).toHaveBeenCalledWith(IPC.DelegationRequest, {
+      action: 'register',
+      task: expect.objectContaining({
+        taskId: 'parent-1',
+        autoMergeChildren: true,
+        autoSendChildUpdates: true,
+        propagateSkipPermissions: true,
+        maxConcurrentTasks: 5,
+        agentEnvFile: '~/.config/parallel-code/claude.env',
+      }),
+    });
   });
 
-  it('sends the agent env file so coordinator sub-tasks inherit its credentials', async () => {
-    mockAgentEnvFiles = { 'agent-def': '~/.config/parallel-code/claude.env' };
-
-    await createTask({
-      name: 'Coordinator',
-      agentDef: {
-        id: 'agent-def',
-        name: 'Claude',
-        command: 'claude',
-        args: [],
-        resume_args: [],
-        skip_permissions_args: [],
-        description: 'Claude',
-      },
-      projectId: 'proj-1',
-      gitIsolation: 'worktree',
-      baseBranch: 'main',
-      initialPrompt: 'Pick a task',
-      coordinatorMode: true,
+  it('defaults worktree permissions and concurrency safely and retains explicit false options', async () => {
+    await createParent({ autoMergeChildren: false, autoSendChildUpdates: false });
+    expect(mockTasks['parent-1']).toMatchObject({
+      autoMergeChildren: false,
+      autoSendChildUpdates: false,
+      propagateSkipPermissions: false,
+      maxConcurrentTasks: 3,
     });
-
-    expect(mockInvoke).toHaveBeenCalledWith(
-      IPC.StartMCPServer,
-      expect.objectContaining({ agentEnvFile: '~/.config/parallel-code/claude.env' }),
-    );
   });
 });
 
@@ -1031,6 +1034,7 @@ describe('createTask does not mutate defaultStepsEnabled', () => {
     mockTaskOrder = [];
     mockDefaultStepsEnabled = false;
     vi.mocked(getProjectPath).mockReturnValue('/repo');
+    mockProjects = [{ id: 'proj-1', path: '/repo' }];
     vi.mocked(getProjectBranchPrefix).mockReturnValue('task');
     vi.mocked(isProjectMissing).mockReturnValue(false);
     mockInvoke.mockImplementation((channel: string) => {
@@ -1088,6 +1092,7 @@ describe('createTask assigns the first pane a session id', () => {
     mockAgents = {};
     mockTaskOrder = [];
     vi.mocked(getProjectPath).mockReturnValue('/repo');
+    mockProjects = [{ id: 'proj-1', path: '/repo' }];
     vi.mocked(getProjectBranchPrefix).mockReturnValue('task');
     vi.mocked(isProjectMissing).mockReturnValue(false);
     mockInvoke.mockImplementation((channel: string) => {
@@ -1112,6 +1117,29 @@ describe('createTask assigns the first pane a session id', () => {
     });
     return mockTasks['task-1'];
   }
+
+  it('waits for authority acknowledgment before inserting a task that can spawn', async () => {
+    const original = mockInvoke.getMockImplementation();
+    let release: (() => void) | undefined;
+    const registered = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockInvoke.mockImplementation((channel: string, args: unknown) => {
+      if (channel === IPC.DelegationRequest) return registered;
+      return original?.(channel, args);
+    });
+    const creating = createWith('claude');
+    await vi.waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith(
+        IPC.DelegationRequest,
+        expect.objectContaining({ action: 'register' }),
+      ),
+    );
+    expect(mockTasks['task-1']).toBeUndefined();
+    release?.();
+    await creating;
+    expect(mockTasks['task-1']).toBeDefined();
+  });
 
   it('gives the first Claude pane an id of its own', async () => {
     const task = await createWith('claude');
@@ -1154,6 +1182,62 @@ describe('sendPrompt', () => {
     mockIsAgentBracketedPasteEnabled.mockReturnValue(false);
     mockAgents = { 'agent-1': { status: 'running' } };
     mockTasks = { 'task-1': { agentIds: [], shellAgentIds: [], lastPrompt: '' } };
+  });
+
+  it('cancels an automated prompt during readiness retries', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    mockInvoke.mockRejectedValue(new Error('agent not found'));
+    const sending = sendPrompt('task-1', 'agent-1', 'Child complete', {
+      signal: controller.signal,
+    });
+    const result = expect(sending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.advanceTimersByTimeAsync(0);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(50);
+    await result;
+    expect(writePayloads()).toEqual(['\x1b[I']);
+    expect(mockTasks['task-1'].lastPrompt).toBe('');
+    vi.useRealTimers();
+  });
+
+  it('does not write the automated body if policy changes while focus delivery is pending', async () => {
+    const controller = new AbortController();
+    mockInvoke.mockImplementationOnce(async () => {
+      controller.abort();
+    });
+    await expect(
+      sendPrompt('task-1', 'agent-1', 'Child complete', { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(writePayloads()).toEqual(['\x1b[I']);
+    expect(mockTasks['task-1'].lastPrompt).toBe('');
+  });
+
+  it('cancels automatic Enter during the paste delay without changing manual delivery', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const sending = sendPrompt('task-1', 'agent-1', 'Child complete', {
+      signal: controller.signal,
+    });
+    const result = expect(sending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(writePayloads()).toEqual(['\x1b[I', 'Child complete']);
+    expect(mockInvoke).toHaveBeenLastCalledWith(IPC.WriteToAgent, {
+      agentId: 'agent-1',
+      data: 'Child complete',
+      automation: true,
+    });
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(500);
+    await result;
+    expect(writePayloads()).not.toContain('\r');
+    expect(mockTasks['task-1'].lastPrompt).toBe('');
+    mockInvoke.mockClear();
+    const manual = sendPrompt('task-1', 'agent-1', 'Manual prompt');
+    await vi.advanceTimersByTimeAsync(500);
+    await manual;
+    expect(writePayloads()).toEqual(['\x1b[I', 'Manual prompt', '\r']);
+    vi.useRealTimers();
   });
 
   it('wraps prompt text in bracketed paste when the agent enabled it', async () => {
@@ -1581,7 +1665,7 @@ describe('closeTask — IPC cleanup ordering', () => {
     expect(removeIdx).toBeGreaterThan(ipcIdx);
   });
 
-  it('MCP_CoordinatorDeregistered rejection is swallowed and coordinator is still removed', async () => {
+  it('closes a parent through one backend lifecycle operation', async () => {
     vi.mocked(getCoordinatorChildren).mockReturnValue({ active: [], collapsed: [] });
     mockTasks['coord-1'] = {
       agentIds: ['agent-coord'],
@@ -1591,19 +1675,26 @@ describe('closeTask — IPC cleanup ordering', () => {
       projectId: 'proj-1',
     };
     mockInvoke.mockImplementation((channel: string) => {
-      if (channel === IPC.MCP_CoordinatorDeregistered) {
-        return Promise.reject(new Error('deregister failed'));
-      }
+      if (channel === IPC.DelegationRequest) return Promise.resolve({ detachedChildIds: [] });
       return Promise.resolve(undefined);
     });
 
     await closeTask('coord-1');
 
+    expect(mockInvoke).toHaveBeenCalledWith(IPC.DelegationRequest, {
+      action: 'closeParent',
+      taskId: 'coord-1',
+      deleteBranch: true,
+    });
+    expect(mockInvoke).not.toHaveBeenCalledWith(IPC.MCP_CoordinatorDeregistered, expect.anything());
     // removeTaskFromStore marks 'removing' synchronously; setTimeout deletion is not awaited
     expect(mockTasks['coord-1']?.closingStatus).toBe('removing');
   });
 
   it('detaches coordinator children without clearing backend review state', async () => {
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === IPC.DelegationRequest ? { detachedChildIds: ['child-1'] } : undefined,
+    );
     vi.mocked(getCoordinatorChildren).mockReturnValue({ active: ['child-1'], collapsed: [] });
     mockTasks['coord-1'] = {
       agentIds: ['agent-coord'],
@@ -1645,6 +1736,7 @@ describe('recordTaskMerged counts merges with cleanup, not closures', () => {
     harness.reset(harness.state());
     mockInvoke.mockResolvedValue(undefined);
     vi.mocked(getProjectPath).mockReturnValue('/repo');
+    mockProjects = [{ id: 'proj-1', path: '/repo' }];
   });
 
   it('closing an unmerged task does NOT increment the counter', async () => {

@@ -1161,7 +1161,7 @@ interface TaskEntryProps {
 
 function TaskEntry(props: TaskEntryProps) {
   const task = () => store.tasks[props.taskId];
-  const isCoordinator = () => task()?.coordinatorMode ?? false;
+  const isCoordinator = () => Boolean(task()?.coordinatorMode || task()?.delegationParent);
 
   return (
     <Show when={task()}>
@@ -1285,7 +1285,8 @@ function CollapsedTaskEntry(props: {
 }) {
   const task = () => store.tasks[props.taskId];
   // Only top-level coordinators render children — indented entries never recurse
-  const isCoordinator = () => !props.indented && (task()?.coordinatorMode ?? false);
+  const isCoordinator = () =>
+    !props.indented && Boolean(task()?.coordinatorMode || task()?.delegationParent);
   const children = createMemo(() =>
     isCoordinator() ? getCoordinatorChildren(props.taskId) : { active: [], collapsed: [] },
   );

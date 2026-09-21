@@ -8,6 +8,7 @@ import { SegmentedButtons } from './SegmentedButtons';
 import { ImportWorktreesDialog } from './ImportWorktreesDialog';
 import { CloseIcon } from './icons';
 import { RemoveProjectConfirm } from './RemoveProjectConfirm';
+import { updateProjectCoordination } from '../store/projects';
 import { isDocumentProject } from '../store/projects';
 
 interface EditProjectDialogProps {
@@ -21,6 +22,9 @@ function hueFromColor(color: string): number {
 }
 
 export function EditProjectDialog(props: EditProjectDialogProps) {
+  const [allowPeerAccess, setAllowPeerAccess] = createSignal(false);
+  const [saving, setSaving] = createSignal(false);
+  const [saveError, setSaveError] = createSignal('');
   const [name, setName] = createSignal('');
   const [selectedHue, setSelectedHue] = createSignal(0);
   const [branchPrefix, setBranchPrefix] = createSignal('task');
@@ -43,6 +47,8 @@ export function EditProjectDialog(props: EditProjectDialogProps) {
     const p = props.project;
     if (!p) return;
     setName(p.name);
+    setAllowPeerAccess(p.allowPeerAccess === true);
+    setSaveError('');
     setSelectedHue(hueFromColor(p.color));
     setBranchPrefix(sanitizeBranchPrefix(p.branchPrefix ?? 'task'));
     setDeleteBranchOnClose(p.deleteBranchOnClose ?? true);
@@ -74,21 +80,33 @@ export function EditProjectDialog(props: EditProjectDialogProps) {
 
   const canSave = () => name().trim().length > 0;
 
-  function handleSave() {
-    if (!canSave() || !props.project) return;
-    const sanitizedPrefix = sanitizeBranchPrefix(branchPrefix());
-    updateProject(props.project.id, {
+  async function handleSave() {
+    if (!canSave() || !props.project || saving()) return;
+    setSaving(true);
+    setSaveError('');
+    const projectId = props.project.id;
+    const peerConsent = allowPeerAccess();
+    const syncPolicy = showsTaskSettings();
+    const updates = {
       name: name().trim(),
       color: `hsl(${selectedHue()}, 70%, 75%)`,
-      branchPrefix: sanitizedPrefix,
+      branchPrefix: sanitizeBranchPrefix(branchPrefix()),
       deleteBranchOnClose: deleteBranchOnClose(),
       defaultGitIsolation: defaultGitIsolation(),
       defaultBaseBranch: defaultBaseBranch() || undefined,
       coverageReportPath: coverageReportPath().trim() || undefined,
       verifyCommand: verifyCommand().trim() || undefined,
       terminalBookmarks: bookmarks(),
-    });
-    props.onClose();
+    };
+    try {
+      if (syncPolicy) await updateProjectCoordination(projectId, peerConsent);
+      updateProject(projectId, updates);
+      props.onClose();
+    } catch (error) {
+      setSaveError(String(error));
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -112,6 +130,40 @@ export function EditProjectDialog(props: EditProjectDialogProps) {
               Edit Project
             </h2>
 
+            <Show when={showsTaskSettings()}>
+              <fieldset
+                style={{
+                  display: 'grid',
+                  gap: '10px',
+                  border: `1px solid ${theme.border}`,
+                  padding: '12px',
+                }}
+              >
+                <legend>Agent collaboration</legend>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={allowPeerAccess()}
+                    onChange={(e) => setAllowPeerAccess(e.currentTarget.checked)}
+                  />{' '}
+                  Allow peer access between tasks
+                </label>
+                <small>
+                  Allows eligible top-level agents in this project to discover each other, read
+                  output, and send messages held for your review. Messages never type into terminals
+                  automatically.
+                </small>
+                <small>
+                  Existing sessions need a supported restart and resume to acquire newly enabled
+                  tools. Sessions with custom MCP configuration require separate setup.
+                </small>
+              </fieldset>
+            </Show>
+            <Show when={saveError()}>
+              <p role="alert" style={{ color: theme.error }}>
+                {saveError()}
+              </p>
+            </Show>
             {/* Path */}
             <div
               style={{
@@ -598,7 +650,7 @@ export function EditProjectDialog(props: EditProjectDialogProps) {
               <button
                 type="button"
                 class="btn-primary"
-                disabled={!canSave()}
+                disabled={!canSave() || saving()}
                 onClick={handleSave}
                 style={{
                   padding: '9px 20px',

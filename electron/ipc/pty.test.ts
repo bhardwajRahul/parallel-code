@@ -779,6 +779,23 @@ describe('spawnAgent docker mode', () => {
 });
 
 describe('spawnAgent pending setup', () => {
+  it('rechecks trusted admission after asynchronous sandbox setup', async () => {
+    let allowed = true;
+    const admission = vi.fn(() => {
+      if (!allowed) throw new Error('Launch permission revoked');
+    });
+    const startup = spawnAgent(
+      createMockWindow(),
+      buildSpawnArgs({ cwd: makeTempHome([]), dockerMode: false }),
+      admission,
+    );
+    expect(mockPtySpawn).not.toHaveBeenCalled();
+    allowed = false;
+    await expect(startup).rejects.toThrow('Launch permission revoked');
+    expect(admission).toHaveBeenCalledOnce();
+    expect(mockPtySpawn).not.toHaveBeenCalled();
+  });
+
   it.each(['one', 'all'])('does not launch after stopping %s pending agents', async (mode) => {
     const agentId = nextAgentId();
     const startup = spawnAgent(

@@ -1,3 +1,5 @@
+import { setStore } from '../store/core';
+import type { SessionCapabilities } from '../../electron/shared/delegation-types';
 import {
   onMount,
   onCleanup,
@@ -1109,7 +1111,11 @@ export function TerminalView(props: TerminalViewProps) {
       const landingState = store.tasks[taskId]?.landingState;
       if (isLandedTaskState(landingState)) return;
       spawnStarted = true;
-      invoke<{ canvasTools: boolean }>(IPC.SpawnAgent, {
+      invoke<{
+        canvasTools: boolean;
+        capabilities?: SessionCapabilities;
+        sessionInstanceId?: string;
+      }>(IPC.SpawnAgent, {
         taskId,
         agentId,
         command: props.command,
@@ -1118,6 +1124,7 @@ export function TerminalView(props: TerminalViewProps) {
           !store.tasks[taskId].coordinatorMode &&
           !store.tasks[taskId].coordinatedBy,
         args: props.args,
+        managedMcpLaunchArgs: store.tasks[taskId]?.mcpLaunchArgs,
         cwd: props.cwd,
         env: props.env ?? {},
         envFile: props.envFile,
@@ -1136,6 +1143,10 @@ export function TerminalView(props: TerminalViewProps) {
         .then((result) => {
           if (spawnDisposed) return;
           setAgentCanvasTools(agentId, result?.canvasTools === true);
+          if (store.agents[agentId]) {
+            setStore('agents', agentId, 'capabilities', result?.capabilities);
+            setStore('agents', agentId, 'sessionInstanceId', result?.sessionInstanceId);
+          }
           flushPendingResize();
           flushPendingInput();
         })

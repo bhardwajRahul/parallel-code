@@ -106,6 +106,8 @@ export function markAgentExited(
       if (s.agents[agentId]) {
         s.agents[agentId].status = 'exited';
         s.agents[agentId].canvasTools = undefined;
+        s.agents[agentId].capabilities = undefined;
+        s.agents[agentId].sessionInstanceId = undefined;
         s.agents[agentId].exitCode = exitInfo.exit_code;
         s.agents[agentId].signal = exitInfo.signal;
         s.agents[agentId].lastOutput = exitInfo.last_output;
@@ -127,6 +129,8 @@ export function restartAgent(agentId: string, useResumeArgs: boolean): void {
       if (s.agents[agentId]) {
         s.agents[agentId].status = 'running';
         s.agents[agentId].canvasTools = undefined;
+        s.agents[agentId].capabilities = undefined;
+        s.agents[agentId].sessionInstanceId = undefined;
         s.agents[agentId].exitCode = null;
         s.agents[agentId].signal = null;
         s.agents[agentId].lastOutput = [];
@@ -137,6 +141,7 @@ export function restartAgent(agentId: string, useResumeArgs: boolean): void {
         // A resume continues the pane's existing session, so its id stands.
         // A restart without resume is a new conversation and needs a new one.
         if (!useResumeArgs) {
+          s.agents[agentId].requireResumeSuccess = undefined;
           const agent = s.agents[agentId];
           assignFreshSessionId(s, agent.taskId, agentId, agent.def.command);
         }
@@ -156,6 +161,8 @@ export function switchAgent(agentId: string, newDef: AgentDef): void {
         s.agents[agentId].def = newDef;
         s.agents[agentId].status = 'running';
         s.agents[agentId].canvasTools = undefined;
+        s.agents[agentId].capabilities = undefined;
+        s.agents[agentId].sessionInstanceId = undefined;
         s.agents[agentId].exitCode = null;
         s.agents[agentId].signal = null;
         s.agents[agentId].lastOutput = [];

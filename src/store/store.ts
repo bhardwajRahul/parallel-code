@@ -171,7 +171,6 @@ export {
   setAskCodeProvider,
   setMinimaxApiKey,
   setWindowState,
-  setCoordinatorModeEnabled,
   setDefaultStepsEnabled,
   setDefaultSkipPermissions,
   setCanvasOwnershipBadges,
@@ -251,3 +250,5 @@ export {
   stopMCPStatusPolling,
 } from './mcpStatus';
 export { refreshUsage, startUsagePolling, stopUsagePolling, USAGE_PROVIDERS } from './usage';
+
+export { setMcpOrchestrationEnabled } from './delegation';

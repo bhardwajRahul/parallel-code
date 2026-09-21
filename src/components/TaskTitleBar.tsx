@@ -388,7 +388,7 @@ export function TaskTitleBar(props: TaskTitleBarProps) {
           />
         </div>
         <div class="task-action-group" role="group" aria-label="Task actions">
-          <Show when={!props.task.coordinatorMode}>
+          <Show when={!props.task.coordinatorMode && !props.task.delegationParent}>
             <IconButton
               icon={
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">

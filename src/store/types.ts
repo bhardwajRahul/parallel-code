@@ -1,3 +1,7 @@
+import type {
+  IntegrationPolicy,
+  SessionCapabilities,
+} from '../../electron/shared/delegation-types';
 import type { CanvasTaskLink, CanvasTaskSource } from '../lib/canvas-task-links';
 import type {
   AgentDef,
@@ -75,6 +79,7 @@ export interface TerminalBookmark {
 }
 
 export interface Project {
+  allowPeerAccess?: boolean;
   id: string;
   name: string;
   path: string;
@@ -125,6 +130,9 @@ export interface DocumentSessionRef {
 }
 
 export interface Agent {
+  capabilities?: SessionCapabilities;
+  sessionInstanceId?: string;
+  requireResumeSuccess?: boolean;
   /** Runtime launch capability; never inferred from the selected CLI. */
   canvasTools?: boolean;
   chatState?: import('../../electron/shared/agent-chat-types').AgentChatState;
@@ -257,7 +265,12 @@ export interface Task {
   promptDraft?: string;
   terminalInputPending?: boolean;
   terminalInputPendingFromQuestion?: boolean;
-  // Coordinator fields
+  delegationParent?: boolean;
+  delegationPaused?: boolean;
+  integrationPolicy?: IntegrationPolicy;
+  autoMergeChildren?: boolean;
+  autoSendChildUpdates?: boolean;
+  /** @deprecated Retained to restore tasks created with legacy coordinator transport. */
   coordinatorMode?: boolean;
   propagateSkipPermissions?: boolean;
   maxConcurrentTasks?: number;
@@ -348,7 +361,12 @@ export interface PersistedTask {
   stepsEnabled?: boolean;
   branchAdoptedFrom?: string;
   branchOfferDismissed?: string;
-  // Coordinator fields
+  delegationParent?: boolean;
+  delegationPaused?: boolean;
+  integrationPolicy?: IntegrationPolicy;
+  autoMergeChildren?: boolean;
+  autoSendChildUpdates?: boolean;
+  /** @deprecated Retained to restore tasks created with legacy coordinator transport. */
   coordinatorMode?: boolean;
   propagateSkipPermissions?: boolean;
   maxConcurrentTasks?: number;
@@ -429,7 +447,7 @@ export interface PersistedState {
   lightThemeCustomId?: string | null;
   darkThemePreset?: LookPreset;
   darkThemeCustomId?: string | null;
-  coordinatorModeEnabled?: boolean;
+  mcpOrchestrationEnabled?: boolean;
   documentWorkspacesEnabled?: boolean;
   documentFullWidth?: boolean;
   coordinatorNotificationDelayMs?: number;
@@ -567,7 +585,7 @@ export interface AppStore {
   lightThemeCustomId: string | null;
   darkThemePreset: LookPreset;
   darkThemeCustomId: string | null;
-  coordinatorModeEnabled: boolean;
+  mcpOrchestrationEnabled: boolean;
   documentWorkspacesEnabled: boolean;
   /** Let the rendered document take the whole column instead of a reading width. */
   documentFullWidth: boolean;

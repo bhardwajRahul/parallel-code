@@ -1,5 +1,7 @@
 {
   "AgentChat": "agent_chat",
+  "DelegationRequest": "delegation_request",
+  "DelegationChanged": "delegation_changed",
   "SpawnAgent": "spawn_agent",
   "WriteToAgent": "write_to_agent",
   "ResizeAgent": "resize_agent",
@@ -133,7 +135,6 @@
   "QuitAndInstallUpdate": "quit_and_install_update",
   "GetUpdateStatus": "get_update_status",
   "UpdateStatusChanged": "update_status_changed",
-  "SetCoordinatorModeEnabled": "set_coordinator_mode_enabled",
   "StartMCPServer": "start_mcp_server",
   "StopMCPServer": "stop_mcp_server",
   "GetMCPStatus": "get_mcp_status",

@@ -132,7 +132,7 @@ let serverToken = '';
 let serverPort = 0;
 let serverStop: () => Promise<void>;
 
-async function startServer(coordinator: Coordinator) {
+async function startServer(coordinator: Coordinator, isOrchestrationEnabled = () => true) {
   const srv = await startRemoteServer({
     port: 0, // random port
     host: '0.0.0.0',
@@ -140,6 +140,7 @@ async function startServer(coordinator: Coordinator) {
     getTaskName: (id) => id,
     getAgentStatus: () => ({ status: 'exited', exitCode: null, lastLine: '' }),
     getCoordinator: () => coordinator,
+    isOrchestrationEnabled,
   });
   serverToken = srv.token;
   serverPort = srv.port;
@@ -892,5 +893,116 @@ describe('mobile token — restricted to agent routes only', () => {
   it('POST /api/tasks returns 403', async () => {
     const res = await mobileRequest('POST', '/api/tasks');
     expect(res.status).toBe(403);
+  });
+});
+
+// The global agent gate does not revoke manual phone access or completion reports.
+describe('global orchestration policy on legacy HTTP routes', () => {
+  let enabled: boolean;
+  let coord: Coordinator;
+  let srv: Awaited<ReturnType<typeof startRemoteServer>>;
+
+  beforeEach(async () => {
+    enabled = true;
+    coord = makeMockCoordinator();
+    srv = await startServer(coord, () => enabled);
+  });
+
+  afterEach(async () => {
+    await srv.stop();
+  });
+
+  it.each([
+    ['GET', '/api/tasks'],
+    ['GET', `/api/tasks/${taskA.id}`],
+    ['GET', `/api/tasks/${taskA.id}/diff`],
+    ['GET', `/api/tasks/${taskA.id}/output`],
+    ['POST', '/api/tasks'],
+    ['POST', '/api/wait-signal'],
+    ['POST', `/api/tasks/${taskA.id}/prompt`],
+    ['POST', `/api/tasks/${taskA.id}/merge`],
+    ['POST', `/api/tasks/${taskA.id}/review-merge`],
+    ['DELETE', `/api/tasks/${taskA.id}`],
+  ])('blocks coordinator %s %s after disabling orchestration', async (method, path) => {
+    expect((await get('/api/tasks', COORD_A)).status).toBe(200);
+    enabled = false;
+    const response = await httpRequest(
+      method,
+      path,
+      method === 'POST' ? { name: 'child', prompt: 'Continue' } : undefined,
+      COORD_A,
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'Agent orchestration is disabled in Settings > MCP.',
+    });
+    for (const operation of [coord.createTask, coord.sendPrompt, coord.mergeTask, coord.closeTask])
+      expect(operation).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the policy after reading an in-flight coordinator request body', async () => {
+    const body = JSON.stringify({ name: 'child', prompt: 'Continue' });
+    const pending = http.request({
+      hostname: '127.0.0.1',
+      port: srv.port,
+      path: '/api/tasks',
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${srv.token}`,
+        'X-Coordinator-Id': COORD_A,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        Expect: '100-continue',
+      },
+    });
+    const response = new Promise<number>((resolve, reject) => {
+      pending.on('error', reject);
+      pending.on('response', (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode ?? 0));
+      });
+    });
+    const accepted = new Promise<void>((resolve) => pending.once('continue', resolve));
+    pending.flushHeaders();
+    await accepted;
+    pending.write(body.slice(0, -1));
+    enabled = false;
+    pending.end(body.slice(-1));
+    expect(await response).toBe(403);
+    expect(coord.createTask).not.toHaveBeenCalled();
+  });
+
+  it('blocks child landing but permits only authenticated completion reports', async () => {
+    enabled = false;
+    const childRequest = (route: string, doneToken?: string) =>
+      fetch(`http://127.0.0.1:${srv.port}/api/tasks/${taskA.id}/${route}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${srv.subtaskToken}`,
+          'Content-Type': 'application/json',
+          ...(doneToken === undefined ? {} : { 'X-Done-Token': doneToken }),
+        },
+        body: JSON.stringify({
+          verification: { checks: [{ name: 'test', command: 'npm test', result: 'passed' }] },
+        }),
+      });
+    expect((await childRequest('land', DONE_TOKENS[taskA.id])).status).toBe(403);
+    expect(coord.landSelf).not.toHaveBeenCalled();
+    expect((await childRequest('done')).status).toBe(403);
+    expect((await childRequest('done', DONE_TOKENS[taskB.id])).status).toBe(403);
+    expect(coord.signalDone).not.toHaveBeenCalled();
+    expect((await childRequest('done', DONE_TOKENS[taskA.id])).status).toBe(200);
+    expect(coord.signalDone).toHaveBeenCalledExactlyOnceWith(taskA.id);
+    expect((await post(`/api/tasks/${taskA.id}/done`, {}, COORD_A)).status).toBe(200);
+    expect((await post(`/api/tasks/${taskB.id}/done`, {}, COORD_A)).status).toBe(403);
+  });
+
+  it('keeps trusted phone agent access available while orchestration is disabled', async () => {
+    enabled = false;
+    const response = await fetch(`http://127.0.0.1:${srv.port}/api/agents`, {
+      headers: { Authorization: `Bearer ${srv.mobileToken}` },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
   });
 });

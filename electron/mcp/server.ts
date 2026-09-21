@@ -10,20 +10,28 @@ import { MCPClient } from './client.js';
 import { parseMindMapUpdate } from '../shared/mindmap.js';
 import { parseReasoningUpdate } from '../shared/reasoning-feed.js';
 import { parseCanvasView } from '../shared/canvas-view.js';
-import { CANVAS_INSTRUCTIONS, hasCanvasTools, selectTools } from './mcp-tool-list.js';
+import {
+  APP_TASK_INSTRUCTIONS,
+  CANVAS_INSTRUCTIONS,
+  hasCanvasTools,
+  selectTools,
+  sessionInstructions,
+} from './mcp-tool-list.js';
 import { validateBranchName } from './validation.js';
 import { formatDiffForTool } from './diff-format.js';
 import type { LandSelfInput } from './types.js';
+import type { SessionCapabilities, SessionProfile } from '../shared/delegation-types.js';
 
 export interface MCPToolHandlerContext {
   client: MCPClient;
   taskId: string;
   coordinatorId: string;
   canvasOnly?: boolean;
+  sessionCapabilities?: SessionCapabilities;
 }
 
 export async function handleMCPToolCall(
-  { client, taskId, coordinatorId, canvasOnly }: MCPToolHandlerContext,
+  { client, taskId, coordinatorId, canvasOnly, sessionCapabilities }: MCPToolHandlerContext,
   name: string,
   params: unknown,
 ) {
@@ -34,12 +42,28 @@ export async function handleMCPToolCall(
     'reasoning_update',
     'canvas_open',
   ].includes(name);
-  if (canvasOnly && !canvasTool)
+  if (
+    sessionCapabilities &&
+    !selectTools(taskId, coordinatorId, false, sessionCapabilities).some(
+      (tool) => tool.name === name,
+    )
+  )
+    return {
+      content: [{ type: 'text', text: `Error: '${name}' is not available to this session.` }],
+      isError: true,
+    };
+  if (!sessionCapabilities && canvasOnly && !canvasTool)
     return {
       content: [{ type: 'text', text: `Error: '${name}' is not available to canvas sessions.` }],
       isError: true,
     };
-  if (taskId && !coordinatorId && !canvasTool && !['signal_done', 'land_self'].includes(name))
+  if (
+    !sessionCapabilities &&
+    taskId &&
+    !coordinatorId &&
+    !canvasTool &&
+    !['signal_done', 'land_self'].includes(name)
+  )
     return {
       content: [
         {
@@ -51,6 +75,22 @@ export async function handleMCPToolCall(
     };
 
   try {
+    if (sessionCapabilities && !canvasTool) {
+      if (params !== undefined && (!params || typeof params !== 'object' || Array.isArray(params)))
+        throw new Error('Tool arguments must be an object.');
+      const scopedParams = { ...(params as Record<string, unknown> | undefined) };
+      if (['wait_for_idle', 'wait_for_signal_done', 'wait_for_agent_prompt'].includes(name)) {
+        const timeout = scopedParams.timeoutMs;
+        if (
+          timeout !== undefined &&
+          (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0)
+        )
+          throw new Error('timeoutMs must be a positive finite number.');
+        scopedParams.timeoutMs = Math.min(typeof timeout === 'number' ? timeout : 30000, 60000);
+      }
+      const result = await client.callSessionTool(name, scopedParams);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
     switch (name) {
       case 'reasoning_read':
       case 'reasoning_update': {
@@ -270,14 +310,27 @@ export function parseArgs(argv: string[]): {
   coordinatorId: string;
   canvasOnly: boolean;
   tokenFile: string;
+  sessionCapabilities?: SessionCapabilities;
 } {
+  let profile: SessionProfile | undefined;
+  let canCreate = false;
+  let peers = false;
   let canvasOnly = false;
   let url = '';
   let tokenFile = ''; // set for Codex: its inline config cannot carry the token privately
   let taskId = ''; // set for sub-tasks: enables signal_done
   let coordinatorId = ''; // set for coordinator: sent as coordinatorTaskId in create_task
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--canvas-only') {
+    if (argv[i] === '--session-profile') {
+      const value = argv[++i];
+      if (value !== 'ordinary' && value !== 'child-review' && value !== 'child-automatic')
+        throw new Error('Invalid --session-profile.');
+      profile = value;
+    } else if (argv[i] === '--allow-create') {
+      canCreate = true;
+    } else if (argv[i] === '--peer-tools') {
+      peers = true;
+    } else if (argv[i] === '--canvas-only') {
       canvasOnly = true;
     } else if (argv[i] === '--url' && argv[i + 1]) {
       url = argv[++i];
@@ -289,7 +342,20 @@ export function parseArgs(argv: string[]): {
       tokenFile = argv[++i];
     }
   }
-  return { url, taskId, coordinatorId, canvasOnly, tokenFile };
+  if (profile && (!taskId || coordinatorId || canvasOnly))
+    throw new Error(
+      'Session profiles require --task-id and cannot use coordinator or canvas-only mode.',
+    );
+  if (!profile && (canCreate || peers))
+    throw new Error('Session capability flags require --session-profile.');
+  return {
+    url,
+    taskId,
+    coordinatorId,
+    canvasOnly,
+    tokenFile,
+    ...(profile ? { sessionCapabilities: { profile, canCreate, peers } } : {}),
+  };
 }
 
 /** The token file is the app-written 0600 MCP config; an unreadable file yields no token. */
@@ -310,7 +376,9 @@ export function readTokenFile(file: string): string {
 }
 
 async function main(): Promise<void> {
-  const { url, taskId, coordinatorId, canvasOnly, tokenFile } = parseArgs(process.argv.slice(2));
+  const { url, taskId, coordinatorId, canvasOnly, tokenFile, sessionCapabilities } = parseArgs(
+    process.argv.slice(2),
+  );
   const token = tokenFile ? readTokenFile(tokenFile) : (process.env.PARALLEL_CODE_MCP_TOKEN ?? '');
   const doneToken = process.env.PARALLEL_CODE_MCP_DONE_TOKEN || undefined;
 
@@ -339,19 +407,26 @@ async function main(): Promise<void> {
     { name: 'parallel-code', version: '1.0.0' },
     {
       capabilities: { tools: {} },
-      instructions: hasCanvasTools(taskId, coordinatorId, canvasOnly)
-        ? CANVAS_INSTRUCTIONS
-        : undefined,
+      instructions:
+        [
+          APP_TASK_INSTRUCTIONS,
+          ...(hasCanvasTools(taskId, coordinatorId, canvasOnly) ? [CANVAS_INSTRUCTIONS] : []),
+          ...(sessionCapabilities ? [sessionInstructions(sessionCapabilities)] : []),
+        ].join('\n\n') || undefined,
     },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: selectTools(taskId, coordinatorId, canvasOnly) };
+    return { tools: selectTools(taskId, coordinatorId, canvasOnly, sessionCapabilities) };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: params } = request.params;
-    return handleMCPToolCall({ client, taskId, coordinatorId, canvasOnly }, name, params);
+    return handleMCPToolCall(
+      { client, taskId, coordinatorId, canvasOnly, sessionCapabilities },
+      name,
+      params,
+    );
   });
 
   const transport = new StdioServerTransport();

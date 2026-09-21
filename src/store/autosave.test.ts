@@ -4,6 +4,14 @@ import { persistedSnapshot } from './autosave';
 import type { Task } from './types';
 
 describe('autosave snapshot includes new-task-default fields', () => {
+  it('mcpOrchestrationEnabled changes the snapshot', () => {
+    setStore('mcpOrchestrationEnabled', true);
+    const before = persistedSnapshot();
+    setStore('mcpOrchestrationEnabled', false);
+    expect(persistedSnapshot()).not.toBe(before);
+    setStore('mcpOrchestrationEnabled', true);
+  });
+
   it('defaultStepsEnabled changes the snapshot', () => {
     setStore('defaultStepsEnabled', false);
     const before = persistedSnapshot();
@@ -88,36 +96,49 @@ describe('autosave snapshot includes new-task-default fields', () => {
     }
   });
 
-  it.each(['promptDraft', 'browserUrl', 'promptHistory'] as const)(
-    '%s changes the snapshot',
-    (field) => {
-      const taskId = 'autosave-draft-task';
-      const task: Task = {
-        id: taskId,
-        name: taskId,
-        projectId: 'p1',
-        branchName: 'feature/draft',
-        worktreePath: '/tmp/autosave-draft-task',
-        agentIds: [],
-        shellAgentIds: [],
-        notes: '',
-        lastPrompt: '',
-        gitIsolation: 'worktree',
-      };
-      setStore('tasks', taskId, task);
-      setStore('taskOrder', (order) => [...order, taskId]);
-      try {
-        const before = persistedSnapshot();
-        if (field === 'promptHistory') {
-          setStore('tasks', taskId, 'promptHistory', [{ text: 'Repeated prompt', sentAt: 1 }]);
-        } else {
-          setStore('tasks', taskId, field, 'changed persisted value');
-        }
-        expect(persistedSnapshot()).not.toBe(before);
-      } finally {
-        setStore('taskOrder', (order) => order.filter((id) => id !== taskId));
-        setStore('tasks', taskId, undefined as unknown as Task);
+  it.each([
+    'promptDraft',
+    'browserUrl',
+    'promptHistory',
+    'autoMergeChildren',
+    'autoSendChildUpdates',
+    'propagateSkipPermissions',
+    'maxConcurrentTasks',
+  ] as const)('%s changes the snapshot', (field) => {
+    const taskId = 'autosave-draft-task';
+    const task: Task = {
+      id: taskId,
+      name: taskId,
+      projectId: 'p1',
+      branchName: 'feature/draft',
+      worktreePath: '/tmp/autosave-draft-task',
+      agentIds: [],
+      shellAgentIds: [],
+      notes: '',
+      lastPrompt: '',
+      gitIsolation: 'worktree',
+    };
+    setStore('tasks', taskId, task);
+    setStore('taskOrder', (order) => [...order, taskId]);
+    try {
+      const before = persistedSnapshot();
+      if (field === 'promptHistory') {
+        setStore('tasks', taskId, 'promptHistory', [{ text: 'Repeated prompt', sentAt: 1 }]);
+      } else if (field === 'maxConcurrentTasks') {
+        setStore('tasks', taskId, field, 5);
+      } else if (
+        field === 'autoMergeChildren' ||
+        field === 'autoSendChildUpdates' ||
+        field === 'propagateSkipPermissions'
+      ) {
+        setStore('tasks', taskId, field, true);
+      } else {
+        setStore('tasks', taskId, field, 'changed persisted value');
       }
-    },
-  );
+      expect(persistedSnapshot()).not.toBe(before);
+    } finally {
+      setStore('taskOrder', (order) => order.filter((id) => id !== taskId));
+      setStore('tasks', taskId, undefined as unknown as Task);
+    }
+  });
 });

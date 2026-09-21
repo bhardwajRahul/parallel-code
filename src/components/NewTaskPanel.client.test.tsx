@@ -1,4 +1,5 @@
 import { render } from 'solid-js/web';
+import { reconcile } from 'solid-js/store';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { IPC } from '../../electron/ipc/channels';
 import { invoke } from '../lib/ipc';
@@ -18,16 +19,19 @@ beforeEach(() => {
     if (channel === IPC.CheckDockerAvailable) return false;
     return undefined;
   });
+  setStore('tasks', reconcile({}));
   setStore({
+    newTaskPrefillPrompt: null,
+    mcpOrchestrationEnabled: true,
     projects: [{ id: 'project', name: 'Project', path: '/project', color: '#abc' }],
     availableAgents: [
       {
         id: 'agent',
         name: 'Agent',
-        command: 'agent',
+        command: 'claude',
         args: [],
         resume_args: [],
-        skip_permissions_args: [],
+        skip_permissions_args: ['--dangerously-skip-permissions'],
         description: '',
       },
     ],
@@ -153,4 +157,102 @@ it('creates a linked task from the editable canvas assignment with the source br
   ]);
   expect(store.showNewTaskPanel).toBe(false);
   expect(store.newTaskPrefillPrompt).toBeNull();
+});
+
+function openAdvanced(): void {
+  const button = [...host.querySelectorAll('button')].find((button) =>
+    button.textContent?.includes('Advanced options'),
+  );
+  if (!button) throw new Error('Missing advanced options');
+  button.click();
+}
+
+function checkbox(label: string): HTMLInputElement {
+  const input = [...host.querySelectorAll('label')]
+    .find((element) => element.textContent?.trim() === label)
+    ?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+  if (!input) throw new Error(`Missing ${label} checkbox`);
+  return input;
+}
+
+it('offers opt-in automation on ordinary tasks without a coordinator mode', async () => {
+  await vi.waitFor(() =>
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false),
+  );
+  openAdvanced();
+  expect(host.textContent).not.toContain('Coordinator mode');
+  expect(host.textContent).toContain('Agent automation');
+  expect(checkbox('Automatically merge completed child tasks').checked).toBe(false);
+  expect(checkbox('Automatically send child updates').checked).toBe(false);
+  checkbox('Automatically merge completed child tasks').click();
+  checkbox('Automatically send child updates').click();
+  const limit = host.querySelector<HTMLInputElement>(
+    '[data-nav-field="agent-automation"] input[type="number"]',
+  );
+  if (!limit) throw new Error('Missing concurrency limit');
+  limit.value = '7';
+  limit.dispatchEvent(new Event('input', { bubbles: true }));
+  const originalInvoke = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation((channel, args) =>
+    channel === IPC.CreateTask
+      ? Promise.resolve({
+          id: 'automated',
+          branch_name: 'task/automated',
+          worktree_path: '/project/automated',
+        })
+      : Promise.resolve(originalInvoke?.(channel, args)),
+  );
+  host
+    .querySelector('form')
+    ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  await vi.waitFor(() => expect(store.tasks.automated).toBeDefined());
+  expect(store.tasks.automated.autoMergeChildren).toBe(true);
+  expect(store.tasks.automated.autoSendChildUpdates).toBe(true);
+  expect(store.tasks.automated.maxConcurrentTasks).toBe(7);
+  expect(store.tasks.automated.coordinatorMode).toBeUndefined();
+});
+
+it('hides automation when orchestration is disabled', async () => {
+  await vi.waitFor(() =>
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false),
+  );
+  openAdvanced();
+  setStore('mcpOrchestrationEnabled', false);
+  expect(host.textContent).not.toContain('Agent automation');
+});
+
+it('hides automation for an unsupported agent', async () => {
+  dispose();
+  host.replaceChildren();
+  setStore('availableAgents', 0, 'command', 'custom-agent');
+  dispose = render(() => <NewTaskPanel open onClose={vi.fn()} />, host);
+  await vi.waitFor(() =>
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false),
+  );
+  openAdvanced();
+  expect(host.textContent).not.toContain('Agent automation');
+});
+
+it('omits automation selected before switching to the current branch', async () => {
+  await vi.waitFor(() =>
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false),
+  );
+  openAdvanced();
+  checkbox('Automatically merge completed child tasks').click();
+  checkbox('Automatically send child updates').click();
+  const direct = [...host.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Current Branch',
+  );
+  if (!direct) throw new Error('Missing current branch option');
+  direct.click();
+  expect(host.textContent).not.toContain('Agent automation');
+  host
+    .querySelector('form')
+    ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  const directTask = () =>
+    Object.values(store.tasks).find((task) => task.gitIsolation === 'direct');
+  await vi.waitFor(() => expect(directTask()).toBeDefined());
+  expect(directTask()?.autoMergeChildren).toBeUndefined();
+  expect(directTask()?.autoSendChildUpdates).toBeUndefined();
+  expect(directTask()?.maxConcurrentTasks).toBeUndefined();
 });

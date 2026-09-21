@@ -93,7 +93,7 @@ export function computeSidebarTaskOrder(): string[] {
   const pushWithVisibleChildren = (taskId: string) => {
     order.push(taskId);
     const task = store.tasks[taskId];
-    if (!task?.coordinatorMode) return;
+    if (!task) return;
     const children = getCoordinatorChildren(taskId);
     order.push(...children.active, ...children.collapsed);
   };
