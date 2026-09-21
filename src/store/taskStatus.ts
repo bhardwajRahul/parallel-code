@@ -132,6 +132,13 @@ export type TaskAttentionState = 'idle' | 'active' | 'needs_input' | 'error' | '
 export { stripAnsi };
 
 const CODEX_STATUS_FOOTER_PATTERN = /^gpt-\S+[ \t]+[^\r\n]*[·•][ \t]+(?:\/|~\/)[^\r\n]*$/;
+const CODEX_SHORTCUTS_FOOTER_PATTERN = /^\?\s*for\s*shortcuts(?:\s*\d+%\s*context\s*left)?$/;
+
+/** Codex's empty composer contains a suggestion, with its help footer below it.
+ * Cursor positioning can join these into one line after ANSI stripping. */
+function looksLikeCodexComposer(output: string): boolean {
+  return /›[^\r\n]*(?:\r?\n\s*)*\?\s*for\s*shortcuts(?:\s*\d+%\s*context\s*left)?\s*$/.test(output);
+}
 
 /** Returns true if `line` looks like a prompt waiting for input. */
 function looksLikePrompt(line: string): boolean {
@@ -797,14 +804,25 @@ export function markAgentOutput(agentId: string, data: Uint8Array, taskId?: stri
   if (!normalizeForComparison(text)) return;
 
   const latestOutput = stripAnsi(text.slice(Math.max(0, findLastFrameStart(text))));
+  const frame = stripAnsi(combined.slice(Math.max(0, findLastFrameStart(combined))));
+  const shortcutsFooter = CODEX_SHORTCUTS_FOOTER_PATTERN.test(latestOutput.trim());
+  // The composer and footer may arrive in separate PTY chunks. In that case
+  // keep startup/working indicators from the same frame in the readiness check.
+  const composerOutput = shortcutsFooter ? frame : latestOutput;
+  const codexComposer = looksLikeCodexComposer(composerOutput);
+  const readiness = getAgentPromptReadiness(composerOutput);
+  const canBeIdle = readiness.ready || readiness.reason === 'no_prompt';
   // A separately delivered footer says nothing about the turn. Preserve both
   // activity and its timer instead of reinterpreting a prompt from older output.
-  if (CODEX_STATUS_FOOTER_PATTERN.test(latestOutput.trim())) return;
+  if (
+    CODEX_STATUS_FOOTER_PATTERN.test(latestOutput.trim()) ||
+    (shortcutsFooter && (!codexComposer || !canBeIdle))
+  )
+    return;
 
   // A payload can contain multiple redraws; only the latest frame is current.
   // Strip controls before splitting so a cursor-only line cannot hide a prompt.
-  const frame = combined.slice(Math.max(0, findLastFrameStart(combined)));
-  const lines = stripAnsi(frame)
+  const lines = frame
     .slice(-1000)
     .split(/\r\n?|\n/)
     .map((line) => line.trim())
@@ -813,8 +831,7 @@ export function markAgentOutput(agentId: string, data: Uint8Array, taskId?: stri
   // known footer, never arbitrary output that followed an earlier prompt.
   if (CODEX_STATUS_FOOTER_PATTERN.test(lines.at(-1) ?? '')) lines.pop();
   const lastLine = lines.at(-1) ?? '';
-  const readiness = getAgentPromptReadiness(latestOutput);
-  if ((readiness.ready || readiness.reason === 'no_prompt') && looksLikePrompt(lastLine)) {
+  if (canBeIdle && (looksLikePrompt(lastLine) || codexComposer)) {
     // Prompt detected — agent is idle. Remove from active set immediately.
     //
     // NOTE: do NOT cancel pendingAnalysis here.  TUI agents (Copilot CLI,

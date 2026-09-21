@@ -1,7 +1,13 @@
 import { expect, it } from 'vitest';
-import { codexResumeId } from './codex-resume.js';
+import { codexResumeId, isCodexUnsavedSessionExit } from './codex-resume.js';
 
 const id = '01999999-1234-4321-9876-0123456789ab';
+it('recognizes only an explicit unsaved-session exit footer', () => {
+  expect(isCodexUnsavedSessionExit(`\r\nSession ID: \x1b[32m${id}\x1b[0m\r\n`)).toBe(true);
+  expect(isCodexUnsavedSessionExit(`Session ID: ${id}\nMore agent output`)).toBe(false);
+  expect(isCodexUnsavedSessionExit('Session ID: invalid')).toBe(false);
+  expect(isCodexUnsavedSessionExit(`Example: Session ID: ${id}`)).toBe(false);
+});
 it('reads an ANSI-coloured Codex exit footer', () => {
   expect(
     codexResumeId(

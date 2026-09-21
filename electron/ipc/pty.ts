@@ -1,5 +1,5 @@
 import * as pty from 'node-pty';
-import { codexResumeId } from '../shared/codex-resume.js';
+import { codexResumeId, isCodexUnsavedSessionExit } from '../shared/codex-resume.js';
 import { stopAgentChat, stopAllAgentChats, runningAgentChatIds } from '../chat/sessions.js';
 import { execFileSync, execFile, spawn as cpSpawn } from 'child_process';
 import crypto from 'crypto';
@@ -41,7 +41,8 @@ interface PtySession {
 
 const sessions = new Map<string, PtySession>();
 const pendingSpawns = new Map<string, symbol>();
-const codexExitIds = new Map<string, string>();
+// null is an explicit unsaved-session footer, distinct from an unrecognized exit.
+const codexExitIds = new Map<string, string | null>();
 const handingOff = new Set<string>();
 const carriedScrollback = new Map<string, string>();
 
@@ -70,14 +71,14 @@ function assertNoSpawnInFlight(agentId: string): void {
     throw new Error('The terminal is still starting. Try switching again in a moment.');
 }
 
-/** Ask an idle Codex TUI to exit, then wait for its exact resume footer. */
-export async function handoffCodexTerminal(agentId: string): Promise<string> {
+/** Ask an idle Codex TUI to exit; undefined means an explicitly unsaved session. */
+export async function handoffCodexTerminal(agentId: string): Promise<string | undefined> {
   if (handingOff.has(agentId)) throw new Error('A view switch is already in progress.');
   assertNoSpawnInFlight(agentId);
   const session = sessions.get(agentId);
   if (!session) {
     const id = codexExitIds.get(agentId);
-    if (id) return id;
+    if (id !== undefined) return id ?? undefined;
     throw new Error(
       'No Codex resume ID was found. Exit Codex normally with /quit, then try Chat again.',
     );
@@ -86,7 +87,7 @@ export async function handoffCodexTerminal(agentId: string): Promise<string> {
     throw new Error('This terminal does not support Codex conversation handoff.');
   handingOff.add(agentId);
   try {
-    return await new Promise<string>((resolve, reject) => {
+    return await new Promise<string | undefined>((resolve, reject) => {
       const timer = setTimeout(() => {
         exit.dispose();
         reject(
@@ -99,9 +100,9 @@ export async function handoffCodexTerminal(agentId: string): Promise<string> {
         clearTimeout(timer);
         exit.dispose();
         const id = codexExitIds.get(agentId);
-        if (exitCode === 0 && !signal && id) {
+        if (exitCode === 0 && !signal && id !== undefined) {
           carryScrollback(session);
-          resolve(id);
+          resolve(id ?? undefined);
         } else
           reject(new Error('Codex exited without a resume ID. The terminal output is preserved.'));
       });
@@ -637,6 +638,7 @@ function attachPtyOutputHandlers(
     if (path.basename(command) === 'codex' && exitCode === 0 && !signal) {
       const id = codexResumeId(tailStr);
       if (id) codexExitIds.set(args.agentId, id);
+      else if (isCodexUnsavedSessionExit(tailStr)) codexExitIds.set(args.agentId, null);
     }
     const lines = tailStr
       .split('\n')

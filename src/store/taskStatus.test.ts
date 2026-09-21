@@ -733,6 +733,50 @@ describe('terminal redraw activity', () => {
     expect(isAgentIdle('agent-1')).toBe(true);
   });
 
+  it.each(['\r\n', '\x1b[24;3H'])(
+    'recognizes a fresh Codex composer with a placeholder and help footer (%j)',
+    (separator) => {
+      markAgentSpawned('agent-1');
+      markAgentOutput(
+        'agent-1',
+        encode(
+          'OpenAI Codex' +
+            separator +
+            '› Ask Codex to do anything' +
+            separator +
+            '? for shortcuts  100% context left',
+        ),
+        'task-1',
+      );
+      expect(isAgentIdle('agent-1')).toBe(true);
+
+      markAgentOutput('agent-1', encode('? for shortcuts  100% context left'), 'task-1');
+      expect(isAgentIdle('agent-1')).toBe(true);
+    },
+  );
+
+  it.each(['Working (2s • esc to interrupt)', 'Starting MCP servers (0/2)'])(
+    'keeps the Codex composer busy during %s',
+    (status) => {
+      markAgentOutput(
+        'agent-1',
+        encode(status + '\r\n› Ask Codex to do anything\r\n? for shortcuts  100% context left'),
+        'task-1',
+      );
+      expect(isAgentIdle('agent-1')).toBe(false);
+    },
+  );
+
+  it.each(['', 'Working (2s • esc to interrupt)\r\n', 'Starting MCP servers (0/2)\r\n'])(
+    'handles a separately delivered composer footer with status %j',
+    (status) => {
+      markAgentSpawned('agent-1');
+      markAgentOutput('agent-1', encode(status + '› Ask Codex to do anything\r\n'), 'task-1');
+      markAgentOutput('agent-1', encode('? for shortcuts  100% context left'), 'task-1');
+      expect(isAgentIdle('agent-1')).toBe(status === '');
+    },
+  );
+
   it('does not hide a returned prompt behind a trailing cursor-only line', () => {
     markAgentSpawned('agent-1');
     markAgentOutput('agent-1', encode('Done\r\n› \r\n\x1b[?25h'), 'task-1');
