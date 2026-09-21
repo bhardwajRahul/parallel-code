@@ -115,21 +115,6 @@ export function ChevronRightIcon(props: IconProps): JSX.Element {
   );
 }
 
-export function ArrowRightIcon(props: IconProps): JSX.Element {
-  return (
-    <SvgIcon {...props}>
-      <path
-        d="M2.5 8h11m0 0-4-4m4 4-4 4"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.5"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
-    </SvgIcon>
-  );
-}
-
 /** Stacked plates: one more level down than what is on screen. */
 export function LayersIcon(props: IconProps): JSX.Element {
   return (
