@@ -347,12 +347,19 @@ textarea.mobile-input {
 }
 .mobile-tabs {
   display: flex;
+  align-items: center;
   gap: 4px;
   padding: 4px 12px;
   border-bottom: 1px solid var(--mobile-border);
   flex-shrink: 0;
 }
-.mobile-tabs button {
+.mobile-view-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+}
+.mobile-view-tabs button {
   flex: 1;
   background: transparent;
   border: 0;
@@ -361,9 +368,17 @@ textarea.mobile-input {
   min-height: 36px;
   font-size: 14px;
 }
-.mobile-tabs button[aria-pressed='true'] {
+.mobile-view-tabs button[aria-pressed='true'] {
   background: #203747;
   color: #bdeaff;
+}
+.mobile-text-size {
+  display: flex;
+  gap: 4px;
+}
+.mobile-text-size button {
+  min-height: 36px;
+  padding: 4px;
 }
 .mobile-output-area {
   position: relative;
@@ -446,6 +461,9 @@ textarea.mobile-input {
   padding: 8px 4px;
   font-size: 12px;
   white-space: nowrap;
+}
+.mobile-keys .mobile-bash {
+  font-size: 18px;
 }
 .mobile-form {
   display: flex;

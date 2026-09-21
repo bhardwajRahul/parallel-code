@@ -302,9 +302,14 @@ describe('phone terminal viewport', () => {
       'Terminal',
       'Notes',
     ]);
+    expect(host.querySelector('.mobile-tabs [aria-label="Smaller terminal text"]')).not.toBeNull();
+    expect(host.querySelector('.mobile-tabs [aria-label="Larger terminal text"]')).not.toBeNull();
+    expect(host.querySelector('.mobile-keys [aria-label="Shell command mode"]')).not.toBeNull();
     click('Enter');
     expect(sendInput).toHaveBeenCalledWith('a1', '\r');
     await vi.waitFor(() => expect(composer().disabled).toBe(false));
+    click('Notes');
+    expect(host.querySelector('[aria-label="Smaller terminal text"]')).toBeNull();
   });
 
   it('pans the desktop grid before scrolling history and shields gestures from xterm', () => {

@@ -451,20 +451,48 @@ export function AgentDetail(props: AgentDetailProps) {
           </button>
         </div>
       </Show>
-      <nav class="mobile-tabs" aria-label="Task views">
-        <For
-          each={[
-            { id: 'terminal' as const, label: 'Terminal' },
-            { id: 'notes' as const, label: 'Notes' },
-          ]}
-        >
-          {(tab) => (
-            <button aria-pressed={view() === tab.id} onClick={() => selectView(tab.id)}>
-              {tab.label}
+      <div class="mobile-tabs">
+        <nav class="mobile-view-tabs" aria-label="Task views">
+          <For
+            each={[
+              { id: 'terminal' as const, label: 'Terminal' },
+              { id: 'notes' as const, label: 'Notes' },
+            ]}
+          >
+            {(tab) => (
+              <button aria-pressed={view() === tab.id} onClick={() => selectView(tab.id)}>
+                {tab.label}
+              </button>
+            )}
+          </For>
+        </nav>
+        <Show when={view() === 'terminal'}>
+          <div class="mobile-text-size" role="group" aria-label="Terminal text size">
+            <button
+              class="mobile-button"
+              aria-label="Smaller terminal text"
+              disabled={zoom() <= 0.5}
+              onClick={() => {
+                setZoom((scale) => scale - 0.25);
+                fitTerminal();
+              }}
+            >
+              A−
             </button>
-          )}
-        </For>
-      </nav>
+            <button
+              class="mobile-button"
+              aria-label="Larger terminal text"
+              disabled={zoom() >= 2}
+              onClick={() => {
+                setZoom((scale) => scale + 0.25);
+                fitTerminal();
+              }}
+            >
+              A+
+            </button>
+          </div>
+        </Show>
+      </div>
       <div ref={outputArea} class="mobile-output-area">
         <div
           ref={terminalScroller}
@@ -520,18 +548,6 @@ export function AgentDetail(props: AgentDetailProps) {
               </p>
             </Show>
             <div class="mobile-composer-row">
-              <button
-                class="mobile-button mobile-bash"
-                aria-label="Shell command mode"
-                aria-pressed={bashMode()}
-                disabled={sending()}
-                onClick={() => {
-                  setBashMode((on) => !on);
-                  inputRef?.focus();
-                }}
-              >
-                !
-              </button>
               <textarea
                 ref={(element) => {
                   inputRef = element;
@@ -584,6 +600,18 @@ export function AgentDetail(props: AgentDetailProps) {
               </p>
             </Show>
             <div id="terminal-keys" class="mobile-keys" role="group" aria-label="Terminal keys">
+              <button
+                class="mobile-button mobile-bash"
+                aria-label="Shell command mode"
+                aria-pressed={bashMode()}
+                disabled={sending()}
+                onClick={() => {
+                  setBashMode((on) => !on);
+                  inputRef?.focus();
+                }}
+              >
+                !
+              </button>
               <For
                 each={[
                   { label: 'Enter', name: 'Enter', data: '\r' },
@@ -605,28 +633,6 @@ export function AgentDetail(props: AgentDetailProps) {
                   </button>
                 )}
               </For>
-              <button
-                class="mobile-button"
-                aria-label="Smaller terminal text"
-                disabled={zoom() <= 0.5}
-                onClick={() => {
-                  setZoom((scale) => scale - 0.25);
-                  fitTerminal();
-                }}
-              >
-                A−
-              </button>
-              <button
-                class="mobile-button"
-                aria-label="Larger terminal text"
-                disabled={zoom() >= 2}
-                onClick={() => {
-                  setZoom((scale) => scale + 0.25);
-                  fitTerminal();
-                }}
-              >
-                A+
-              </button>
             </div>
           </div>
         }
