@@ -107,6 +107,16 @@ export function unregisterTerminal(id: string): void {
   resizeObserver.unobserve(entry.container);
   intersectionObserver.unobserve(entry.container);
   entries.delete(id);
+  if (entries.size === 0) cancelPendingFlush();
+}
+
+// With no terminals left a flush is a no-op; a dangling timer would otherwise
+// fire after teardown (e.g. when a test environment has removed rAF).
+function cancelPendingFlush(): void {
+  if (trailingTimer !== undefined) clearTimeout(trailingTimer);
+  if (rafId !== undefined) cancelAnimationFrame(rafId);
+  trailingTimer = undefined;
+  rafId = undefined;
 }
 
 export function markDirty(id: string): void {

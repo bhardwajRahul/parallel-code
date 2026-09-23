@@ -81,3 +81,17 @@ describe('terminal resize scroll position', () => {
     expect(buffer.viewportY).toBe(buffer.baseY);
   });
 });
+
+describe('terminal unregistration', () => {
+  it('cancels pending fits once the last terminal is gone', () => {
+    const container = document.createElement('div');
+    const fit = vi.fn();
+    const term = { buffer: { active: { viewportY: 0, baseY: 0 } } };
+    manager.registerTerminal('test', container, { fit } as unknown as FitAddon, term as Terminal);
+    manager.markDirty('test');
+    manager.unregisterTerminal('test');
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(frames.size).toBe(0);
+  });
+});
