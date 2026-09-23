@@ -96,7 +96,7 @@ export function ReviewSidebarPanel() {
               color: theme.error,
               'font-size': sf(12),
               'border-bottom': `1px solid ${theme.border}`,
-              background: 'rgba(255, 95, 115, 0.08)',
+              background: `color-mix(in srgb, ${theme.error} 8%, transparent)`,
               display: 'flex',
               'align-items': 'center',
               gap: '8px',

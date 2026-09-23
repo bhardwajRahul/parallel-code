@@ -1040,7 +1040,7 @@ export function ChangedFilesList(props: ChangedFilesListProps) {
                   selectedIndex() === i
                     ? theme.bgHover
                     : row().node.file && row().node.path === props.activeFilePath
-                      ? 'rgba(88, 166, 255, 0.16)'
+                      ? `color-mix(in srgb, ${theme.accent} 16%, transparent)`
                       : 'transparent',
               }}
               onClick={() => {

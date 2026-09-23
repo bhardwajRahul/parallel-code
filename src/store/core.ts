@@ -51,7 +51,7 @@ export const [store, setStore] = createStore<AppStore>({
   terminalScreenReaderMode: false,
   themePreset: defaultPresetForTone('dark'),
   appearanceMode: 'dark',
-  lightThemePreset: 'islands-light',
+  lightThemePreset: defaultPresetForTone('light'),
   lightThemeCustomId: null,
   darkThemePreset: defaultPresetForTone('dark'),
   darkThemeCustomId: null,

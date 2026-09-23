@@ -1,4 +1,5 @@
 import { colord } from 'colord';
+import { isLightPreset } from './look';
 import type { LookPreset } from './look';
 import { CSS_VARS } from './custom-theme';
 import type { CssVar } from './custom-theme';
@@ -52,7 +53,7 @@ export const theme = {
 // GitHub-light-ish xterm palette (text, cursor, selection + 16 ANSI colors)
 // for light terminal backgrounds, so colored output (claude prompts,
 // ls --color, git status) stays legible on white. Shared by the built-in
-// islands-light preset and any custom theme with a light background.
+// light presets and any custom theme with a light background.
 export const LIGHT_TERMINAL_THEME = {
   foreground: '#1f2329',
   cursor: '#1f2329',
@@ -76,6 +77,32 @@ export const LIGHT_TERMINAL_THEME = {
   brightWhite: '#1f2329',
 } as const;
 
+// Obsidian's muted pastels carried into ANSI, so agent and shell output
+// matches the UI instead of xterm's saturated defaults. Bright black stays
+// at AA contrast because CLIs use it for secondary text.
+const OBSIDIAN_TERMINAL_THEME = {
+  foreground: '#e4e4e4',
+  cursor: '#c4a77d',
+  cursorAccent: '#1e1e1e',
+  selectionBackground: '#4a4339',
+  black: '#2e2e2e',
+  red: '#e08c96',
+  green: '#98c9ae',
+  yellow: '#dfc18e',
+  blue: '#8fb3dc',
+  magenta: '#c1b0e8',
+  cyan: '#8ec9c9',
+  white: '#c9c9c9',
+  brightBlack: '#858585',
+  brightRed: '#eaa0aa',
+  brightGreen: '#addcc1',
+  brightYellow: '#ead3a8',
+  brightBlue: '#a8c5e8',
+  brightMagenta: '#d2c4f0',
+  brightCyan: '#a6dada',
+  brightWhite: '#ededed',
+} as const;
+
 /**
  * Returns an xterm-compatible theme object for the given preset.
  * For light-background presets we override xterm's defaults (white text,
@@ -83,8 +110,11 @@ export const LIGHT_TERMINAL_THEME = {
  */
 export function getTerminalTheme(preset: LookPreset) {
   const background = readCssVarsForPreset(preset)['--task-panel-bg'] ?? '#000000';
-  if (preset === 'islands-light') {
+  if (isLightPreset(preset)) {
     return { background, ...LIGHT_TERMINAL_THEME };
+  }
+  if (preset === 'obsidian') {
+    return { background, ...OBSIDIAN_TERMINAL_THEME };
   }
   return { background };
 }

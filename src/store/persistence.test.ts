@@ -911,6 +911,15 @@ describe('loadState theme persistence', () => {
     expect(store.lightThemePreset).toBe('islands-light');
   });
 
+  it('saves the light slot explicitly so a new default cannot replace it', async () => {
+    setStore('lightThemePreset', 'islands-light');
+    mockInvoke.mockResolvedValueOnce(undefined);
+    await saveState();
+    const savedCall = mockInvoke.mock.calls.find(([channel]) => channel === IPC.SaveAppState);
+    const json = (savedCall?.[1] as { json: string }).json;
+    expect(JSON.parse(json).lightThemePreset).toBe('islands-light');
+  });
+
   it('falls back to islands-light for an invalid lightThemePreset', async () => {
     mockInvoke.mockResolvedValueOnce(
       basePayload({ appearanceMode: 'light', lightThemePreset: 'bogus' }),

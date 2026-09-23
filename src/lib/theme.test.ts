@@ -31,6 +31,16 @@ describe('getTerminalTheme', () => {
     expect(getTerminalTheme('islands-light').background).toBe('#fefefe');
     expect(root.dataset).toEqual({ look: 'classic', customTheme: 'custom-id' });
   });
+
+  it('gives light presets the light ANSI palette and Obsidian its own', () => {
+    vi.stubGlobal('document', { documentElement: { dataset: {} }, getElementById: () => null });
+    vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '' }));
+
+    expect(getTerminalTheme('obsidian-light')).toMatchObject({ foreground: '#1f2329' });
+    expect(getTerminalTheme('obsidian')).toMatchObject({ foreground: '#e4e4e4' });
+    // Other dark presets keep xterm's default palette.
+    expect(getTerminalTheme('classic')).not.toHaveProperty('foreground');
+  });
 });
 
 describe('getTerminalSearchDecorations', () => {

@@ -19,7 +19,7 @@ function getDotColor(status: TaskDotStatus, attention?: TaskAttentionState): str
   if (attention === 'error') return theme.error;
   if (attention === 'review') return REVIEW_COLOR;
   if (attention === 'ready') return theme.success;
-  // Amber is reserved for "needs you"; a task with nothing to report is quiet.
+  // The warning hue is reserved for "needs you"; a task with nothing to report is quiet.
   return {
     busy: theme.fgMuted,
     waiting: theme.fgSubtle,

@@ -1,4 +1,5 @@
 import type { Highlighter, BundledLanguage, BundledTheme, SpecialLanguage } from 'shiki';
+import { isLightPreset } from './look';
 
 const THEMES: BundledTheme[] = ['github-dark', 'github-light'];
 
@@ -6,7 +7,7 @@ const THEMES: BundledTheme[] = ['github-dark', 'github-light'];
  *  page rather than the store, so the phone UI can render chat code without it;
  *  the phone sets no look and gets dark, which is its only palette. */
 function activeTheme(): BundledTheme {
-  return document.documentElement.dataset.look === 'islands-light' ? 'github-light' : 'github-dark';
+  return isLightPreset(document.documentElement.dataset.look) ? 'github-light' : 'github-dark';
 }
 
 /** Map file extensions to Shiki language identifiers. */
