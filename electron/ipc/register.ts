@@ -6,12 +6,17 @@ import { fileURLToPath } from 'url';
 import { IPC } from './channels.js';
 import { DelegationService } from '../mcp/delegation.js';
 import type { TaskAuthorityInput } from '../shared/delegation-types.js';
-import { startAgentChat, getAgentChat, stopAgentChat, releaseChat } from '../chat/sessions.js';
 import {
-  isChatDecision,
-  isChatPermissionMode,
-  validateChatImages,
-} from '../shared/agent-chat-types.js';
+  startAgentChat,
+  getAgentChat,
+  stopAgentChat,
+  releaseChat,
+  listTaskChats,
+  findAgentChat,
+  onAgentChatsChanged,
+} from '../chat/sessions.js';
+import { runChatAction } from '../chat/actions.js';
+import { isChatPermissionMode } from '../shared/agent-chat-types.js';
 import {
   buildPtySpawnEnv,
   validateCommand,
@@ -499,6 +504,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
         {
           provider: args.provider,
           agentId: args.agentId,
+          taskId,
           command: args.command,
           cwd: args.cwd as string,
           threadId: args.threadId,
@@ -572,36 +578,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       if (!chat.setPermissionMode) throw new Error('This agent cannot change its permission mode.');
       return chat.setPermissionMode(args.permissionMode);
     }
-    if (args.action === 'models') return chat.loadModels();
-    if (args.action === 'selectModel') {
-      assertString(args.model, 'model');
-      assertOptionalString(args.reasoningEffort, 'reasoningEffort');
-      return chat.selectModel(args.model, args.reasoningEffort);
-    }
-    if (args.action === 'send') {
-      assertString(args.text, 'text');
-      if (!args.text.trim() || args.text.length > 100_000)
-        throw new Error('Enter a message of at most 100,000 characters.');
-      return chat.send(args.text, validateChatImages(args.images));
-    }
-    if (args.action === 'interrupt') return chat.interrupt();
-    if (args.action === 'respond') {
-      if (typeof args.requestId !== 'string' && typeof args.requestId !== 'number')
-        throw new Error('Invalid request ID.');
-      if (!isChatDecision(args.decision)) throw new Error('Invalid approval decision.');
-      let answers: Record<string, string> | undefined;
-      if (args.answers !== undefined) {
-        if (!args.answers || typeof args.answers !== 'object' || Array.isArray(args.answers))
-          throw new Error('Invalid answers.');
-        answers = {};
-        for (const [key, value] of Object.entries(args.answers)) {
-          assertString(value, 'answer');
-          answers[key] = value;
-        }
-      }
-      return chat.respond(args.requestId, args.decision, answers);
-    }
-    throw new Error('Unknown agent chat action.');
+    return runChatAction(chat, args);
   });
   // --- Remote access state ---
   // Keep development phone access and coordinator ports separate from the installed app.
@@ -1832,6 +1809,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       getCoordinator: () => coordinator,
       callSessionTool: (caller, name, params) => delegation.callTool(caller, name, params),
       isOrchestrationEnabled: () => delegation.isOrchestrationEnabled(),
+      chats: { list: listTaskChats, find: findAgentChat, onChange: onAgentChatsChanged },
       ...mobileTaskBridge,
     };
   };

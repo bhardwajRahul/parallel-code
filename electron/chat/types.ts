@@ -29,6 +29,8 @@ export interface AgentChat {
 export interface ChatStartOptions {
   provider: 'codex' | 'claude';
   agentId: string;
+  /** The task this chat belongs to; only chats with one are offered to paired phones. */
+  taskId?: string;
   command: string;
   cwd: string;
   env: Record<string, string>;

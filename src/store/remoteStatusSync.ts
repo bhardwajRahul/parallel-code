@@ -8,12 +8,14 @@
 // main-side cache, and electron/remote/server.ts buildAgentList for how the
 // cached attention is attached to each RemoteAgent.
 
-import { createEffect, createRoot, onCleanup } from 'solid-js';
+import { createEffect, createRoot, onCleanup, untrack } from 'solid-js';
 import { store } from './store';
 import { getTaskAttentionState, getAgentOutputTail, stripAnsi } from './taskStatus';
+import { taskUsesAgentChat } from './agent-chat';
 import { fireAndForget } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import type { RemoteAttentionState, RemoteAgent } from '../../electron/remote/protocol';
+import type { AgentChatState } from '../../electron/shared/agent-chat-types';
 
 /** Pick recent content rather than terminal UI chrome for the phone's task cards. */
 export function remoteOutputPreview(rawTail: string): string {
@@ -41,6 +43,12 @@ export function remoteOutputPreview(rawTail: string): string {
       !/^gpt-\S+[ \t]+[^\r\n]*[·•][ \t]+(?:\/|~\/)[^\r\n]*$/.test(line),
   );
   return (content.at(-1) ?? '').slice(0, 300);
+}
+
+/** The last line the agent wrote in a chat, as the phone's task card preview. */
+export function remoteChatPreview(state: AgentChatState | undefined): string {
+  const reply = state?.items.findLast((item) => item.kind === 'assistant' && item.text.trim());
+  return (reply?.text.trim().split('\n').at(-1) ?? '').trim().slice(0, 300);
 }
 
 export function startRemoteStatusSync(): () => void {
@@ -76,7 +84,10 @@ export function startRemoteStatusSync(): () => void {
         contexts[taskId] = {
           projectName: store.projects.find((project) => project.id === task.projectId)?.name ?? '',
           agentName: agent?.def.name ?? '',
-          lastLine: remoteOutputPreview(getAgentOutputTail(agentId)),
+          // Untracked like the terminal tail: a streaming reply changes every frame.
+          lastLine: taskUsesAgentChat(task)
+            ? untrack(() => remoteChatPreview(store.agents[task.agentIds[0]]?.chatState))
+            : remoteOutputPreview(getAgentOutputTail(agentId)),
         };
       }
 

@@ -1,4 +1,13 @@
-import { createSignal, createEffect, onMount, onCleanup, Show, Switch, Match } from 'solid-js';
+import {
+  createSignal,
+  createEffect,
+  onMount,
+  onCleanup,
+  lazy,
+  Show,
+  Switch,
+  Match,
+} from 'solid-js';
 import { initAuth, getPairedToken } from './auth';
 import { connect, reconnect, agents, status, needsConnection, canControl } from './ws';
 import { AgentList } from './AgentList';
@@ -7,6 +16,9 @@ import { ConnectScreen } from './ConnectScreen';
 import { PairScreen } from './PairScreen';
 import { NewTaskScreen } from './NewTaskScreen';
 import { ConnectionBanner } from './ConnectionBanner';
+
+// Chat pulls in markdown rendering that terminal-only phones never need.
+const ChatDetail = lazy(() => import('./ChatDetail').then((m) => ({ default: m.ChatDetail })));
 
 export function App() {
   const [authed, setAuthed] = createSignal(false);
@@ -186,13 +198,27 @@ export function App() {
             }
           >
             {(agentId) => (
-              <AgentDetail
-                agentId={agentId}
-                taskName={agent()?.taskName ?? ''}
-                onBack={() => navigate('')}
-                onNeedsPairing={pairForTask}
-                onNextTask={openTask}
-              />
+              // A task's chat and terminal share one agent, so switching views on
+              // the desktop swaps the screen without leaving the task.
+              <Show
+                when={agent()?.kind === 'chat'}
+                fallback={
+                  <AgentDetail
+                    agentId={agentId}
+                    taskName={agent()?.taskName ?? ''}
+                    onBack={() => navigate('')}
+                    onNeedsPairing={pairForTask}
+                    onNextTask={openTask}
+                  />
+                }
+              >
+                <ChatDetail
+                  agentId={agentId}
+                  taskName={agent()?.taskName ?? ''}
+                  onBack={() => navigate('')}
+                  onNeedsPairing={pairForTask}
+                />
+              </Show>
             )}
           </Show>
         </Match>
