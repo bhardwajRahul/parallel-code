@@ -243,9 +243,77 @@ describe('Claude chat adapter', () => {
         content: [{ type: 'tool_result', tool_use_id: 'edit', content: 'Updated successfully.' }],
       },
     });
-    expect(h.chat.state.items[0].text).toContain('return false;');
-    expect(h.chat.state.items[0].text).toContain('return true;');
-    expect(h.chat.state.items[0].text).toContain('Updated successfully.');
+    expect(h.chat.state.items[0].activity?.diffs).toEqual([
+      { path: '/worktree/app.ts', diff: '-return false;\n+return true;', added: 1, removed: 1 },
+    ]);
+    // The confirmation adds nothing to the diff above it.
+    expect(h.chat.state.items[0].text).toBe('');
+  });
+
+  it('upgrades a proposed edit to the applied patch, with its line numbers', async () => {
+    const h = harness();
+    await h.chat.start();
+    await h.emit({
+      type: 'assistant',
+      message: {
+        id: 'reply',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'edit',
+            name: 'Edit',
+            input: { file_path: '/worktree/app.ts', old_string: 'a', new_string: 'b' },
+          },
+        ],
+      },
+    });
+    await h.emit({
+      type: 'user',
+      uuid: 'result',
+      tool_use_result: {
+        filePath: '/worktree/app.ts',
+        structuredPatch: [
+          { oldStart: 3, oldLines: 2, newStart: 3, newLines: 2, lines: [' x', '-a', '+b'] },
+        ],
+      },
+      message: { content: [{ type: 'tool_result', tool_use_id: 'edit', content: 'Updated.' }] },
+    });
+    expect(h.chat.state.items[0].activity?.diffs).toEqual([
+      { path: '/worktree/app.ts', diff: '@@ -3,2 +3,2 @@\n x\n-a\n+b', added: 1, removed: 1 },
+    ]);
+  });
+
+  it('keeps a command apart from its output, and a failed edit shows why', async () => {
+    const h = harness();
+    await h.chat.start();
+    await h.emit({
+      type: 'assistant',
+      message: {
+        id: 'reply',
+        content: [
+          { type: 'tool_use', id: 'run', name: 'Bash', input: { command: 'npm test' } },
+          {
+            type: 'tool_use',
+            id: 'edit',
+            name: 'Edit',
+            input: { file_path: '/worktree/app.ts', old_string: 'a', new_string: 'b' },
+          },
+        ],
+      },
+    });
+    await h.emit({
+      type: 'user',
+      uuid: 'result',
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: 'run', content: '1 passed' },
+          { type: 'tool_result', tool_use_id: 'edit', content: 'String not found', is_error: true },
+        ],
+      },
+    });
+    const [run, edit] = h.chat.state.items;
+    expect(run).toMatchObject({ text: '1 passed', activity: { command: 'npm test' } });
+    expect(edit).toMatchObject({ text: 'String not found', activity: { status: 'failed' } });
   });
 
   it('starts an explicit local session, preserves normal settings, and loads model capabilities', async () => {

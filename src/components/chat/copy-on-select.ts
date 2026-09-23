@@ -1,11 +1,5 @@
 import { warn, errMessage } from '../../lib/log';
 
-/** Chrome scopes a shadow tree's selection to the root; the DOM lib does not type it. */
-function selectionIn(root: ShadowRoot): Selection | null {
-  const scoped = (root as { getSelection?: () => Selection | null }).getSelection;
-  return typeof scoped === 'function' ? scoped.call(root) : document.getSelection();
-}
-
 const EDITABLE = 'textarea, input, [contenteditable="true"]';
 
 /**
@@ -15,13 +9,16 @@ const EDITABLE = 'textarea, input, [contenteditable="true"]';
  *
  * Returns a teardown function.
  */
-export function enableCopyOnSelect(root: ShadowRoot): () => void {
+export function enableCopyOnSelect(root: HTMLElement): () => void {
   const onMouseUp = (event: Event) => {
     const target = event.target;
     // Selecting inside the composer usually precedes replacing or cutting that
     // draft, so leave whatever the user is about to paste on the clipboard.
     if (target instanceof Element && target.closest(EDITABLE)) return;
-    const text = selectionIn(root)?.toString() ?? '';
+    // A drag that started elsewhere can end over the log; that selection is not ours.
+    const selection = document.getSelection();
+    if (!selection?.anchorNode || !root.contains(selection.anchorNode)) return;
+    const text = selection.toString();
     if (!text.trim()) return;
     void navigator.clipboard.writeText(text).catch((err: unknown) => {
       warn('chat', 'Copy on select failed', { error: errMessage(err) });

@@ -9,7 +9,20 @@ export interface ChatItem {
     status: 'running' | 'completed' | 'failed' | 'declined' | 'interrupted';
     exitCode?: number;
     files?: string[];
+    /** The command line a command activity ran; `text` then holds only its output. */
+    command?: string;
+    /** What a files activity changed, one unified diff per file. */
+    diffs?: ChatDiff[];
   };
+}
+
+export interface ChatDiff {
+  path: string;
+  /** Unified diff hunks: `@@` headers and lines prefixed with ' ', '-' or '+'. */
+  diff: string;
+  /** Lines added and removed by the whole change, even when `diff` is cut short. */
+  added: number;
+  removed: number;
 }
 
 export interface ChatQuestion {

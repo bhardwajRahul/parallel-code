@@ -1,5 +1,3 @@
-import './electron/chat/disable-telemetry.js';
-
 /**
  * Git exports `GIT_DIR`, `GIT_INDEX_FILE` and friends into the environment of
  * every hook it runs. `npm test` from `.husky/pre-push` therefore hands those

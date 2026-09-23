@@ -1,5 +1,4 @@
 import { registerBrowserHandlers } from './ipc/browser.js';
-import { registerChatScheme, registerChatProtocol } from './chat/protocol.js';
 import { app, autoUpdater, BrowserWindow, Menu, ipcMain, session, shell } from 'electron';
 import { buildMenuTemplate } from './menu-template.js';
 import { restoreWindow } from './window-restore.js';
@@ -22,7 +21,6 @@ import { resolveUserShell } from './user-shell.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-registerChatScheme();
 
 // When launched from a .desktop file (e.g. AppImage), the environment is
 // minimal — often just PATH=/usr/bin:/bin. Resolve the user's full
@@ -205,7 +203,6 @@ function createWindow() {
   registerLogHandler(ipcMain);
   installIpcTracing(ipcMain);
   registerAllHandlers(mainWindow);
-  registerChatProtocol(mainWindow);
   registerBrowserHandlers(mainWindow);
 
   // Open links in external browser instead of inside Electron

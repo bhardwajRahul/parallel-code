@@ -1,6 +1,6 @@
 import DOMPurify from 'dompurify';
 import { SANITIZE_UNTRUSTED } from './sanitize';
-import { Marked, type Tokens } from 'marked';
+import { Marked, type RendererObject, type Tokens } from 'marked';
 import { createSignal, createEffect } from 'solid-js';
 import { highlightLines } from './shiki-highlighter';
 import { tableScrollRenderer } from './marked-table';
@@ -12,7 +12,11 @@ import { tableScrollRenderer } from './marked-table';
  *  1. Walk tokens to collect code blocks, highlight them in parallel via Shiki.
  *  2. Render markdown, substituting highlighted HTML for each code block.
  */
-export async function renderMarkdownWithHighlighting(markdown: string): Promise<string> {
+export async function renderMarkdownWithHighlighting(
+  markdown: string,
+  /** Further overrides; they must not replace `code` or `table`, which this owns. */
+  extraRenderer: RendererObject = {},
+): Promise<string> {
   const marked = new Marked();
 
   // First pass — collect code blocks
@@ -28,6 +32,7 @@ export async function renderMarkdownWithHighlighting(markdown: string): Promise<
   // Second pass — render with a custom renderer that swaps in highlighted HTML
   let blockIndex = 0;
   const renderer = {
+    ...extraRenderer,
     ...tableScrollRenderer,
     code(token: Tokens.Code): string {
       // Mermaid blocks → render as placeholder for client-side rendering

@@ -196,6 +196,7 @@ describe('Codex chat app-server protocol', () => {
     h.receive({ method: 'item/started', params: { item: { ...item, status: 'inProgress' } } });
     expect(h.chat.state.items[0]?.activity).toEqual({
       type: 'command',
+      command: 'npm test',
       label: 'npm test',
       status: 'running',
     });
@@ -203,7 +204,7 @@ describe('Codex chat app-server protocol', () => {
       method: 'item/commandExecution/outputDelta',
       params: { itemId: 'cmd', delta: 'Failed test' },
     });
-    expect(h.chat.state.items[0]?.text).toBe('npm test\nFailed test');
+    expect(h.chat.state.items[0]?.text).toBe('Failed test');
     h.receive({
       method: 'item/completed',
       params: {
@@ -217,8 +218,8 @@ describe('Codex chat app-server protocol', () => {
     });
     expect(h.chat.state.items).toHaveLength(1);
     expect(h.chat.state.items[0]).toMatchObject({
-      text: 'npm test\nFailed test',
-      activity: { status: 'failed', exitCode: 1 },
+      text: 'Failed test',
+      activity: { command: 'npm test', status: 'failed', exitCode: 1 },
     });
     h.chat.stop();
   });
@@ -232,7 +233,14 @@ describe('Codex chat app-server protocol', () => {
             id: 'files',
             type: 'fileChange',
             status: 'completed',
-            changes: [{ path: 'src/app.ts', diff: '+ fixed' }],
+            changes: [
+              {
+                path: 'src/app.ts',
+                kind: { type: 'update' },
+                diff: '--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b',
+              },
+              { path: 'src/new.ts', kind: { type: 'add' }, diff: 'one\ntwo\n' },
+            ],
           },
           { id: 'declined', type: 'commandExecution', command: 'npm install', status: 'declined' },
           {
@@ -248,10 +256,20 @@ describe('Codex chat app-server protocol', () => {
       },
     ]);
     expect(h.chat.state.items.map((item) => item.activity)).toEqual([
-      { type: 'files', files: ['src/app.ts'], label: 'src/app.ts', status: 'completed' },
-      { type: 'command', label: 'npm install', status: 'declined' },
+      {
+        type: 'files',
+        files: ['src/app.ts', 'src/new.ts'],
+        label: '2 files',
+        status: 'completed',
+        // File headers go; a created file arrives whole and is shown as added.
+        diffs: [
+          { path: 'src/app.ts', diff: '@@ -1 +1 @@\n-a\n+b', added: 1, removed: 1 },
+          { path: 'src/new.ts', diff: '@@ -0,0 +1,2 @@\n+one\n+two', added: 2, removed: 0 },
+        ],
+      },
+      { type: 'command', command: 'npm install', label: 'npm install', status: 'declined' },
       { type: 'tool', label: 'docs / search', status: 'failed' },
-      { type: 'command', label: 'npm test', status: 'interrupted' },
+      { type: 'command', command: 'npm test', label: 'npm test', status: 'interrupted' },
     ]);
     h.chat.stop();
   });
