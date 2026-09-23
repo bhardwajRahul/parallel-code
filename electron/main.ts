@@ -185,6 +185,10 @@ function createWindow() {
     frame: process.platform === 'darwin',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : undefined,
     resizable: true,
+    // Paints until the renderer loads, avoiding a white flash. Matches the
+    // default Obsidian background. shortcut: fixed colour, so light-theme users
+    // see a dark frame first; read the saved preset here if that matters.
+    backgroundColor: '#171717',
     webPreferences: {
       preload: path.join(__dirname, '..', 'electron', 'preload.cjs'),
       contextIsolation: true,

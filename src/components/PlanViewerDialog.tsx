@@ -406,7 +406,7 @@ function PlanViewerContent(props: PlanViewerContentProps) {
                     left: `${rect.left}px`,
                     width: `${rect.width}px`,
                     height: `${rect.height}px`,
-                    background: 'rgba(100, 149, 237, 0.3)',
+                    background: `color-mix(in srgb, ${theme.accent} 30%, transparent)`,
                     'pointer-events': 'none',
                     'border-radius': '2px',
                   }}

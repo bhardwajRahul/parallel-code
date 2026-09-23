@@ -1,5 +1,6 @@
 export type LookPreset =
   | 'obsidian'
+  | 'obsidian-light'
   | 'classic'
   | 'graphite'
   | 'midnight'
@@ -26,8 +27,14 @@ export const LOOK_PRESETS: LookPresetOption[] = [
   {
     id: 'obsidian',
     label: 'Obsidian',
-    description: 'Neutral charcoal surfaces, warm amber focus, and clean typography',
+    description: 'Neutral charcoal surfaces, warm amber accent, and clean typography',
     tone: 'dark',
+  },
+  {
+    id: 'obsidian-light',
+    label: 'Obsidian Light',
+    description: 'Obsidian on warm paper neutrals with a bronze accent',
+    tone: 'light',
   },
   {
     id: 'islands-dark',
@@ -108,7 +115,12 @@ export function presetsForTone(tone: 'light' | 'dark'): LookPresetOption[] {
 }
 
 export function defaultPresetForTone(tone: 'light' | 'dark'): LookPreset {
-  return tone === 'light' ? 'islands-light' : 'obsidian';
+  return tone === 'light' ? 'obsidian-light' : 'obsidian';
+}
+
+/** True for built-in presets with a light background; false for unknown ids. */
+export function isLightPreset(id: string | undefined): boolean {
+  return LOOK_PRESETS.find((p) => p.id === id)?.tone === 'light';
 }
 
 const LOOK_PRESET_IDS = new Set<string>(LOOK_PRESETS.map((p) => p.id));

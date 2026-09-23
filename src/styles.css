@@ -67,7 +67,9 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: #0e1215;
+  /* Painted before data-look is applied; matches the default Obsidian --bg
+     and the BrowserWindow backgroundColor in electron/main.ts. */
+  background: #171717;
 }
 
 body {
@@ -545,7 +547,9 @@ body:has(
 }
 
 /* Obsidian: flat, square-edged workspaces with quiet navigation.
-   All styling is scoped to the preset, including portalled dialogs. */
+   All styling is scoped to the preset, including portalled dialogs.
+   Structural rules match both variants via [data-look^='obsidian'].
+   Amber is the accent, so "needs you" (--warning) uses a distinct orange. */
 html[data-look='obsidian'] {
   color-scheme: dark;
   --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -562,13 +566,13 @@ html[data-look='obsidian'] {
   --fg: #ededed;
   --fg-muted: #b5b5b5;
   --fg-subtle: #919191;
-  --accent: #c9c9c9;
-  --accent-hover: #e0e0e0;
-  --accent-text: #202020;
-  --link: #e0e0e0;
+  --accent: #c4a77d;
+  --accent-hover: #d6bd96;
+  --accent-text: #1e1b16;
+  --link: #d6bd96;
   --success: #98c9ae;
   --error: #eaa0aa;
-  --warning: #dfc18e;
+  --warning: #e8a06a;
   --review: #c1b0e8;
   --info: #c9c9c9;
   --diff-add-bg: rgba(152, 201, 174, 0.12);
@@ -588,140 +592,193 @@ html[data-look='obsidian'] {
   --shadow-pop: none;
 }
 
-.app-shell[data-look='obsidian']::before {
+/* Obsidian Light: warm paper neutrals with the same square, flat structure.
+   Accent and status hues are darkened to keep AA text contrast on white. */
+html[data-look='obsidian-light'] {
+  color-scheme: light;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: var(--font-ui);
+  --bg: #f4f4f2;
+  --bg-elevated: #ffffff;
+  --bg-input: #f2f2f0;
+  --bg-hover: #ebebe8;
+  --bg-selected: #e2e1dc;
+  --bg-selected-subtle: #eeeeeb;
+  --border: #dddcd8;
+  --border-subtle: #e9e8e4;
+  --border-focus: #8a6433;
+  --fg: #1f1f1f;
+  --fg-muted: #555555;
+  --fg-subtle: #6e6e6e;
+  --accent: #8a6433;
+  --accent-hover: #75532a;
+  --accent-text: #ffffff;
+  --link: #75532a;
+  --success: #2f7d4f;
+  --error: #b3383f;
+  --warning: #ad4e00;
+  --review: #6d4fc2;
+  --info: #5e5e5e;
+  --diff-add-bg: rgba(47, 125, 79, 0.12);
+  --diff-remove-bg: rgba(179, 56, 63, 0.1);
+  --search-match: #d9a93b;
+  --search-match-active: #e07b39;
+  --island-bg: #ffffff;
+  --island-border: #dddcd8;
+  --island-radius: 0px;
+  --task-container-bg: #ffffff;
+  --task-panel-bg: #ffffff;
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --shadow-soft: none;
+  --shadow-pop: none;
+}
+
+.app-shell[data-look^='obsidian']::before {
   background: none;
 }
 
-html[data-look='obsidian'] .sidebar-shell {
+html[data-look^='obsidian'] .sidebar-shell {
   padding: 0 4px 8px;
 }
 
-html[data-look='obsidian'] .sidebar-panel {
+html[data-look^='obsidian'] .sidebar-panel {
   padding: 8px 12px 18px !important;
   gap: 20px !important;
 }
 
 /* Quiet utility controls let the primary action and task names lead. */
-html[data-look='obsidian'] .icon-btn:not(:hover) {
+html[data-look^='obsidian'] .icon-btn:not(:hover) {
   border-color: transparent !important;
 }
 
-html[data-look='obsidian'] .sidebar-create-btn {
+html[data-look^='obsidian'] .sidebar-create-btn {
   padding: 9px 12px !important;
-  background: var(--fg) !important;
-  color: var(--bg) !important;
+  background: var(--accent) !important;
+  color: var(--accent-text) !important;
   border-color: transparent !important;
   font-weight: 600 !important;
   box-shadow: none;
 }
 
-html[data-look='obsidian'] .sidebar-create-btn:hover {
-  background: #ffffff !important;
+html[data-look^='obsidian'] .sidebar-create-btn:hover {
+  background: var(--accent-hover) !important;
 }
 
-html[data-look='obsidian'] .task-item[aria-current='true'] {
+html[data-look^='obsidian'] .task-item[aria-current='true'] {
   box-shadow: none;
 }
 
 /* Columns share one working surface instead of nesting floating cards. */
-html[data-look='obsidian'] [data-task-id] {
+html[data-look^='obsidian'] [data-task-id] {
   padding: 0 3px !important;
 }
 
-html[data-look='obsidian'] .task-column {
+/* A transparent top edge on every column keeps the active marker from
+   shifting layout when selection moves. */
+html[data-look^='obsidian'] .task-column {
   margin: 0;
   box-shadow: none;
   border: 0 !important;
   border-left: 1px solid var(--border-subtle) !important;
+  border-top: 2px solid transparent !important;
 }
 
-html[data-look='obsidian'] .task-column.active {
+html[data-look^='obsidian'] .task-column.active {
   box-shadow: none;
   border-color: var(--border-subtle) !important;
+  border-top-color: var(--accent) !important;
 }
 
-html[data-look='obsidian'] .task-branch-info-bar {
+html[data-look^='obsidian'] .task-branch-info-bar {
   border-bottom-color: var(--border-subtle);
 }
 
 /* A flat composer; panel focus remains visible around its full boundary. */
-html[data-look='obsidian'] .prompt-input-panel {
+html[data-look^='obsidian'] .prompt-input-panel {
   padding: 0 !important;
   background: var(--task-panel-bg);
   border-top: 1px solid var(--border);
 }
 
-html[data-look='obsidian'] .prompt-textarea {
+html[data-look^='obsidian'] .prompt-textarea {
   font-family: var(--font-ui) !important;
   background: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
 }
 
-html[data-look='obsidian'] textarea::placeholder {
+html[data-look^='obsidian'] textarea::placeholder {
   color: var(--fg-subtle);
 }
 
-html[data-look='obsidian'] .prompt-send-btn {
+html[data-look^='obsidian'] .prompt-send-btn {
   border-radius: var(--radius-sm) !important;
 }
 
-html[data-look='obsidian'] :is(.input-field, .project-select):focus {
+html[data-look^='obsidian'] :is(.input-field, .project-select):focus {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--border-focus) 30%, transparent);
 }
 
-html[data-look='obsidian'] .settings-theme-card.active {
+html[data-look^='obsidian'] .settings-theme-card.active {
   background: var(--bg-selected-subtle);
   box-shadow: none;
 }
 
 /* Prose and navigation use the UI face; code and terminal output remain mono. */
-html[data-look='obsidian'] :is(.info-bar, .changed-files-list-panel, .task-notes-body textarea) {
+html[data-look^='obsidian'] :is(.info-bar, .changed-files-list-panel, .task-notes-body textarea) {
   font-family: var(--font-ui) !important;
 }
 
-html[data-look='obsidian'] .task-notes-body textarea {
+/* Inter's proportional digits make diff counts jitter as they update. */
+html[data-look^='obsidian'] :is(.info-bar, .changed-files-list-panel, .sidebar-footer) {
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-look^='obsidian'] .task-notes-body textarea {
   padding: 12px 14px !important;
   font-size: 13px !important;
   line-height: 1.65;
 }
 
-html[data-look='obsidian'] .file-row {
+html[data-look^='obsidian'] .file-row {
   padding-top: 5px !important;
   padding-bottom: 5px !important;
 }
 
-html[data-look='obsidian'] .info-bar {
+html[data-look^='obsidian'] .info-bar {
   font-size: 12px !important;
 }
 
-html[data-look='obsidian'] .info-bar button:not(:hover):not(:focus-visible) {
+html[data-look^='obsidian'] .info-bar button:not(:hover):not(:focus-visible) {
   border-color: transparent !important;
 }
 
 /* Some controls have inline pill radii; keep every control square too.
    Status dots and loading rings retain their meaningful circular shapes. */
-html[data-look='obsidian'] :is(button, input, textarea, select, [role='tab']),
-html[data-look='obsidian'] .tiling-layout-scroll-affordance::before,
-html[data-look='obsidian'] .project-swatch,
-html[data-look='obsidian'] .xterm-slider,
-html[data-look='obsidian'] ::-webkit-scrollbar-thumb {
+html[data-look^='obsidian'] :is(button, input, textarea, select, [role='tab']),
+html[data-look^='obsidian'] .tiling-layout-scroll-affordance::before,
+html[data-look^='obsidian'] .project-swatch,
+html[data-look^='obsidian'] .xterm-slider,
+html[data-look^='obsidian'] ::-webkit-scrollbar-thumb {
   border-radius: 0 !important;
 }
 
-html[data-look='obsidian'] .info-bar button {
+html[data-look^='obsidian'] .info-bar button {
   font-family: var(--font-ui) !important;
 }
 
 /* Keep keyboard focus unambiguous, including the composer and shell toolbar. */
-html[data-look='obsidian'] .focusable-panel[data-panel-focused='true']::after,
-html[data-look='obsidian'] .prompt-input-panel:focus-within::after {
+html[data-look^='obsidian'] .focusable-panel[data-panel-focused='true']::after,
+html[data-look^='obsidian'] .prompt-input-panel:focus-within::after {
   content: '';
   border-width: 2px;
 }
 
 /* The file list sits inside an already outlined focusable section. */
-html[data-look='obsidian'] .task-changed-files-section .changed-files-list-panel::after {
+html[data-look^='obsidian'] .task-changed-files-section .changed-files-list-panel::after {
   content: none;
 }
 
@@ -1250,12 +1307,12 @@ html[data-look^='islands-'] .task-column.focus-mode .resize-handle-v {
    so we don't change layout. Hidden during hover/drag — the handle's accent
    color takes over. */
 html[data-look^='islands-'] .resize-handle,
-html[data-look='obsidian'] .task-column .resize-handle {
+html[data-look^='obsidian'] .task-column .resize-handle {
   position: relative;
 }
 
 html[data-look^='islands-'] .resize-handle-v::before,
-html[data-look='obsidian'] .task-column .resize-handle-v::before {
+html[data-look^='obsidian'] .task-column .resize-handle-v::before {
   content: '';
   position: absolute;
   top: 50%;
@@ -1268,7 +1325,7 @@ html[data-look='obsidian'] .task-column .resize-handle-v::before {
 }
 
 html[data-look^='islands-'] .resize-handle-h::before,
-html[data-look='obsidian'] .task-column .resize-handle-h::before {
+html[data-look^='obsidian'] .task-column .resize-handle-h::before {
   content: '';
   position: absolute;
   left: 50%;

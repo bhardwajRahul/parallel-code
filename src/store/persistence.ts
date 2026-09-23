@@ -375,8 +375,7 @@ export async function saveState(): Promise<void> {
     shareDockerAgentAuth: store.shareDockerAgentAuth || undefined,
     activeCustomThemeId: store.activeCustomThemeId ?? undefined,
     appearanceMode: store.appearanceMode !== 'dark' ? store.appearanceMode : undefined,
-    lightThemePreset:
-      store.lightThemePreset !== 'islands-light' ? store.lightThemePreset : undefined,
+    lightThemePreset: store.lightThemePreset,
     lightThemeCustomId: store.lightThemeCustomId ?? undefined,
     darkThemePreset: store.darkThemePreset,
     darkThemeCustomId: store.darkThemeCustomId ?? undefined,
@@ -830,6 +829,9 @@ export async function loadState(): Promise<void> {
         : raw.darkThemePreset === undefined && savedMode
           ? 'islands-dark'
           : defaultPresetForTone('dark');
+      // Saves before Obsidian Light omitted the slot when it held the old
+      // Islands Light default, so a missing slot keeps Islands Light. Only
+      // fresh installs (no saved state) start on defaultPresetForTone('light').
       s.lightThemePreset = isLookPreset(raw.lightThemePreset)
         ? raw.lightThemePreset
         : 'islands-light';
