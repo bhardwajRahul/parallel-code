@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { colord } from 'colord';
 import { getTerminalSearchDecorations, getTerminalTheme, theme } from './theme';
 
 afterEach(() => {
@@ -40,6 +41,56 @@ describe('getTerminalTheme', () => {
     expect(getTerminalTheme('obsidian')).toMatchObject({ foreground: '#e4e4e4' });
     // Other dark presets keep xterm's default palette.
     expect(getTerminalTheme('classic')).not.toHaveProperty('foreground');
+  });
+
+  it('uses the Islands Dark ANSI palette on its CSS-derived background only', () => {
+    const root = { dataset: { look: 'classic' } };
+    vi.stubGlobal('document', { documentElement: root, getElementById: () => null });
+    vi.stubGlobal('getComputedStyle', () => ({
+      getPropertyValue: (name: string) =>
+        name === '--task-panel-bg' && root.dataset.look === 'islands-dark' ? '#181a1d' : '',
+    }));
+
+    const islands = getTerminalTheme('islands-dark');
+    expect(islands).toMatchObject({
+      background: '#181a1d',
+      foreground: '#bcbec4',
+      cursor: '#6d9df8',
+      cursorAccent: '#181a1d',
+      red: '#f75464',
+      green: '#6aab73',
+      yellow: '#e8a33e',
+      blue: '#6d9df8',
+    });
+    if (!('black' in islands)) throw new Error('Islands Dark terminal palette is missing');
+
+    const ansiColors = [
+      'black',
+      'red',
+      'green',
+      'yellow',
+      'blue',
+      'magenta',
+      'cyan',
+      'white',
+      'brightBlack',
+      'brightRed',
+      'brightGreen',
+      'brightYellow',
+      'brightBlue',
+      'brightMagenta',
+      'brightCyan',
+      'brightWhite',
+    ] as const;
+    for (const color of ansiColors) {
+      expect(colord(islands[color]).isValid()).toBe(true);
+    }
+    const foregroundContrast =
+      (colord(islands.brightBlack).luminance() + 0.05) /
+      (colord(islands.background).luminance() + 0.05);
+    expect(foregroundContrast).toBeGreaterThanOrEqual(4.5);
+    expect(getTerminalTheme('classic')).not.toHaveProperty('foreground');
+    expect(root.dataset.look).toBe('classic');
   });
 });
 

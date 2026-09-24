@@ -572,7 +572,7 @@ html[data-look='obsidian'] {
   --link: #d6bd96;
   --success: #98c9ae;
   --error: #eaa0aa;
-  --warning: #e8a06a;
+  --warning: #f29b70;
   --review: #c1b0e8;
   --info: #c9c9c9;
   --diff-add-bg: rgba(152, 201, 174, 0.12);
@@ -584,8 +584,8 @@ html[data-look='obsidian'] {
   --island-radius: 0px;
   --task-container-bg: #1e1e1e;
   --task-panel-bg: #1e1e1e;
-  --radius-xs: 0px;
-  --radius-sm: 0px;
+  --radius-xs: 4px;
+  --radius-sm: 4px;
   --radius-md: 0px;
   --radius-lg: 0px;
   --shadow-soft: none;
@@ -682,13 +682,13 @@ html[data-look^='obsidian'] .task-column {
   margin: 0;
   box-shadow: none;
   border: 0 !important;
-  border-left: 1px solid var(--border-subtle) !important;
+  border-left: 1px solid var(--border) !important;
   border-top: 2px solid transparent !important;
 }
 
 html[data-look^='obsidian'] .task-column.active {
   box-shadow: none;
-  border-color: var(--border-subtle) !important;
+  border-color: var(--border) !important;
   border-top-color: var(--accent) !important;
 }
 
@@ -699,7 +699,7 @@ html[data-look^='obsidian'] .task-branch-info-bar {
 /* A flat composer; panel focus remains visible around its full boundary. */
 html[data-look^='obsidian'] .prompt-input-panel {
   padding: 0 !important;
-  background: var(--task-panel-bg);
+  background: var(--bg-input);
   border-top: 1px solid var(--border);
 }
 
@@ -712,6 +712,12 @@ html[data-look^='obsidian'] .prompt-textarea {
 
 html[data-look^='obsidian'] textarea::placeholder {
   color: var(--fg-subtle);
+}
+
+html[data-look='obsidian'] .prompt-textarea::placeholder,
+html[data-look='islands-dark'] .prompt-textarea::placeholder {
+  color: var(--fg-subtle);
+  opacity: 1;
 }
 
 html[data-look^='obsidian'] .prompt-send-btn {
@@ -756,13 +762,18 @@ html[data-look^='obsidian'] .info-bar button:not(:hover):not(:focus-visible) {
   border-color: transparent !important;
 }
 
-/* Some controls have inline pill radii; keep every control square too.
-   Status dots and loading rings retain their meaningful circular shapes. */
+/* Small controls use a softer radius while workspace boundaries stay square.
+   Override inline pill radii; status dots and loading rings keep their shape. */
 html[data-look^='obsidian'] :is(button, input, textarea, select, [role='tab']),
 html[data-look^='obsidian'] .tiling-layout-scroll-affordance::before,
 html[data-look^='obsidian'] .project-swatch,
 html[data-look^='obsidian'] .xterm-slider,
 html[data-look^='obsidian'] ::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-sm) !important;
+}
+
+/* The composer remains flush with its square workspace. */
+html[data-look^='obsidian'] .prompt-textarea {
   border-radius: 0 !important;
 }
 
@@ -1038,7 +1049,10 @@ html[data-look='catppuccin-mocha'] .task-column.active {
 /* Islands Dark — JetBrains 2025.3 inspired: lighter tinted frame, darker uniform island panels.
    Frame uses a color→gray radial reminiscent of JetBrains' "Project Gradient". */
 html[data-look='islands-dark'] {
-  --bg: radial-gradient(circle at 0% 0%, #3a76d6 0%, #2c3a4d 8%, #26282c 18%);
+  color-scheme: dark;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: var(--font-ui);
+  --bg: radial-gradient(circle at 0% 0%, #30445e 0%, #2b323d 8%, #26282c 18%);
   --bg-elevated: #181a1d;
   --bg-input: #1e2126;
   --bg-hover: #23262c;
@@ -1125,6 +1139,13 @@ html[data-look^='islands-'] .task-column.active {
   margin: 0 !important;
   border-color: transparent !important;
   box-shadow: none !important;
+}
+
+/* A header marker identifies the active task independently of panel focus.
+   Inset paint preserves header size in both tiled and focus layouts. */
+html[data-look='islands-dark'] .task-title-bar[data-active='true'],
+html[data-look='islands-dark'] .island-header-active {
+  box-shadow: inset 0 2px 0 var(--accent);
 }
 
 html[data-look^='islands-'] .tiling-layout-strip > .resize-handle-h {
@@ -1300,6 +1321,15 @@ html[data-look^='islands-'] .task-column.focus-mode .resize-handle-h {
 
 html[data-look^='islands-'] .task-column.focus-mode .resize-handle-v {
   height: 5px;
+}
+
+/* Outer islands provide grouping; inner panels only need their hairlines. */
+html[data-look='islands-dark'] .sidebar-panel,
+html[data-look='islands-dark'] .task-column.focus-mode .task-header-stack,
+html[data-look='islands-dark']
+  .task-column.focus-mode
+  .focusable-panel:not(.shell-terminal-container) {
+  box-shadow: none;
 }
 
 /* Islands and Obsidian: hairline between adjacent sub-panels (notes ↔ changed-files,

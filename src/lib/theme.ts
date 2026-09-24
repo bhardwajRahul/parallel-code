@@ -103,6 +103,31 @@ const OBSIDIAN_TERMINAL_THEME = {
   brightWhite: '#ededed',
 } as const;
 
+// Islands Dark carries its cool blue accent and semantic colors into ANSI.
+// Keep bright black readable because terminal programs use it for muted text.
+const ISLANDS_DARK_TERMINAL_THEME = {
+  foreground: '#bcbec4',
+  cursor: '#6d9df8',
+  cursorAccent: '#181a1d',
+  selectionBackground: '#28416c',
+  black: '#30343a',
+  red: '#f75464',
+  green: '#6aab73',
+  yellow: '#e8a33e',
+  blue: '#6d9df8',
+  magenta: '#bd9ae8',
+  cyan: '#70b9c7',
+  white: '#bcbec4',
+  brightBlack: '#8a8d94',
+  brightRed: '#ff7885',
+  brightGreen: '#87c58e',
+  brightYellow: '#f4be69',
+  brightBlue: '#92b7ff',
+  brightMagenta: '#d1b1f3',
+  brightCyan: '#91d2dc',
+  brightWhite: '#eef0f4',
+} as const;
+
 /**
  * Returns an xterm-compatible theme object for the given preset.
  * For light-background presets we override xterm's defaults (white text,
@@ -115,6 +140,9 @@ export function getTerminalTheme(preset: LookPreset) {
   }
   if (preset === 'obsidian') {
     return { background, ...OBSIDIAN_TERMINAL_THEME };
+  }
+  if (preset === 'islands-dark') {
+    return { background, ...ISLANDS_DARK_TERMINAL_THEME };
   }
   return { background };
 }
