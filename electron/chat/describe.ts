@@ -66,6 +66,10 @@ const REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
 const NOTIFICATION = /<task-notification>[\s\S]*?<\/task-notification>/g;
 const tag = (block: string, name: string): string =>
   new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(block)?.[1]?.trim() ?? '';
+// A slash command run in the session leaves three user turns behind: a caveat for
+// the model, the command itself, and whatever it printed.
+const LOCAL_COMMAND =
+  /<local-command-(?:caveat|stdout|stderr)>[\s\S]*?<\/local-command-(?:caveat|stdout|stderr)>/g;
 
 /**
  * The part of a user turn the user would recognise as theirs. The CLI injects
@@ -73,12 +77,22 @@ const tag = (block: string, name: string): string =>
  * notifications whose own summary line says more than their XML.
  */
 export function visibleUserText(text: string): string {
+  if (text.includes('<command-name>'))
+    return `${tag(text, 'command-name')} ${tag(text, 'command-args')}`.trim();
   return text
     .replace(REMINDER, '')
+    .replace(LOCAL_COMMAND, '')
     .replace(NOTIFICATION, (block) => {
       const summary = tag(block, 'summary');
       const status = tag(block, 'status');
       return summary || (status ? `Background task ${status}.` : '');
     })
     .trim();
+}
+
+/** What a slash command printed, which the CLI records as a user turn. */
+export function localCommandOutput(text: string): string {
+  return [tag(text, 'local-command-stdout'), tag(text, 'local-command-stderr')]
+    .filter(Boolean)
+    .join('\n');
 }

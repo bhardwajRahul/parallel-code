@@ -4,6 +4,7 @@ import { createStore, reconcile } from 'solid-js/store';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ChatView, type ChatProps } from './ChatView';
 import type { AgentChatState } from '../../../electron/shared/agent-chat-types';
+import { mod } from '../../lib/platform';
 
 let container: HTMLDivElement;
 let dispose: (() => void) | undefined;
@@ -382,7 +383,7 @@ it('opens failed activity and connects file actions to the existing review surfa
   expect(onOpenFile).toHaveBeenCalledWith('src/app.ts');
 });
 
-it('renders effective model and permission settings together in the composer', async () => {
+it('renders separate model, reasoning and permission settings in the composer', async () => {
   const onPermissionMode = vi.fn(async () => {});
   await update({
     permissionMode: 'plan',
@@ -412,6 +413,35 @@ it('renders effective model and permission settings together in the composer', a
     mode.dispatchEvent(new Event('change', { bubbles: true }));
   });
   expect(onPermissionMode).toHaveBeenCalledWith('auto');
+});
+
+it('hides unsupported reasoning and restores it when a capable model is selected', async () => {
+  const models = [
+    { model: 'basic', displayName: 'Basic', supportedReasoningEfforts: [] },
+    {
+      model: 'thinking',
+      displayName: 'Thinking',
+      defaultReasoningEffort: 'high',
+      supportedReasoningEfforts: [
+        { reasoningEffort: 'high', description: 'Thorough' },
+        { reasoningEffort: 'low', description: 'Quick' },
+      ],
+    },
+  ];
+  await update({ state: { ...props.state, model: 'basic', models } });
+  expect(container.querySelector('[aria-label="Reasoning effort"]')).toBeNull();
+  await update({ state: { ...props.state, model: 'thinking' } });
+  const effort = container.querySelector<HTMLSelectElement>('[aria-label="Reasoning effort"]');
+  if (!effort) throw new Error('Missing reasoning control');
+  expect(effort.value).toBe('high');
+  await act(() => {
+    effort.value = 'low';
+    effort.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  expect(props.onSelectModel).toHaveBeenCalledWith('thinking', 'low');
+  await update({ state: { ...props.state, reasoningEffort: 'low' } });
+  await update({ state: { ...props.state, model: 'basic' } });
+  expect(container.querySelector('[aria-label="Reasoning effort"]')).toBeNull();
 });
 
 it('retains queued follow-ups across reconnects and requires an explicit retry', async () => {
@@ -522,6 +552,95 @@ it('finds tool output inside collapsed activity and opens the matching entry', a
     true,
   );
   expect(scrollIntoView).toHaveBeenCalled();
+});
+
+it('opens search from Ctrl+F without a toolbar and hands focus back on Escape', async () => {
+  await update({ hideToolbar: true, onReview: vi.fn() });
+  expect(container.querySelector('.chat-toolbar')).toBeNull();
+  expect(container.textContent).not.toContain('Review changes');
+  const shortcut = new KeyboardEvent('keydown', {
+    key: 'f',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  await act(() => composer().dispatchEvent(shortcut));
+  expect(shortcut.defaultPrevented).toBe(true);
+  const input = container.querySelector<HTMLInputElement>('[aria-label="Search conversation"]');
+  if (!input) throw new Error('Missing search field');
+  expect(document.activeElement).toBe(input);
+  await act(() =>
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })),
+  );
+  expect(container.querySelector('[aria-label="Search conversation"]')).toBeNull();
+  expect(document.activeElement).toBe(composer());
+});
+
+it('keeps New chat and search in the more menu, and New chat not mid-turn', async () => {
+  const menuItem = (label: string) => {
+    const item = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(
+      (element) => element.textContent?.startsWith(label),
+    );
+    if (!item) throw new Error(`Missing menu item: ${label}`);
+    return item;
+  };
+  // The phone keeps its toolbar and has no New chat, so it has nothing to put there.
+  expect(container.querySelector('[aria-label="More actions"]')).toBeNull();
+  const onNewChat = vi.fn();
+  await update({ onNewChat, hideToolbar: true });
+  await act(() => button('More actions').click());
+  await act(() => menuItem('New chat').click());
+  expect(onNewChat).toHaveBeenCalledTimes(1);
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+  await act(() => button('More actions').click());
+  await act(() => menuItem('Search conversation').click());
+  await settle();
+  expect(document.activeElement).toBe(
+    container.querySelector('[aria-label="Search conversation"]'),
+  );
+  await update({ state: { ...props.state, status: 'working' } });
+  await act(() => button('More actions').click());
+  expect(menuItem('New chat').disabled).toBe(true);
+  await act(() => button('More actions').click());
+});
+
+it('offers earlier conversations in the more menu and walks it by keyboard', async () => {
+  const open = vi.fn();
+  await update({ onNewChat: vi.fn(), hideToolbar: true, history: [{ title: 'Older', open }] });
+  // A real click focuses the button, which is where Escape hands focus back.
+  button('More actions').focus();
+  await act(() => button('More actions').click());
+  await settle();
+  const items = () => Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+  expect(document.querySelector('[role="menu"]')?.textContent).toContain('Switch conversation');
+  expect(items().map((item) => item.textContent)).toEqual([
+    'New chat',
+    `Search conversation${mod}+F`,
+    'Older',
+  ]);
+  // The first entry takes focus on the next frame.
+  await vi.waitFor(() => expect(document.activeElement).toBe(items()[0]));
+  const key = (name: string) =>
+    act(() =>
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: name, bubbles: true }),
+      ),
+    );
+  // Arrow keys wrap around both ends.
+  await key('ArrowUp');
+  expect(document.activeElement).toBe(items()[2]);
+  await key('ArrowDown');
+  expect(document.activeElement).toBe(items()[0]);
+  await key('Escape');
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+  expect(document.activeElement).toBe(button('More actions'));
+  await act(() => button('More actions').click());
+  await act(() => items()[2].click());
+  expect(open).toHaveBeenCalledTimes(1);
+  await update({ state: { ...props.state, status: 'working' } });
+  await act(() => button('More actions').click());
+  expect(items()[2].disabled).toBe(true);
+  await act(() => button('More actions').click());
 });
 
 it('keeps queued work when the chat view is remounted and pauses delivery', async () => {

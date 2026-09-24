@@ -9,6 +9,7 @@
   font: 13px/1.5 var(--font-ui);
 }
 .chat-conversation {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -107,7 +108,7 @@
   font-size: 13px;
 }
 .chat-ui textarea::placeholder {
-  color: var(--fg-muted);
+  color: var(--fg-subtle);
 }
 .chat-send {
   background: var(--chat-accent);
@@ -417,20 +418,19 @@
   width: 100%;
   max-width: 768px;
   margin: 0 auto;
-  /* The hint row below the composer carries the bottom gap. */
-  padding: 8px 12px 6px;
+  padding: 8px 12px 12px;
 }
 .chat-composer {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px;
+  gap: 0;
+  padding: 12px 6px 4px;
   background: var(--chat-surface);
   border: 1px solid var(--chat-border);
   border-radius: var(--radius-lg);
 }
 .chat-composer:focus-within {
-  border-color: var(--border-focus);
+  border-color: color-mix(in srgb, var(--border-focus) 45%, var(--chat-border));
 }
 .chat-composer-row {
   display: flex;
@@ -441,39 +441,34 @@
   field-sizing: content;
   flex: 1;
   min-width: 0;
-  min-height: 34px;
-  max-height: min(140px, 25cqh);
-  padding: 6px 8px;
-  line-height: 22px;
+  min-height: 48px;
+  max-height: min(200px, 28cqh);
+  padding: 0 8px 8px;
+  /* The composer box is the field; a second border and fill inside it read as
+     a form inside a form. Its focus ring moves to the box as well. */
+  border: 0;
+  outline: none;
+  background: transparent;
+  resize: none;
+  font: 13px/22px var(--font-ui);
 }
 .chat-composer :is(.chat-send, .chat-stop) {
-  width: 32px;
-  height: 32px;
-  margin: 1px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: 0;
   padding: 0;
   flex: none;
+  font-size: 14px;
 }
-/* Worth reading only while the user is about to type into an empty composer, but
-   its row is reserved either way: toggling `display` here moved the whole dock on
-   focus and again on the first keystroke. Fades instead, and never wraps. */
-.chat-composer-hint {
-  height: 16px;
-  margin-top: 4px;
-  color: var(--fg-muted);
-  font-size: 11px;
-  line-height: 16px;
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  opacity: 0;
-  transition: opacity 120ms ease;
-  pointer-events: none;
-}
-.chat-composer:focus-within:has(textarea:placeholder-shown) + .chat-composer-hint {
+/* An empty composer has nothing to send; a lit button would suggest otherwise. */
+.chat-ui .chat-send:disabled {
+  background: transparent;
+  color: var(--fg-subtle);
   opacity: 1;
 }
 @media (prefers-reduced-motion: reduce) {
-  .chat-composer-hint,
   .chat-message-actions {
     transition: none;
   }
@@ -494,39 +489,96 @@
   background: var(--chat-surface);
 }
 
-/* The model and reasoning pickers ride the composer's bottom edge as ghost
-   controls: present, legible, and not a form to fill in before typing. */
+/* Model, reasoning and permissions share one compact control style. */
 .chat-model-settings {
-  padding: 0 2px 2px;
+  min-width: 0;
+  padding-left: 2px;
 }
 .chat-model-selectors {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 2px;
   min-width: 0;
 }
-.chat-model-selectors select {
+.chat-model-selectors select + select {
+  flex-shrink: 0;
+}
+.chat-composer-settings select,
+.chat-composer-settings select::picker(select) {
+  appearance: base-select;
+}
+.chat-composer-settings select {
+  display: inline-flex;
+  align-items: center;
   min-width: 0;
   max-width: 180px;
-  padding: 2px 4px;
-  border: 1px solid transparent;
+  height: 28px;
+  padding: 0 6px;
+  border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--fg-muted);
+  color: var(--fg-subtle);
   font: 11px/1.5 var(--font-ui);
+  overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   cursor: pointer;
 }
-.chat-model-selectors select:enabled:hover {
+.chat-composer-settings select::picker-icon {
+  display: none;
+}
+.chat-composer-settings select:enabled:is(:hover, :open) {
   background: var(--chat-surface-strong);
   color: var(--fg);
 }
-.chat-model-selectors select:disabled {
+.chat-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.chat-picker select {
+  padding-left: 21px;
+}
+.chat-picker-icon {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  translate: 0 -50%;
+  color: var(--fg-subtle);
+  pointer-events: none;
+}
+.chat-picker:has(select:enabled:is(:hover, :open)) .chat-picker-icon {
+  color: var(--fg);
+}
+.chat-composer-settings select:disabled {
   opacity: 0.6;
   cursor: default;
 }
-.chat-model-selectors option {
+/* The picker renders in the top layer, outside the chat's variables. */
+.chat-composer-settings select::picker(select) {
+  min-width: 160px;
+  padding: 4px;
   background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 6px 20px #0006;
+}
+.chat-composer-settings option {
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--fg);
+  font-size: 11px;
+}
+.chat-composer-settings option:is(:hover, :focus-visible) {
+  background: var(--bg-hover);
+}
+.chat-composer-settings option:checked {
+  color: var(--chat-accent);
+}
+.chat-composer-settings option::checkmark {
+  display: none;
 }
 .chat-model-error {
   color: var(--error);
@@ -587,7 +639,9 @@
   border-bottom: 1px solid var(--chat-border);
 }
 .chat-toolbar button,
+.chat-search-results button,
 .chat-interrupt,
+.chat-more,
 .chat-review,
 .chat-file button,
 .chat-queue button {
@@ -605,6 +659,17 @@
 }
 .chat-search {
   position: relative;
+}
+/* Without a toolbar the search opens from Ctrl/Cmd+F over the transcript's top
+   corner, above its jump-to-latest pill. */
+.chat-search-floating {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: 40;
+}
+.chat-search-floating .chat-search-panel {
+  position: static;
 }
 .chat-search-panel {
   position: absolute;
@@ -656,6 +721,9 @@
   font-size: 12px;
   border-radius: var(--radius-sm);
   background: var(--chat-surface);
+}
+.chat-activity-summary .chat-diff-stat {
+  margin-left: 8px;
 }
 .chat-activity-summary strong {
   color: var(--error);
@@ -711,7 +779,7 @@
   display: flex;
   gap: 10px;
   padding: 3px 4px 7px;
-  color: var(--fg-muted);
+  color: var(--fg-subtle);
   font-size: 11px;
 }
 .chat-progress span {
@@ -725,9 +793,6 @@
   flex: none;
   font-variant-numeric: tabular-nums;
 }
-.chat-composer textarea {
-  max-height: min(200px, 28cqh);
-}
 .chat-send {
   border-radius: var(--radius-md);
   padding: 4px 8px;
@@ -735,29 +800,136 @@
   border: 0;
 }
 .chat-stop {
-  border: 1px solid var(--chat-border);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--fg);
   cursor: pointer;
 }
+/* Keep the quiet controls on the bottom edge, with one shared centre line. */
 .chat-composer-settings {
-  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 2px;
+  margin-top: auto;
+  padding-top: 4px;
+  color: var(--fg-subtle);
 }
-.chat-model-selectors {
+.chat-composer-settings:has(.chat-model-error) {
   flex-wrap: wrap;
 }
-.chat-composer-settings > select {
-  max-width: 150px;
-  font: 11px var(--font-ui);
+.chat-model-settings:has(.chat-model-error) {
+  flex-basis: 100%;
+}
+.chat-composer-status,
+.chat-ui .chat-interrupt {
+  align-self: flex-start;
+  margin: 0 8px 4px;
+  padding: 2px 0;
+  border: 0;
+  color: var(--fg-subtle);
+  font: 11px/1.5 var(--font-ui);
+}
+.chat-session-controls {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.chat-context-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg-subtle);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.chat-context-meter-ring {
+  width: 13px;
+  height: 13px;
+  /* The used arc starts at twelve o'clock. */
+  rotate: -90deg;
+  fill: none;
+  stroke-width: 2.5;
+}
+.chat-context-meter-ring circle:first-child {
+  stroke: var(--chat-border);
+}
+.chat-context-meter-ring circle:last-child {
+  stroke: currentColor;
+}
+.chat-context-meter[data-level='high'] {
+  color: var(--warning);
+}
+.chat-context-meter[data-level='full'] {
+  color: var(--error);
+}
+.chat-ui .chat-more {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--fg-subtle);
+}
+/* The menu lives in document.body, outside the chat's variables, so it uses the
+   app's own theme colors. */
+.chat-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+}
+.chat-menu {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 6px 20px #0006;
+  overflow-y: auto;
+}
+.chat-menu > * {
+  /* A long history scrolls instead of squeezing its entries. */
+  flex-shrink: 0;
+}
+.chat-menu-group {
+  padding: 6px 8px 2px;
   color: var(--fg-muted);
+  font-size: 11px;
+}
+.chat-menu button {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
   background: transparent;
   border: 0;
-  padding: 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
 }
-.chat-composer-settings option {
-  background: var(--bg-elevated);
-  color: var(--fg);
+.chat-menu button:enabled:hover,
+.chat-menu button:focus-visible {
+  background: var(--bg-hover);
+}
+.chat-menu button:disabled {
+  color: var(--fg-muted);
+  cursor: default;
+}
+.chat-menu-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-menu kbd {
+  color: var(--fg-muted);
+  font: inherit;
 }
 .chat-context-chips {
   display: flex;
@@ -765,6 +937,9 @@
   gap: 4px;
   max-height: 100px;
   overflow: auto;
+}
+.chat-composer .chat-context-chips:not(:empty) {
+  margin: 0 8px 8px;
 }
 .chat-context-chips button {
   display: flex;
@@ -851,8 +1026,15 @@
   .chat-toolbar {
     padding-inline: 8px;
   }
+  /* Keep labels readable when the action buttons need most of the bottom row. */
+  .chat-composer-settings {
+    flex-wrap: wrap;
+  }
+  .chat-model-settings {
+    flex-basis: 100%;
+  }
   .chat-model-selectors select {
-    max-width: 130px;
+    max-width: none;
   }
 }
 

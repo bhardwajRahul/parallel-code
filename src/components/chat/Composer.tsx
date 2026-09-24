@@ -1,11 +1,19 @@
 import { For, Show } from 'solid-js';
 import type { AgentChatState, ChatPermissionMode } from '../../../electron/shared/agent-chat-types';
 import { ChatContext } from './ChatContext';
+import { ContextMeter } from './ContextMeter';
+import { MoreMenu, type MoreMenuItem } from './MoreMenu';
+import { mod } from '../../lib/platform';
 import { createFileMention } from './file-mention';
 import type { Composer as ComposerState } from './composer-state';
 import { ModelPicker, PermissionPicker } from './ModelPicker';
 import { Progress } from './Progress';
 import { RequestCard, type RespondToRequest } from './RequestCard';
+
+export interface ChatHistoryEntry {
+  title: string;
+  open: () => void;
+}
 
 export interface ComposerProps {
   composer: ComposerState;
@@ -22,6 +30,11 @@ export interface ComposerProps {
   permissionMode?: string;
   permissionsDisabled?: boolean;
   onPermissionMode?: (mode: ChatPermissionMode) => Promise<void>;
+  onNewChat?: () => void;
+  /** Earlier conversations the host can reopen, newest first. */
+  history?: ChatHistoryEntry[];
+  /** Set when search has no button of its own, so the menu offers it. */
+  onSearch?: () => void;
   textarea: (element: HTMLTextAreaElement) => void;
   focus: () => void;
 }
@@ -74,6 +87,24 @@ export function Composer(props: ComposerProps) {
   // eslint-disable-next-line solid/reactivity -- one composer per conversation, never replaced
   const c = props.composer;
   const working = () => props.state.status === 'working';
+  // Leaving the conversation mid-turn or mid-start would orphan the turn.
+  const switchBlocked = () => props.disabled || working() || props.state.status === 'starting';
+  const moreItems = (): MoreMenuItem[] => [
+    ...(props.onNewChat
+      ? [{ label: 'New chat', disabled: switchBlocked(), run: () => props.onNewChat?.() }]
+      : []),
+    ...(props.onSearch
+      ? [{ label: 'Search conversation', hint: `${mod}+F`, run: () => props.onSearch?.() }]
+      : []),
+    ...(props.history ?? []).map((entry) => ({
+      label: entry.title,
+      group: 'Switch conversation',
+      disabled: switchBlocked(),
+      run: entry.open,
+    })),
+  ];
+  const placeholder = () =>
+    `${working() ? 'Add a follow-up' : `Message ${props.agentName}`}… Shift+Enter for a new line${props.onListFiles ? ', @ for files' : ''}`;
   const hasContent = () => !!props.draft.trim() || c.images().length > 0 || c.files().length > 0;
   const busy = () => c.sending() || c.readingImages() || c.stopping();
   let textarea: HTMLTextAreaElement | undefined;
@@ -118,7 +149,7 @@ export function Composer(props: ComposerProps) {
               props.textarea(element);
             }}
             aria-label={`Message ${props.agentName}`}
-            placeholder={working() ? 'Add a follow-up…' : `Message ${props.agentName}…`}
+            placeholder={placeholder()}
             disabled={props.disabled}
             value={props.draft}
             onInput={(event) => {
@@ -147,35 +178,6 @@ export function Composer(props: ComposerProps) {
               c.addDropped(Array.from(event.dataTransfer.files));
             }}
           />
-          {/* Starting a turn swaps Send for Stop in the same square, so the box
-              keeps its size; typing a follow-up brings Send back to queue it. */}
-          <Show when={!working() || hasContent()}>
-            <button
-              class="chat-send"
-              disabled={
-                busy() ||
-                props.disabled ||
-                !['ready', 'working'].includes(props.state.status) ||
-                !hasContent()
-              }
-              aria-label={working() ? 'Queue message' : 'Send message'}
-              title={working() ? 'Queue message (Enter)' : 'Send message (Enter)'}
-              onClick={() => void c.send()}
-            >
-              ↑
-            </button>
-          </Show>
-          <Show when={working()}>
-            <button
-              class="chat-stop"
-              disabled={c.stopping()}
-              aria-label="Stop response"
-              title="Stop response"
-              onClick={() => void c.stop()}
-            >
-              ■
-            </button>
-          </Show>
         </div>
         <ChatContext
           files={c.files()}
@@ -188,7 +190,18 @@ export function Composer(props: ComposerProps) {
           onListFiles={props.onListFiles}
         />
         <Show when={c.readingImages()}>
-          <div role="status">Reading images…</div>
+          <div role="status" class="chat-composer-status">
+            Reading images…
+          </div>
+        </Show>
+        <Show when={working() && hasContent()}>
+          <button
+            class="chat-interrupt"
+            disabled={busy() || props.disabled}
+            onClick={() => void c.stop(true)}
+          >
+            Interrupt and send now
+          </button>
         </Show>
         <div class="chat-composer-settings">
           <ModelPicker
@@ -209,20 +222,57 @@ export function Composer(props: ComposerProps) {
               />
             )}
           </Show>
+          <span class="chat-session-controls">
+            <ContextMeter state={props.state} />
+            <Show when={moreItems().length}>
+              <MoreMenu items={moreItems()} />
+            </Show>
+            {/* Keep Stop available when a follow-up is ready to queue. */}
+            <Show when={!working() || hasContent()}>
+              <button
+                class="chat-send"
+                disabled={
+                  busy() ||
+                  props.disabled ||
+                  !['ready', 'working'].includes(props.state.status) ||
+                  !hasContent()
+                }
+                aria-label={working() ? 'Queue message' : 'Send message'}
+                title={working() ? 'Queue message (Enter)' : 'Send message (Enter)'}
+                onClick={() => void c.send()}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path
+                    d="M8 12V4M4 8l4-4 4 4"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+            </Show>
+            <Show when={working()}>
+              <button
+                class="chat-stop"
+                disabled={c.stopping()}
+                aria-label="Stop response"
+                title="Stop response"
+                onClick={() => void c.stop()}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <rect x="4.5" y="4.5" width="7" height="7" rx="1" />
+                </svg>
+              </button>
+            </Show>
+          </span>
         </div>
-        <Show when={working() && hasContent()}>
-          <button
-            class="chat-interrupt"
-            disabled={busy() || props.disabled}
-            onClick={() => void c.stop(true)}
-          >
-            Interrupt and send now
-          </button>
-        </Show>
-      </div>
-      <div class="chat-composer-hint">
-        {working() ? 'Enter to queue' : 'Enter to send'} · Shift+Enter for a new line
-        <Show when={props.onListFiles}> · @ for files</Show>
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { For, Show, batch, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
+import { Show, batch, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { reconcile } from 'solid-js/store';
 import { Channel, invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
@@ -38,6 +38,7 @@ export function AgentChatView(props: {
   const state = () => store.agents[props.agentId]?.chatState;
   const [error, setError] = createSignal('');
   let actions: ChatActions | undefined;
+  let root: HTMLDivElement | undefined;
   let disposed = false;
   const [connecting, setConnecting] = createSignal(false);
   const channel = new Channel<AgentChatState>();
@@ -81,7 +82,7 @@ export function AgentChatView(props: {
       state()?.items.length &&
       !threadId &&
       !window.confirm(
-        `Start a new ${agentName()} chat? You can reopen this conversation from History.`,
+        `Start a new ${agentName()} chat? You can reopen this conversation from the ⋯ menu.`,
       )
     )
       return;
@@ -207,7 +208,7 @@ export function AgentChatView(props: {
     },
   };
   onMount(() => {
-    props.onReady?.(() => actions?.focus());
+    props.onReady?.(focusUnlessBusy);
     const focusKey = `${props.task.id}:prompt`;
     const actionKey = `${props.task.id}:send-prompt`;
     const focus = () => actions?.focus();
@@ -224,6 +225,26 @@ export function AgentChatView(props: {
     disposed = true;
     channel.dispose();
   });
+  const history = () =>
+    [...(props.task.chatSessions ?? [])]
+      .filter(
+        (session) => session.provider === provider() && session.threadId !== state()?.threadId,
+      )
+      .reverse()
+      .map((session) => ({
+        title: session.title,
+        open: () => void connect(true, session.threadId),
+      }));
+  /** Any click in the pane re-focuses it, which lands on the composer. Leave focus
+   *  where the user put it inside the chat (the search, a button) and leave a
+   *  text selection alone, since moving focus would drop it before it is copied. */
+  function focusUnlessBusy() {
+    const focused = document.activeElement;
+    const selection = window.getSelection();
+    if (focused && focused !== document.body && root?.contains(focused)) return;
+    if (selection && !selection.isCollapsed && root?.contains(selection.anchorNode)) return;
+    actions?.focus();
+  }
   createEffect(() => {
     const prefill = props.task.prefillPrompt;
     if (prefill !== undefined) {
@@ -231,120 +252,8 @@ export function AgentChatView(props: {
       clearPrefillPrompt(props.task.id);
     }
   });
-  const status = () =>
-    state()?.status === 'closed'
-      ? 'Disconnected'
-      : state()?.requests.length
-        ? 'Waiting for you'
-        : state()?.status === 'working'
-          ? 'Working'
-          : state()?.status === 'ready'
-            ? 'Ready'
-            : 'Connecting…';
-  const compactTokens = new Intl.NumberFormat('en', {
-    notation: 'compact',
-    maximumFractionDigits: 1,
-  });
-  const tokenTitle = () => {
-    const usage = state()?.tokenUsage;
-    if (!usage) return 'Session token usage has not been reported yet.';
-    return `${usage.totalTokens.toLocaleString()} tokens · ${usage.inputTokens.toLocaleString()} input (including cache) · ${usage.outputTokens.toLocaleString()} output. ${usage.scope === 'connection' ? 'Since this chat connected; updates after each turn.' : 'Total for this conversation.'}`;
-  };
-  const contextTitle = () => {
-    const usage = state()?.contextUsage;
-    if (!usage) return 'Context window usage is not available yet.';
-    const remaining = Math.max(0, usage.maxTokens - usage.usedTokens);
-    return `${usage.usedTokens.toLocaleString()} of ${usage.maxTokens.toLocaleString()} context tokens used · ${remaining.toLocaleString()} remaining. Latest provider-reported estimate; the window may reflect an automatic compaction limit.`;
-  };
   return (
-    <div class="codex-chat" role="region" aria-label={`${agentName()} conversation`}>
-      <div class="codex-chat-header">
-        <strong
-          title={
-            [props.task.branchName, props.task.worktreePath].filter(Boolean).join(' · ') ||
-            undefined
-          }
-        >
-          {agentName()}
-        </strong>
-        <span class="codex-chat-status" role="status">
-          {status()}
-        </span>
-        <span class="codex-chat-tokens" title={tokenTitle()} aria-label={tokenTitle()}>
-          {state()?.tokenUsage ? compactTokens.format(state()?.tokenUsage?.totalTokens ?? 0) : '—'}{' '}
-          tokens
-        </span>
-        <Show
-          when={state()?.contextUsage}
-          fallback={
-            <span class="codex-chat-context" title={contextTitle()}>
-              Context —
-            </span>
-          }
-        >
-          {(usage) => (
-            <span
-              class="codex-chat-context"
-              role="meter"
-              aria-label="Context window usage"
-              aria-valuemin={0}
-              aria-valuemax={usage().maxTokens}
-              aria-valuenow={Math.min(usage().usedTokens, usage().maxTokens)}
-              aria-valuetext={contextTitle()}
-              title={contextTitle()}
-              data-level={
-                usage().usedTokens >= usage().maxTokens
-                  ? 'full'
-                  : usage().usedTokens / usage().maxTokens >= 0.9
-                    ? 'high'
-                    : 'normal'
-              }
-            >
-              <span class="codex-chat-context-track" aria-hidden="true">
-                <span
-                  style={{
-                    width: `${Math.min(100, (usage().usedTokens / usage().maxTokens) * 100)}%`,
-                  }}
-                />
-              </span>
-              Context {Math.round((usage().usedTokens / usage().maxTokens) * 100)}% ·{' '}
-              {compactTokens.format(Math.max(0, usage().maxTokens - usage().usedTokens))} left
-            </span>
-          )}
-        </Show>
-        <Show when={props.task.chatSessions?.some((session) => session.provider === provider())}>
-          <select
-            class="codex-chat-action"
-            aria-label="Conversation history"
-            value={state()?.threadId ?? ''}
-            disabled={connecting() || state()?.status === 'working'}
-            onChange={(event) => void connect(true, event.currentTarget.value)}
-          >
-            <option value="" disabled>
-              History
-            </option>
-            <For
-              each={[...(props.task.chatSessions ?? [])]
-                .filter((session) => session.provider === provider())
-                .reverse()}
-            >
-              {(session) => <option value={session.threadId}>{session.title}</option>}
-            </For>
-          </select>
-        </Show>
-        <button
-          class="codex-chat-action"
-          disabled={connecting() || state()?.status === 'working'}
-          onClick={() => void connect(true)}
-        >
-          New chat
-        </button>
-        <Show when={error() || state()?.status === 'closed'}>
-          <button class="codex-chat-action" disabled={connecting()} onClick={() => void connect()}>
-            Reconnect
-          </button>
-        </Show>
-      </div>
+    <div ref={root} class="codex-chat" role="region" aria-label={`${agentName()} conversation`}>
       <Show when={state()?.permissionNote}>
         <p class="codex-chat-note">{state()?.permissionNote}</p>
       </Show>
@@ -353,6 +262,9 @@ export function AgentChatView(props: {
           {(current) => (
             <ChatView
               {...callbacks}
+              hideToolbar
+              onNewChat={() => void connect(true)}
+              history={history()}
               onReview={props.onReview ? reviewFile : undefined}
               permissionMode={current().permissionMode ?? props.task.chatPermissionMode}
               permissionsDisabled={props.task.skipPermissions}
@@ -369,11 +281,13 @@ export function AgentChatView(props: {
           )}
         </Show>
       </div>
-      <Show when={error() || state()?.error}>
+      <Show when={error() || state()?.error || state()?.status === 'closed'}>
         <div role="alert" class="codex-chat-error">
-          {error() || state()?.error}
-          {/* Reconnect lives in the header now, where it is reachable before an error too. */}
+          {error() || state()?.error || 'Disconnected.'}
           <Show when={error() || state()?.status === 'closed'}>
+            <button disabled={connecting()} onClick={() => void connect()}>
+              Reconnect
+            </button>
             <p>If sign-in is needed, use {agentName()}’s login flow in Terminal, then reconnect.</p>
           </Show>
         </div>
