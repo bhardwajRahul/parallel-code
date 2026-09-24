@@ -42,6 +42,25 @@ const TRUST_PATTERNS: RegExp[] = [
 const TRUST_EXCLUSION_KEYWORDS =
   /\b(delet|remov|credential|secret|password|key|token|destro|format|drop)/i;
 
+// Auto-trust presses Enter, which picks whatever option the cursor is on.
+// Claude focuses "No, exit" when project settings grant permissions or run
+// hooks, so Enter would quit the agent — leave those dialogs for the user.
+// "noexit" covers TUI-garbled text where the space between words is lost.
+const DECLINE_OPTION = /^(?:\d+\.\s*)?(?:no\b|noexit|don'?t|exit|quit|cancel|deny)/i;
+
+function isDeclineOptionFocused(tail: string): boolean {
+  const visible = stripAnsi(tail);
+  const cursor = Math.max(visible.lastIndexOf('❯'), visible.lastIndexOf('›'));
+  if (cursor < 0) return false;
+  const focused = visible.slice(cursor + 1).split(/\r?\n/, 1)[0] ?? '';
+  return DECLINE_OPTION.test(focused.trim());
+}
+
+/** True when a detected trust dialog must not be accepted automatically. */
+function blocksAutoTrust(tail: string): boolean {
+  return TRUST_EXCLUSION_KEYWORDS.test(stripAnsi(tail)) || isDeclineOptionFocused(tail);
+}
+
 // --- Consolidated per-agent tracking state ---
 // Groups all per-agent Maps into one to prevent cleanup leaks.
 interface AgentTrackingState {
@@ -424,8 +443,8 @@ export function looksLikeQuestion(tail: string): boolean {
 
 function isAutoHandledTrustQuestion(tail: string): boolean {
   if (!looksLikeTrustDialog(tail)) return false;
+  if (blocksAutoTrust(tail)) return false;
   const visible = stripAnsi(tail); // full visible — see looksLikeQuestion for rationale
-  if (TRUST_EXCLUSION_KEYWORDS.test(visible)) return false;
   const lines = visible.split(/\r?\n/).filter((l) => l.trim().length > 0);
   return !lines.some((line) => {
     const trimmed = line.trimEnd();
@@ -694,7 +713,7 @@ function tryAutoTrust(agentId: string, rawTail: string): boolean {
   if (!looksLikeTrustDialog(rawTail)) {
     return false;
   }
-  if (TRUST_EXCLUSION_KEYWORDS.test(stripAnsi(rawTail))) {
+  if (blocksAutoTrust(rawTail)) {
     return false;
   }
 
@@ -757,7 +776,7 @@ function analyzeAgentOutput(agentId: string): void {
   // Also force this for coordinator sub-tasks with skipPermissions — they run
   // autonomously and trust dialogs must never block them regardless of the setting.
   if (hasQuestion && (store.autoTrustFolders || isAutoTrustForced(agentId))) {
-    if (looksLikeTrustDialog(rawTail) && !TRUST_EXCLUSION_KEYWORDS.test(stripAnsi(rawTail))) {
+    if (looksLikeTrustDialog(rawTail) && !blocksAutoTrust(rawTail)) {
       // Auto-trust may not have fired yet if this is the first analysis for
       // an active task that just became visible — trigger it now.
       tryAutoTrust(agentId, rawTail);
