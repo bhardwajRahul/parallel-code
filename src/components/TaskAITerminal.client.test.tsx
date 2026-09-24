@@ -618,3 +618,26 @@ it('refreshes the linked session after the user changes conversations in Termina
   });
   expect(store.tasks.task.codexChatHandoff).toEqual({ threadId: id });
 });
+
+it('copies the raw Markdown of a file opened in the viewer', async () => {
+  const writeText = vi.fn(async (_text: string) => undefined);
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  mocks.invoke.mockImplementation(async (channel?: unknown) =>
+    channel === IPC.ReadFileText ? '# Notes\n\n- one' : undefined,
+  );
+  mount();
+  const terminalProps = mocks.terminalMounts.mock.calls[0]?.[0] as {
+    onFileLink?: (filePath: string) => void;
+  };
+  terminalProps.onFileLink?.('/worktree/NOTES.md');
+
+  await vi.waitFor(() => {
+    expect(document.querySelector('[role="dialog"] [title="Copy Markdown"]')).not.toBeNull();
+  });
+  document.querySelector<HTMLButtonElement>('[role="dialog"] [title="Copy Markdown"]')?.click();
+
+  expect(writeText).toHaveBeenCalledWith('# Notes\n\n- one');
+  await vi.waitFor(() => {
+    expect(document.querySelector('[role="dialog"] [title="Copied"]')).not.toBeNull();
+  });
+});
