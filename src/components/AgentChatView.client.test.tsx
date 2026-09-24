@@ -255,6 +255,7 @@ describe('Codex chat view', () => {
     await tick();
     mocks.channel?.onmessage?.(state({ items: [{ id: 'a', kind: 'assistant', text: 'Old' }] }));
     expect(task().codexChatThreadId).toBe('thread-1');
+    setStore('agents', 'agent-1', 'canvasGuidanceGeneration', 0);
     // Losing a conversation is asked about first, and a refusal keeps it.
     const confirm = vi.fn(() => false);
     vi.stubGlobal('confirm', confirm);
@@ -274,6 +275,8 @@ describe('Codex chat view', () => {
     );
     expect(task().codexChatThreadId).toBeUndefined();
     expect(store.agents['agent-1'].chatState?.items).toEqual([]);
+    // The new conversation never saw the canvas guidance the old one received.
+    expect(store.agents['agent-1'].canvasGuidanceGeneration).toBeUndefined();
     // The replaced transcript leaves the screen right away, without a new frame.
     await vi.waitFor(() => expect(mocks.chatProps?.state.items).toEqual([]));
     await vi.waitFor(() =>

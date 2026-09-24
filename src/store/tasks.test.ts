@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { IPC } from '../../electron/ipc/channels';
+import { CANVAS_INSTRUCTIONS } from '../../electron/shared/canvas-view';
 import { expectDefined, type MockStoreHarness } from './test-helpers';
 
 // Hoisted so these refs are available both in vi.mock() factories and in test bodies.
@@ -1365,6 +1366,15 @@ describe('sendPrompt', () => {
     },
   );
 
+  it('does not repeat canvas guidance the prompt already carries', async () => {
+    mockAgents['agent-1'] = { status: 'running', canvasTools: true, generation: 1 };
+    const prompt = `why was this sent?\n\n---\n${CANVAS_INSTRUCTIONS}`;
+
+    await sendPrompt('task-1', 'agent-1', prompt);
+
+    expect(writePayloads()[1]).toBe(prompt);
+  });
+
   it('leaves unrelated prompts unchanged when canvas tools are available', async () => {
     mockAgents['agent-1'] = { status: 'running', canvasTools: true };
 
@@ -1421,6 +1431,32 @@ describe('sendPrompt', () => {
     items.push({ kind: 'user', text: 'Create a mind map' });
     await sendPrompt('task-1', 'agent-1', 'Continue');
     expect(sentText()).toBe('Continue');
+  });
+
+  it('supplies canvas guidance to chat only when a prompt mentions a canvas, once per session', async () => {
+    const items: { kind: 'user'; text: string }[] = [];
+    mockAgents = {
+      'agent-1': {
+        status: 'running',
+        def: { id: 'codex' },
+        canvasTools: true,
+        generation: 2,
+        chatState: { items },
+      },
+    };
+    mockTasks['task-1'].agentIds = ['agent-1'];
+    mockTasks['task-1'].mainAgentView = 'chat';
+    const sentText = () => (mockInvoke.mock.lastCall?.[1] as { text: string }).text;
+
+    await sendPrompt('task-1', 'agent-1', 'fix the typo');
+    expect(sentText()).toBe('fix the typo');
+    items.push({ kind: 'user', text: 'fix the typo' });
+
+    await sendPrompt('task-1', 'agent-1', 'now show it in a mind map');
+    expect(sentText()).toContain('mindmap_read and mindmap_update');
+
+    await sendPrompt('task-1', 'agent-1', 'update the mind map');
+    expect(sentText()).toBe('update the mind map');
   });
 
   it('delivers chat images with steps and records only accepted prompts', async () => {

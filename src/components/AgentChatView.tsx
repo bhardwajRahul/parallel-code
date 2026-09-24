@@ -95,6 +95,8 @@ export function AgentChatView(props: {
         setStore('tasks', props.task.id, sessionKey(), threadId);
         const cleared = { status: 'starting', items: [], requests: [] } satisfies AgentChatState;
         setStore('agents', props.agentId, 'chatState', reconcile(cleared));
+        // A new chat keeps the agent's generation, so forget the guidance the old one received.
+        setStore('agents', props.agentId, 'canvasGuidanceGeneration', undefined);
         void saveState();
       }
       const agent = store.agents[props.agentId];

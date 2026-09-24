@@ -660,10 +660,22 @@ export function updateTaskNotes(taskId: string, notes: string): void {
 /** Canvas guidance goes out once per agent session; later mentions would only repeat it. */
 function canvasGuidanceDue(agentId: string, text: string): boolean {
   const agent = store.agents[agentId];
-  if (!agent?.canvasTools || !/\b(?:reasoning\s+graph|mind\s*map|live\s+map)\b/i.test(text))
+  // A prompt that quotes the guidance (e.g. pasted back to ask about it) mentions the canvases too.
+  if (
+    !agent?.canvasTools ||
+    text.includes(CANVAS_INSTRUCTIONS) ||
+    !/\b(?:reasoning\s+graph|mind\s*map|live\s+map)\b/i.test(text)
+  )
     return false;
   const sent = agent.canvasGuidanceGeneration;
   return sent === undefined || sent !== agent.generation;
+}
+
+/** Recorded only after delivery, so a failed send does not silence the guidance. */
+function markCanvasGuided(agentId: string, generation: number | undefined): void {
+  // A restart mid-send spawns a session that never saw the guidance.
+  if (store.agents[agentId]?.generation === generation)
+    setStore('agents', agentId, 'canvasGuidanceGeneration', generation);
 }
 
 export async function sendPrompt(
@@ -697,14 +709,16 @@ export async function sendPrompt(
   let effectiveText = injectSteps ? `${text}\n\n---\n${STEPS_INSTRUCTION}` : text;
 
   if (isAgentChat(task, agentId)) {
-    if (!options.appPrompt && !hasPromptedConversation && store.agents[agentId]?.canvasTools)
-      effectiveText += `\n\n---\n${CANVAS_INSTRUCTIONS}`;
+    const withChatGuidance = !options.appPrompt && canvasGuidanceDue(agentId, text);
+    const chatGeneration = store.agents[agentId]?.generation;
+    if (withChatGuidance) effectiveText += `\n\n---\n${CANVAS_INSTRUCTIONS}`;
     await invoke(IPC.AgentChat, {
       action: 'send',
       agentId,
       text: effectiveText,
       ...(options.images?.length ? { images: options.images } : {}),
     });
+    if (withChatGuidance) markCanvasGuided(agentId, chatGeneration);
     setTaskLastInputAt(taskId);
     setLastPrompt(taskId, text, agentId);
     if (task && !hasPromptedAgent)
@@ -742,9 +756,7 @@ export async function sendPrompt(
   await writeToAgentWhenReady(taskId, agentId, '\r', options.signal);
   // App sends bypass xterm's onData handler, which normally clears this flag on Enter.
   if (agentId === task?.agentIds[0]) setTaskTerminalInputPending(taskId, false);
-  // Recorded only after delivery, so a failed write does not silence the guidance.
-  if (withGuidance && store.agents[agentId]?.generation === guidedGeneration)
-    setStore('agents', agentId, 'canvasGuidanceGeneration', guidedGeneration);
+  if (withGuidance) markCanvasGuided(agentId, guidedGeneration);
   setLastPrompt(taskId, text, agentId);
   if (task && !hasPromptedAgent) {
     setStore('tasks', taskId, 'promptedAgentIds', [...promptedAgentIds, agentId]);
