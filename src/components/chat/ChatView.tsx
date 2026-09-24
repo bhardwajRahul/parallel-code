@@ -5,7 +5,7 @@ import type {
   ChatPermissionMode,
 } from '../../../electron/shared/agent-chat-types';
 import { ChatScroll } from './ChatScroll';
-import { Composer } from './Composer';
+import { Composer, type ChatHistoryEntry } from './Composer';
 import { createComposer, type ComposerMemory } from './composer-state';
 import { enableCopyOnSelect } from './copy-on-select';
 import { FILE_LINK_PREFIX } from './chat-markdown';
@@ -44,6 +44,12 @@ export interface ChatProps {
   permissionMode?: string;
   permissionsDisabled?: boolean;
   onPermissionMode?: (mode: ChatPermissionMode) => Promise<void>;
+  /** Drop the search and review buttons; Ctrl/Cmd+F still opens the search. */
+  hideToolbar?: boolean;
+  /** Offered beside the context meter when the host can start a fresh conversation. */
+  onNewChat?: () => void;
+  /** Earlier conversations offered in the same menu as New chat. */
+  history?: ChatHistoryEntry[];
 }
 
 // Task objects are weak keys, so closing a task also releases its unsent image data.
@@ -85,6 +91,7 @@ function Conversation(props: { chat: ChatProps; threadId: string }) {
   let root: HTMLDivElement | undefined;
   let textarea: HTMLTextAreaElement | undefined;
   let toLatest: (() => void) | undefined;
+  let openSearch: (() => void) | undefined;
   const focus = () => textarea?.focus();
   // Whoever sends a message wants to see it land and the answer arrive.
   createEffect(on(composer.pendingMessage, (sent) => sent && toLatest?.()));
@@ -101,6 +108,21 @@ function Conversation(props: { chat: ChatProps; threadId: string }) {
     element.tabIndex = -1;
     element.focus({ preventScroll: true });
   }
+  function findShortcut(event: KeyboardEvent) {
+    const mod = event.metaKey || event.ctrlKey;
+    if (!mod || event.shiftKey || event.altKey || event.key.toLowerCase() !== 'f') return;
+    event.preventDefault();
+    openSearch?.();
+  }
+  const search = (floating: boolean) => (
+    <TranscriptSearch
+      items={chat.state.items}
+      onJump={jump}
+      floating={floating}
+      onControls={(open) => (openSearch = open)}
+      onClose={focus}
+    />
+  );
   function openLink(event: MouseEvent) {
     const link = event.target instanceof Element ? event.target.closest('a') : null;
     const href = link?.getAttribute('href');
@@ -116,13 +138,15 @@ function Conversation(props: { chat: ChatProps; threadId: string }) {
     }
   }
   return (
-    <div ref={root} class="chat-conversation" onClick={openLink}>
-      <div class="chat-toolbar">
-        <TranscriptSearch items={chat.state.items} onJump={jump} />
-        <Show when={chat.onReview}>
-          <button onClick={() => chat.onReview?.()}>Review changes ↗</button>
-        </Show>
-      </div>
+    <div ref={root} class="chat-conversation" onClick={openLink} onKeyDown={findShortcut}>
+      <Show when={!chat.hideToolbar} fallback={search(true)}>
+        <div class="chat-toolbar">
+          {search(false)}
+          <Show when={chat.onReview}>
+            <button onClick={() => chat.onReview?.()}>Review changes ↗</button>
+          </Show>
+        </div>
+      </Show>
       <ChatScroll onControls={(controls) => (toLatest = controls.toLatest)}>
         <Transcript
           state={chat.state}
@@ -146,6 +170,9 @@ function Conversation(props: { chat: ChatProps; threadId: string }) {
         permissionMode={chat.permissionMode}
         permissionsDisabled={chat.permissionsDisabled}
         onPermissionMode={chat.onPermissionMode}
+        onNewChat={chat.onNewChat}
+        history={chat.history}
+        onSearch={chat.hideToolbar ? () => openSearch?.() : undefined}
         textarea={(element) => (textarea = element)}
         focus={focus}
       />

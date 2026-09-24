@@ -15,7 +15,12 @@ import type {
 } from '../shared/agent-chat-types.js';
 import { stripAnsi } from '../shared/prompt-detect.js';
 import { readContextUsage } from '../shared/agent-chat-types.js';
-import { describePermissionUpdates, describeToolCall, visibleUserText } from './describe.js';
+import {
+  describePermissionUpdates,
+  describeToolCall,
+  localCommandOutput,
+  visibleUserText,
+} from './describe.js';
 import { appliedDiffs, proposedDiffs } from './claude-diffs.js';
 import { chatSettingSources, launchPermissionMode, settingsDefaultMode } from './settings-mode.js';
 import type { AgentChat, ChatStartOptions } from './types.js';
@@ -152,7 +157,7 @@ export class ClaudeChat implements AgentChat {
         executable: 'node',
         permissionMode: this.opts.skipPermissions
           ? ('bypassPermissions' as const)
-          : (this.opts.permissionMode ?? launchPermissionMode(settingsMode) ?? 'default'),
+          : (this.opts.permissionMode ?? launchPermissionMode(settingsMode) ?? 'auto'),
         ...(this.opts.skipPermissions ? { allowDangerouslySkipPermissions: true } : {}),
         canUseTool: this.canUseTool,
         // Diagnostics can include private tool arguments once a session is running.
@@ -200,7 +205,7 @@ export class ClaudeChat implements AgentChat {
   private noteUnadoptedSettingsMode(settingsMode: string | undefined): void {
     if (settingsMode !== 'bypassPermissions') return;
     this.state.permissionNote =
-      'Your settings use bypassPermissions, which chat does not turn on by itself. This chat asks instead; switch the task to skip permissions to run without prompts.';
+      'Your settings use bypassPermissions, which chat does not turn on by itself. This chat uses Auto instead; switch the task to skip permissions to run without prompts.';
   }
 
   subscribe(publish: (state: AgentChatState) => void): void {
@@ -219,7 +224,8 @@ export class ClaudeChat implements AgentChat {
       this.state.models = models
         .map((model) => ({
           model: model.resolvedModel ?? model.value,
-          displayName: model.displayName,
+          // A picker on the composer names the model; the CLI's advice would crowd it.
+          displayName: model.displayName.replace(/\s*\(recommended\)$/i, ''),
           supportedReasoningEfforts: (model.supportedEffortLevels ?? []).map((reasoningEffort) => ({
             reasoningEffort,
             description: '',
@@ -617,6 +623,9 @@ export class ClaudeChat implements AgentChat {
           });
           this.upsert({ id, kind: 'user', text, ...(images.length ? { images } : {}) });
         }
+        // Output answers the command, so it reads as a reply rather than as the user's words.
+        const output = localCommandOutput(contentText(content));
+        if (output) this.upsert({ id: `${id}:output`, kind: 'assistant', text: output });
       }
       content.forEach((value, index) => {
         const block = record(value);

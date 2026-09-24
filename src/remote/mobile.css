@@ -642,6 +642,7 @@ textarea.mobile-input {
   opacity: 1;
 }
 .mobile-chat .chat-ui .chat-copy,
+.mobile-chat .chat-ui .chat-more,
 .mobile-chat .chat-ui .chat-composer :is(.chat-send, .chat-stop) {
   width: 44px;
   height: 44px;
@@ -655,15 +656,16 @@ textarea.mobile-input {
     .chat-file button,
     .chat-queue button,
     .chat-options button,
-    .chat-model-selectors select
+    .chat-model-selectors select,
+    .chat-picker select
   ) {
   min-height: 44px;
   padding-inline: 10px;
 }
+/* Leaves room for the icon inside each picker. */
+.mobile-chat .chat-ui .chat-picker select {
+  padding-left: 24px;
+}
 .mobile-chat .chat-ui :is(.chat-toolbar button, .chat-interrupt, .chat-review, .chat-queue button) {
   font-size: 13px;
-}
-/* Enter and Shift+Enter are keyboard shortcuts a phone keyboard does not offer. */
-.mobile-chat .chat-ui .chat-composer-hint {
-  display: none;
 }

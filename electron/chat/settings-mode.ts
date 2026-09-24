@@ -55,7 +55,7 @@ export async function settingsDefaultMode(cwd: string): Promise<string | undefin
     return USER_TIER_ONLY.includes(mode) && askedByRepo(resolved, mode) ? undefined : mode;
   } catch (error) {
     // Settings are the user's to fix and Claude Code reports them itself. Never
-    // let one stop the chat from opening; asking is the safe way to carry on.
+    // let one stop the chat from opening; the caller uses the app default.
     console.warn('Ignoring unreadable Claude Code settings:', error);
     return undefined;
   }

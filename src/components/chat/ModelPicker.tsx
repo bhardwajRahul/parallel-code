@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createSignal } from 'solid-js';
+import { ShieldIcon } from '../icons';
 import {
   reasoningEffortLabel,
   selectedChatModel,
@@ -27,7 +28,7 @@ function syncValue(value: () => string, options: () => unknown = () => undefined
 
 const PERMISSION_LABELS: Record<ChatPermissionMode, string> = {
   default: 'Ask each time',
-  auto: 'Auto (ask if risky)',
+  auto: 'Auto',
   acceptEdits: 'Accept edits',
   plan: 'Plan only',
 };
@@ -58,12 +59,6 @@ export function ModelPicker(props: {
       setPending(false);
     }
   }
-  const effortTitle = () =>
-    !selected()
-      ? 'Select a model to see its reasoning levels'
-      : !efforts().length
-        ? 'This model does not offer adjustable reasoning'
-        : 'Reasoning level for the next message';
   const effort = () => effectiveReasoningEffort(props.state);
   const unlistedEffort = () =>
     props.state.reasoningEffort &&
@@ -96,34 +91,27 @@ export function ModelPicker(props: {
             {(model) => <option value={model.model}>{model.displayName}</option>}
           </For>
         </select>
-        <select
-          aria-label="Reasoning effort"
-          title={effortTitle()}
-          ref={syncValue(
-            () => effort() ?? '',
-            () => [
-              selected()?.defaultReasoningEffort,
-              ...efforts().map((option) => option.reasoningEffort),
-            ],
-          )}
-          disabled={unavailable() || !efforts().length}
-          onChange={(event) => {
-            const select = event.currentTarget;
-            void change(
-              // eslint-disable-next-line solid/reactivity -- called at once, inside this handler
-              () => props.onSelectModel(selected()?.model ?? '', select.value),
-              select,
-              effort(),
-            );
-          }}
-        >
-          <Show
-            when={efforts().length}
-            fallback={
-              <option value={props.state.reasoningEffort ?? ''}>
-                {selected() ? 'Not supported' : 'Select a model'}
-              </option>
-            }
+        <Show when={efforts().length}>
+          <select
+            aria-label="Reasoning effort"
+            title="Reasoning level for the next message"
+            ref={syncValue(
+              () => effort() ?? '',
+              () => [
+                selected()?.defaultReasoningEffort,
+                ...efforts().map((option) => option.reasoningEffort),
+              ],
+            )}
+            disabled={unavailable() || !efforts().length}
+            onChange={(event) => {
+              const select = event.currentTarget;
+              void change(
+                // eslint-disable-next-line solid/reactivity -- called at once, inside this handler
+                () => props.onSelectModel(selected()?.model ?? '', select.value),
+                select,
+                effort(),
+              );
+            }}
           >
             <Show when={!selected()?.defaultReasoningEffort}>
               <option value="">Default</option>
@@ -140,8 +128,8 @@ export function ModelPicker(props: {
                 </option>
               )}
             </For>
-          </Show>
-        </select>
+          </select>
+        </Show>
       </div>
       <Show when={error() || props.state.modelsError}>
         <div class="chat-model-error" role="alert">
@@ -166,35 +154,39 @@ export function PermissionPicker(props: {
 }) {
   const [pending, setPending] = createSignal(false);
   return (
-    <select
-      aria-label="Permission mode"
-      ref={syncValue(() => props.mode ?? '')}
-      disabled={props.disabled || pending()}
-      onChange={(event) => {
-        const select = event.currentTarget;
-        const mode = select.value;
-        if (!isChatPermissionMode(mode)) return;
-        setPending(true);
-        void props
-          .onChange(mode)
-          // eslint-disable-next-line solid/reactivity -- restores whatever mode is current when the change fails
-          .catch((error: unknown) => {
-            select.value = props.mode ?? '';
-            props.onError(String(error));
-          })
-          .finally(() => setPending(false));
-      }}
-    >
-      <Show when={!isChatPermissionMode(props.mode)}>
-        <option value={props.mode ?? ''}>
-          {props.mode === 'bypassPermissions'
-            ? 'Skipping permissions'
-            : props.mode || 'Permissions'}
-        </option>
-      </Show>
-      <For each={CHAT_PERMISSION_MODES}>
-        {(mode) => <option value={mode}>{PERMISSION_LABELS[mode]}</option>}
-      </For>
-    </select>
+    // The icon sits in the select's own padding and lets clicks through to it.
+    <span class="chat-picker">
+      <ShieldIcon size={11} class="chat-picker-icon" />
+      <select
+        aria-label="Permission mode"
+        ref={syncValue(() => props.mode ?? '')}
+        disabled={props.disabled || pending()}
+        onChange={(event) => {
+          const select = event.currentTarget;
+          const mode = select.value;
+          if (!isChatPermissionMode(mode)) return;
+          setPending(true);
+          void props
+            .onChange(mode)
+            // eslint-disable-next-line solid/reactivity -- restores whatever mode is current when the change fails
+            .catch((error: unknown) => {
+              select.value = props.mode ?? '';
+              props.onError(String(error));
+            })
+            .finally(() => setPending(false));
+        }}
+      >
+        <Show when={!isChatPermissionMode(props.mode)}>
+          <option value={props.mode ?? ''}>
+            {props.mode === 'bypassPermissions'
+              ? 'Skipping permissions'
+              : props.mode || 'Permissions'}
+          </option>
+        </Show>
+        <For each={CHAT_PERMISSION_MODES}>
+          {(mode) => <option value={mode}>{PERMISSION_LABELS[mode]}</option>}
+        </For>
+      </select>
+    </span>
   );
 }

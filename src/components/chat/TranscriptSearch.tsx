@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from 'solid-js';
+import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
 import type { ChatItem } from '../../../electron/shared/agent-chat-types';
 
 const speakers = { user: 'You', tool: 'Activity', assistant: 'Assistant' };
@@ -17,10 +17,24 @@ function searchable(item: ChatItem): string {
     .join('\n');
 }
 
-/** Finds text in messages and tool output, including what collapsed activity hides. */
-export function TranscriptSearch(props: { items: ChatItem[]; onJump: (id: string) => void }) {
+function focusQuery(input: HTMLInputElement) {
+  input.focus();
+  input.select();
+}
+
+/** Finds text in messages and tool output, including what collapsed activity hides.
+ *  Floating, it has no button: the host opens it (Ctrl/Cmd+F) through `onControls`,
+ *  and it closes once focus leaves it. */
+export function TranscriptSearch(props: {
+  items: ChatItem[];
+  onJump: (id: string) => void;
+  floating?: boolean;
+  onControls?: (open: () => void) => void;
+  onClose?: () => void;
+}) {
   const [open, setOpen] = createSignal(false);
   const [query, setQuery] = createSignal('');
+  let input: HTMLInputElement | undefined;
   const needle = () => query().trim().toLocaleLowerCase();
   const matches = createMemo(() => {
     const wanted = needle();
@@ -34,21 +48,44 @@ export function TranscriptSearch(props: { items: ChatItem[]; onJump: (id: string
     const start = Math.max(0, text.toLocaleLowerCase().indexOf(needle()) - 40);
     return text.slice(start, start + 180);
   };
+  const close = () => {
+    setOpen(false);
+    props.onClose?.();
+  };
+  onMount(() =>
+    props.onControls?.(() => {
+      setOpen(true);
+      // Already open: take the caret back and select the last query for retyping.
+      if (input) focusQuery(input);
+    }),
+  );
   return (
-    <div class="chat-search">
-      <button aria-expanded={open()} onClick={() => setOpen(!open())}>
-        Search conversation
-      </button>
+    <div
+      class="chat-search"
+      classList={{ 'chat-search-floating': props.floating }}
+      onFocusOut={(event) => {
+        if (props.floating && !event.currentTarget.contains(event.relatedTarget as Node | null))
+          setOpen(false);
+      }}
+    >
+      <Show when={!props.floating}>
+        <button aria-expanded={open()} onClick={() => setOpen(!open())}>
+          Search conversation
+        </button>
+      </Show>
       <Show when={open()}>
         <div class="chat-search-panel">
           <input
-            ref={(element) => queueMicrotask(() => element.focus())}
+            ref={(element) => {
+              input = element;
+              queueMicrotask(() => focusQuery(element));
+            }}
             aria-label="Search conversation"
             placeholder="Find in messages and output…"
             value={query()}
             onInput={(event) => setQuery(event.currentTarget.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Escape') setOpen(false);
+              if (event.key === 'Escape') close();
             }}
           />
           <Show when={needle()}>

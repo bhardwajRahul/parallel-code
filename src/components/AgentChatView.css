@@ -20,67 +20,6 @@
   background: var(--task-panel-bg, var(--bg-elevated));
   font-size: 13px;
 }
-.codex-chat-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border-subtle);
-  font-size: 12px;
-}
-.codex-chat-status {
-  margin-left: auto;
-  flex-shrink: 0;
-  color: var(--fg-muted);
-}
-.codex-chat-action {
-  flex-shrink: 0;
-  background: var(--bg-elevated);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 3px 8px;
-  font-size: 11px;
-  cursor: pointer;
-}
-.codex-chat-tokens {
-  flex-shrink: 0;
-  color: var(--fg-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.codex-chat-context {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-  color: var(--fg-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.codex-chat-context-track {
-  width: 28px;
-  height: 4px;
-  overflow: hidden;
-  border-radius: 2px;
-  background: var(--border);
-}
-.codex-chat-context-track > span {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-}
-.codex-chat-context[data-level='high'] .codex-chat-context-track > span {
-  background: var(--warning);
-}
-.codex-chat-context[data-level='full'] .codex-chat-context-track > span {
-  background: var(--error);
-}
-.codex-chat-action:disabled {
-  color: var(--fg-muted);
-  cursor: default;
-}
 .codex-chat-note {
   margin: 0;
   padding: 8px 16px;
@@ -105,11 +44,4 @@
   border-radius: var(--radius-sm);
   padding: 4px 10px;
   cursor: pointer;
-}
-
-.codex-chat-header select {
-  flex: 1 1 110px;
-  min-width: 0;
-  max-width: 180px;
-  text-overflow: ellipsis;
 }

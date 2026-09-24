@@ -134,58 +134,6 @@ afterEach(() => {
 });
 
 describe('Codex chat view', () => {
-  it('shows context capacity, remaining tokens, and over-limit usage independently of session totals', async () => {
-    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
-    await tick();
-    const meter = () => container.querySelector<HTMLElement>('[role="meter"]');
-    expect(meter()).toBeNull();
-    expect(container.querySelector('.codex-chat-context')?.textContent).toContain('Context —');
-    mocks.channel?.onmessage?.(state({ contextUsage: { usedTokens: 50000, maxTokens: 200000 } }));
-    expect(meter()?.textContent).toContain('Context 25% · 150K left');
-    expect(meter()?.title).toContain('50,000 of 200,000');
-    expect(meter()?.getAttribute('aria-valuenow')).toBe('50000');
-    mocks.channel?.onmessage?.(state({ contextUsage: { usedTokens: 190000, maxTokens: 200000 } }));
-    expect(meter()?.dataset.level).toBe('high');
-    mocks.channel?.onmessage?.(state({ contextUsage: { usedTokens: 210000, maxTokens: 200000 } }));
-    expect(meter()?.textContent).toContain('Context 105% · 0 left');
-    expect(meter()?.dataset.level).toBe('full');
-    expect(meter()?.getAttribute('aria-valuenow')).toBe('200000');
-    expect(meter()?.getAttribute('aria-valuetext')).toContain('210,000 of 200,000');
-    mocks.channel?.onmessage?.(state({ contextUsage: { usedTokens: 0, maxTokens: 200000 } }));
-    expect(meter()?.textContent).toContain('Context 0% · 200K left');
-    mocks.channel?.onmessage?.(state({ threadId: 'new-session' }));
-    expect(meter()).toBeNull();
-  });
-
-  it('shows compact session tokens with an exact breakdown and clears them for a new session', async () => {
-    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
-    await tick();
-    const counter = () => container.querySelector<HTMLElement>('.codex-chat-tokens');
-    expect(counter()?.textContent).toContain('— tokens');
-    mocks.channel?.onmessage?.(
-      state({
-        tokenUsage: {
-          totalTokens: 12500,
-          inputTokens: 12000,
-          outputTokens: 500,
-          scope: 'conversation',
-        },
-      }),
-    );
-    expect(counter()?.textContent).toContain('12.5K tokens');
-    expect(counter()?.title).toContain('12,500 tokens');
-    expect(counter()?.title).toContain('12,000 input');
-    mocks.channel?.onmessage?.(
-      state({
-        tokenUsage: { totalTokens: 0, inputTokens: 0, outputTokens: 0, scope: 'connection' },
-      }),
-    );
-    expect(counter()?.textContent).toContain('0 tokens');
-    expect(counter()?.title).toContain('Since this chat connected');
-    mocks.channel?.onmessage?.(state({ threadId: 'new-session' }));
-    expect(counter()?.textContent).toContain('— tokens');
-  });
-
   it('opens the actual file for links containing line and column suffixes', async () => {
     dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     const chat = await tick();
@@ -224,37 +172,29 @@ describe('Codex chat view', () => {
     expect(chat.dropPathFor?.(new File(['x'], 'from-browser.png'))).toBeUndefined();
   });
 
-  it('blocks New chat and Reconnect throughout initial startup and replacement', async () => {
+  it('ignores New chat while a connection is starting or being replaced', async () => {
     let release = () => {};
-    mocks.invoke.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          release = () => resolve(undefined);
-        }),
-    );
+    const pending = () =>
+      new Promise((resolve) => {
+        release = () => resolve(undefined);
+      });
+    mocks.invoke.mockImplementationOnce(pending);
     dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
-    const buttons = () => [...container.querySelectorAll<HTMLButtonElement>('.codex-chat-action')];
-    expect(buttons().every((button) => button.disabled)).toBe(true);
-    buttons()[0].click();
+    const chat = await tick();
+    expect(chat.disabled).toBe(true);
+    chat.onNewChat?.();
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
     release();
-    await tick();
-    expect(buttons().every((button) => !button.disabled)).toBe(true);
-    mocks.invoke.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          release = () => resolve(undefined);
-        }),
-    );
-    buttons()[0].click();
-    expect(buttons().every((button) => button.disabled)).toBe(true);
-    buttons()[0].click();
-    expect(buttons()).toHaveLength(1);
+    await vi.waitFor(() => expect(mocks.chatProps?.disabled).toBe(false));
+    mocks.invoke.mockImplementationOnce(pending);
+    chat.onNewChat?.();
+    expect(mocks.chatProps?.disabled).toBe(true);
+    chat.onNewChat?.();
     expect(
       mocks.invoke.mock.calls.filter((call) => (call[1] as { action: string }).action === 'stop'),
     ).toHaveLength(1);
     release();
-    await vi.waitFor(() => expect(buttons().every((button) => !button.disabled)).toBe(true));
+    await vi.waitFor(() => expect(mocks.chatProps?.disabled).toBe(false));
   });
 
   it('displays the effective permission mode even when the saved preference differs', async () => {
@@ -315,19 +255,16 @@ describe('Codex chat view', () => {
     await tick();
     mocks.channel?.onmessage?.(state({ items: [{ id: 'a', kind: 'assistant', text: 'Old' }] }));
     expect(task().codexChatThreadId).toBe('thread-1');
-    const newChat = [...container.querySelectorAll('button')].find(
-      (button) => button.textContent === 'New chat',
-    );
     // Losing a conversation is asked about first, and a refusal keeps it.
     const confirm = vi.fn(() => false);
     vi.stubGlobal('confirm', confirm);
-    newChat?.click();
+    mocks.chatProps?.onNewChat?.();
     expect(mocks.invoke).not.toHaveBeenCalledWith(IPC.AgentChat, {
       action: 'stop',
       agentId: 'agent-1',
     });
     confirm.mockReturnValue(true);
-    newChat?.click();
+    mocks.chatProps?.onNewChat?.();
     vi.unstubAllGlobals();
     await vi.waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith(IPC.AgentChat, {
@@ -486,38 +423,73 @@ describe('Codex chat view', () => {
     expect(remounted.state.items.map((item) => item.text)).toEqual(['Thinking', 'Go on']);
   });
 
-  it('passes model settings to the composer without duplicating them in the header', async () => {
+  it('passes model settings to the composer', async () => {
     dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     await tick();
     mocks.channel?.onmessage?.(state({ model: 'model-b', reasoningEffort: 'high' }));
     expect(mocks.chatProps?.state.model).toBe('model-b');
     expect(mocks.chatProps?.state.reasoningEffort).toBe('high');
-    expect(container.querySelector('.codex-chat-header')?.textContent).not.toContain('model-b');
   });
 
   it('retains a provider-scoped history and resumes the selected session', async () => {
     setStore('tasks', 'task-1', 'chatSessions', [
       { provider: 'codex', threadId: 'older-thread', title: 'Older conversation', updatedAt: 1 },
+      { provider: 'claude', threadId: 'claude-thread', title: 'Claude conversation', updatedAt: 2 },
     ]);
     dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     await tick();
     mocks.channel?.onmessage?.(
       state({ items: [{ id: 'u', kind: 'user', text: 'Current conversation' }] }),
     );
-    expect(task().chatSessions).toHaveLength(2);
-    const history = container.querySelector<HTMLSelectElement>(
-      '[aria-label="Conversation history"]',
+    expect(task().chatSessions).toHaveLength(3);
+    mocks.channel?.onmessage?.(
+      state({ items: [{ id: 'u', kind: 'user', text: 'Current conversation' }] }),
     );
-    if (!history) throw new Error('Missing history');
-    history.value = 'older-thread';
-    history.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(task().chatSessions).toHaveLength(3);
+    // The open conversation and other providers' sessions are not offered.
+    const history = mocks.chatProps?.history ?? [];
+    expect(history.map((entry) => entry.title)).toEqual(['Older conversation']);
+    // Switching loses nothing, so it is not confirmed.
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    history[0].open();
+    vi.unstubAllGlobals();
     await vi.waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith(
         IPC.AgentChat,
         expect.objectContaining({ action: 'start', threadId: 'older-thread' }),
       ),
     );
-    expect(task().chatSessions).toHaveLength(2);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it('hides the chat toolbar and leaves focus and selections the user made in the chat', async () => {
+    let focusPane: (() => void) | undefined;
+    dispose = render(
+      () => (
+        <AgentChatView task={task()} agentId="agent-1" active onReady={(fn) => (focusPane = fn)} />
+      ),
+      container,
+    );
+    const chat = await tick();
+    expect(chat.hideToolbar).toBe(true);
+    const focusComposer = vi.fn();
+    chat.onActions({ focus: focusComposer, send: async () => {} });
+    mocks.channel?.onmessage?.(state({ items: [{ id: 'a', kind: 'assistant', text: 'Copy me' }] }));
+    // A click anywhere in the pane re-focuses it, which must not move a focused control
+    container.querySelector<HTMLButtonElement>('.mock-chat button')?.focus();
+    focusPane?.();
+    expect(focusComposer).not.toHaveBeenCalled();
+    // or drop the text the user is selecting to copy.
+    (document.activeElement as HTMLElement | null)?.blur();
+    const text = container.querySelector('.mock-chat p');
+    if (!text) throw new Error('Missing transcript');
+    window.getSelection()?.selectAllChildren(text);
+    focusPane?.();
+    expect(focusComposer).not.toHaveBeenCalled();
+    window.getSelection()?.removeAllRanges();
+    focusPane?.();
+    expect(focusComposer).toHaveBeenCalledTimes(1);
   });
 
   it('only exposes reconnect when the connection needs attention', async () => {
@@ -525,7 +497,21 @@ describe('Codex chat view', () => {
     await tick();
     expect(container.textContent).not.toContain('Reconnect');
     mocks.channel?.onmessage?.(state({ status: 'closed' }));
-    expect(container.textContent).toContain('Reconnect');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Disconnected.');
+    const reconnect = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Reconnect',
+    );
+    reconnect?.click();
+    await vi.waitFor(() =>
+      expect(mocks.invoke).toHaveBeenLastCalledWith(
+        IPC.AgentChat,
+        expect.objectContaining({ action: 'start' }),
+      ),
+    );
+    expect(mocks.invoke).not.toHaveBeenCalledWith(IPC.AgentChat, {
+      action: 'stop',
+      agentId: 'agent-1',
+    });
   });
 
   it('interrupts the running turn', async () => {
