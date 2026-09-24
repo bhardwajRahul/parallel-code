@@ -91,6 +91,7 @@ function Conversation(props: { chat: ChatProps; threadId: string }) {
   let root: HTMLDivElement | undefined;
   let textarea: HTMLTextAreaElement | undefined;
   let toLatest: (() => void) | undefined;
+  let hold: (() => void) | undefined;
   let openSearch: (() => void) | undefined;
   const focus = () => textarea?.focus();
   // Whoever sends a message wants to see it land and the answer arrive.
@@ -101,6 +102,8 @@ function Conversation(props: { chat: ChatProps; threadId: string }) {
       (element) => element.dataset.chatId === id,
     );
     if (!element) return;
+    // Opening the match grows the log; following would snap back to the bottom.
+    hold?.();
     for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement)
       if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
     element.querySelectorAll('details').forEach((details) => (details.open = true));
@@ -147,7 +150,12 @@ function Conversation(props: { chat: ChatProps; threadId: string }) {
           </Show>
         </div>
       </Show>
-      <ChatScroll onControls={(controls) => (toLatest = controls.toLatest)}>
+      <ChatScroll
+        onControls={(controls) => {
+          toLatest = controls.toLatest;
+          hold = controls.hold;
+        }}
+      >
         <Transcript
           state={chat.state}
           pending={composer.pendingMessage()}
