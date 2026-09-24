@@ -111,6 +111,21 @@ import {
 } from './taskStatus';
 import { applyAgentHookEvent, getAgentHookStatus } from './agentHookStatus';
 
+const CLAUDE_DECLINE_FOCUSED_TRUST_DIALOG = [
+  ' WebFetch(domain:registry.npmjs.org),',
+  ' WebFetch(domain:api.github.com), and',
+  ' WebFetch(domain:github.com)',
+  ' These will apply without asking. Only proceed if you trust this',
+  ' configuration.',
+  '',
+  ' Security guide',
+  '',
+  ' ❯ No, exit',
+  '   Yes, I trust this folder',
+  '',
+  ' Enter to confirm · Esc to cancel',
+].join('\r\n');
+
 function setMockTask(taskId: string, overrides: Record<string, unknown> = {}): void {
   mockTasks[taskId] = {
     id: taskId,
@@ -549,6 +564,13 @@ describe('isTrustQuestionAutoHandled', () => {
     expect(isTrustQuestionAutoHandled(garbled)).toBe(true);
   });
 
+  it('returns false when the dialog cursor is on the decline option', () => {
+    // Claude focuses "No, exit" when project settings grant permissions.
+    mockAutoTrustFolders = true;
+    expect(isTrustQuestionAutoHandled(CLAUDE_DECLINE_FOCUSED_TRUST_DIALOG)).toBe(false);
+    expect(isTrustQuestionAutoHandled('❯Noexit\nYes,Itrustthisfolder')).toBe(false);
+  });
+
   it('returns false when "password" exclusion keyword is present', () => {
     mockAutoTrustFolders = true;
     expect(isTrustQuestionAutoHandled('Do you trust this folder? Enter password:')).toBe(false);
@@ -629,6 +651,25 @@ describe('isAutoTrustSettling', () => {
     // Settle period (1s from acceptance at ~50ms) has lapsed, but cooldown
     // (1s) is still active — settling should still report true.
     expect(isAutoTrustSettling('agent-1')).toBe(true);
+  });
+
+  it('does not press Enter when the dialog cursor is on the decline option', () => {
+    mockAutoTrustFolders = true;
+    mockActiveTaskId = 'task-1';
+    setMockTask('task-1', { agentIds: ['agent-1'] });
+    setMockAgent('agent-1');
+    markAgentSpawned('agent-1');
+
+    const dialog = new TextEncoder().encode(CLAUDE_DECLINE_FOCUSED_TRUST_DIALOG);
+    markAgentOutput('agent-1', dialog, 'task-1');
+    vi.advanceTimersByTime(2100);
+
+    expect(invoke).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ data: '\r' }),
+    );
+    expect(isAutoTrustSettling('agent-1')).toBe(false);
+    expect(isAgentAskingQuestion('agent-1')).toBe(true);
   });
 
   it('returns false after settling period expires', () => {
