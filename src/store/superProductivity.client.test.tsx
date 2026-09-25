@@ -436,6 +436,26 @@ describe('Super Productivity sync', () => {
     expect(sp.current).toBe(store.tasks.a.superProductivity?.taskId);
   });
 
+  it('retries a focus that lost Super Productivity while reading the linked task', async () => {
+    spTask('sp-a', { title: 'Task a' });
+    addTask('a', { superProductivity: { taskId: 'sp-a', syncedTitle: 'Task a' } });
+    const real = mockInvoke.getMockImplementation();
+    mockInvoke.mockImplementation(async (channel: string, args?: Record<string, unknown>) =>
+      channel === IPC.SuperProductivityGetTask
+        ? { ok: false, reason: 'unreachable' }
+        : real?.(channel, args),
+    );
+    await focus('a');
+    expect(sp.current).toBeNull();
+
+    mockInvoke.mockImplementation(real ?? (() => undefined));
+    setWindowFocused(false);
+    await settle();
+    setWindowFocused(true);
+    await settle();
+    expect(sp.current).toBe('sp-a');
+  });
+
   it('ignores a connection check that was answered for a token removed meanwhile', async () => {
     let answer: (state: string) => void = () => undefined;
     const real = mockInvoke.getMockImplementation();

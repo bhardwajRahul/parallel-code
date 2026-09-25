@@ -316,15 +316,18 @@ let retryTaskId: string | null = null;
 
 const CONNECTION_FAILURES: ReadonlySet<string> = CONNECTION_STATES;
 
+/** A failure the window coming back can fix; `not_configured` needs the user. */
+function isRetryableFailure(reason: string): boolean {
+  return CONNECTION_FAILURES.has(reason) && reason !== 'not_configured';
+}
+
 async function evaluateFocus(taskId: string): Promise<void> {
   if (!isTrackableTask(taskId)) return;
   const seq = ++focusSeq;
 
   const tracking = await callSp<SpTrackingState>(IPC.SuperProductivityGetTracking);
   if (!tracking.ok) {
-    if (CONNECTION_FAILURES.has(tracking.reason) && tracking.reason !== 'not_configured') {
-      retryTaskId = taskId;
-    }
+    if (isRetryableFailure(tracking.reason)) retryTaskId = taskId;
     return;
   }
   if (retryTaskId === taskId) retryTaskId = null;
@@ -342,6 +345,7 @@ async function evaluateFocus(taskId: string): Promise<void> {
       // the banner's button links a fresh task (trackTaskInSp).
       ownMissing = true;
     } else {
+      if (isRetryableFailure(res.reason)) retryTaskId = taskId;
       return;
     }
   }
