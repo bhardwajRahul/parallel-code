@@ -770,6 +770,22 @@ describe('Claude chat adapter', () => {
     expect(h.chat.state.items[0].text).toBe('Earlier answer');
   });
 
+  it('publishes a restored history once rather than once per message', async () => {
+    const history = Array.from({ length: 50 }, (_, i) => ({
+      type: 'assistant' as const,
+      uuid: `old-${i}`,
+      session_id: 'saved',
+      parent_tool_use_id: null,
+      parent_agent_id: null,
+      message: { id: `old-message-${i}`, content: [{ type: 'text', text: `Answer ${i}` }] },
+    }));
+    const h = harness(history, 'saved');
+    await h.chat.start();
+    expect(h.chat.state.items).toHaveLength(50);
+    // Every publish sends the whole state, so one per message costs O(n²) on resume.
+    expect(h.publish.mock.calls.length).toBeLessThan(10);
+  });
+
   it('interrupts an acknowledged turn and waits for its result before accepting another prompt', async () => {
     const h = harness();
     await h.chat.start();

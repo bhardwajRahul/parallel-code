@@ -124,8 +124,10 @@ export class ClaudeChat implements AgentChat {
     if (this.isClosed()) throw new Error('Claude chat stopped while connecting.');
     if (resume) {
       const history = await sdk.getSessionMessages(sessionId, { dir: this.opts.cwd });
-      for (const message of history) this.receive(message);
+      // Each publish sends the whole state; one per replayed message made resume O(n²).
+      for (const message of history) this.receive(message, false);
       this.settleActivities();
+      this.publish();
     }
     if (this.state.status === 'closed') throw new Error('Claude chat stopped while connecting.');
     // The SDK sends --permission-mode on every session it starts, defaulting the
@@ -561,7 +563,8 @@ export class ClaudeChat implements AgentChat {
     });
   };
 
-  private receive(value: unknown): void {
+  /** `live` is false while replaying history, which the caller publishes once. */
+  private receive(value: unknown, live = true): void {
     const message = record(value);
     if (message.parent_tool_use_id) return; // Subagents are represented by their parent tool activity.
     if (message.type === 'system' && (message.subtype === 'init' || message.subtype === 'status')) {
@@ -760,6 +763,6 @@ export class ClaudeChat implements AgentChat {
       this.toolDecisions.clear();
       void this.refreshContextUsage();
     } else return;
-    this.publish();
+    if (live) this.publish();
   }
 }
