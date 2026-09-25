@@ -1,7 +1,6 @@
 import { For, createEffect, createMemo, createSignal, on, onCleanup, type JSX } from 'solid-js';
 import { Portal } from 'solid-js/web';
-import type { BlockRange } from './DocumentViewer';
-import type { BlockChange, DocumentBlock } from './markdown-blocks';
+import type { BlockChange, BlockRange, DocumentBlock } from './markdown-blocks';
 
 /** A whole HTML page ready to show: its body markup with blocks marked, and its CSS. */
 export interface PageRender {

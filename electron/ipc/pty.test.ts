@@ -97,6 +97,7 @@ import {
   killAllAgents,
   onPtyEvent,
   projectImageTag,
+  resizeAgent,
   resolveProjectDockerfile,
   spawnAgent,
   subscribeToAgent,
@@ -956,6 +957,40 @@ describe('spawnAgent output batching', () => {
     expect(Buffer.isBuffer(sent.data)).toBe(false);
     expect(Buffer.from(sent.data).toString()).toBe('héllo');
     expect(sub).toHaveBeenCalledWith(Buffer.from('héllo').toString('base64'));
+  });
+});
+
+describe('spawnAgent terminal queries', () => {
+  async function launch(agentId: string) {
+    await spawnAgent(
+      createMockWindow(),
+      buildSpawnArgs({ agentId, command: 'codex', args: [], dockerMode: false }),
+    );
+    return mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1].value as ReturnType<
+      typeof mockPtySpawn
+    >;
+  }
+
+  it('answers a cursor-position query without a renderer view', async () => {
+    const proc = await launch('agent-query-cpr');
+    proc.emitData('hi\x1b[6n');
+    await vi.waitFor(() => expect(proc.write).toHaveBeenCalledWith('\x1b[1;3R'));
+  });
+
+  it('answers at the size the PTY was resized to', async () => {
+    const proc = await launch('agent-query-resize');
+    proc.emitData('\r\n'.repeat(30));
+    resizeAgent('agent-query-resize', 80, 10);
+    proc.emitData('\x1b[6n');
+    await vi.waitFor(() => expect(proc.write).toHaveBeenCalledWith('\x1b[10;1R'));
+  });
+
+  it('stops answering once the process exits', async () => {
+    const proc = await launch('agent-query-exit');
+    proc.emitExit({ exitCode: 0, signal: undefined });
+    proc.emitData('\x1b[6n');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(proc.write).not.toHaveBeenCalled();
   });
 });
 

@@ -26,6 +26,11 @@ export interface DocumentBlock {
 
 export type BlockChange = 'same' | 'added' | 'changed' | 'removed';
 
+export interface BlockRange {
+  start: number;
+  end: number;
+}
+
 interface TokenLike {
   type: string;
   lang?: string;

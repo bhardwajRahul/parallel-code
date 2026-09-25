@@ -16,7 +16,12 @@ import { CandidateRefinement } from './CandidateRefinement';
 import { MergeWithAgent } from './MergeWithAgent';
 import { IPC } from '../../electron/ipc/channels';
 import { invoke } from '../lib/ipc';
-import { diffBlocks, type BlockChange, type DocumentBlock } from './markdown-blocks';
+import {
+  diffBlocks,
+  type BlockChange,
+  type BlockRange,
+  type DocumentBlock,
+} from './markdown-blocks';
 import {
   type BlockHunk,
   blockHunks,
@@ -35,7 +40,7 @@ import { getProject } from '../store/projects';
 import { deletePanelUserSize, getPanelUserSize, setPanelUserSize } from '../store/store';
 import { showNotification } from '../store/notification';
 import type { DocumentCandidateRecord, DocumentRunRecord } from './types';
-import { DocumentViewer, type BlockRange } from './DocumentViewer';
+import { DocumentViewer } from './DocumentViewer';
 import { SourceDiff } from './SourceDiff';
 import { createRenderedBlocks } from './use-blocks';
 import { renderDocument } from './render-document';

@@ -24,6 +24,7 @@ docs/*
 !docs/reasoning-graph-research.md
 !docs/design-doc.md
 !docs/guided-understanding-plan.md
+!docs/runtime-separation-plan.md
 
 # Sandbox bind-mount artifacts from user home (not project files).
 # Root-anchored so legitimate nested files with these names are still tracked.

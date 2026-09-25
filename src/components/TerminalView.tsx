@@ -20,6 +20,7 @@ import { invoke, fireAndForget, Channel } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import { getTerminalFontFamily } from '../lib/fonts';
 import { TERMINAL_SCROLL_OPTIONS } from '../lib/terminalConstants';
+import { leaveCursorQueriesToMain } from '../lib/terminalQueries';
 import {
   getTerminalSearchDecorations,
   getTerminalTheme,
@@ -457,6 +458,7 @@ export function TerminalView(props: TerminalViewProps) {
         allowNonHttpProtocols: false,
       },
     });
+    leaveCursorQueriesToMain(term);
 
     fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
@@ -852,7 +854,7 @@ export function TerminalView(props: TerminalViewProps) {
       outputRaf = requestAnimationFrame(flush);
       // Frames can stop in a background window even with throttling disabled
       // (seen on macOS). The timer keeps output, and the terminal's replies to
-      // queries such as Codex's cursor-position request, from stalling.
+      // queries such as device attributes, from stalling.
       outputFallbackTimer = window.setTimeout(flush, OUTPUT_FLUSH_FALLBACK_MS);
     }
 

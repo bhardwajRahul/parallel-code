@@ -26,7 +26,7 @@ export type {
   UsageWindow,
   VerificationRun,
   VerificationRunStatus,
+  UpdatePhase,
+  UpdateStatus,
   WorktreeStatus,
 } from '../../electron/ipc/shared-types';
-
-export type { UpdatePhase, UpdateStatus } from '../../electron/ipc/updater';

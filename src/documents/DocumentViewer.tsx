@@ -1,6 +1,6 @@
 import { For, Index, Show, createEffect, createMemo, on, type JSX } from 'solid-js';
 import { scopePageCss } from './html-blocks';
-import type { BlockChange, DocumentBlock } from './markdown-blocks';
+import type { BlockChange, BlockRange, DocumentBlock } from './markdown-blocks';
 import { blockRangeText, nearestHeading, sectionRange } from './markdown-blocks';
 import { PageBlocks, type PageRender } from './PageBlocks';
 import type { DocumentSelection } from './store';
@@ -13,11 +13,6 @@ import { createHeldSignal } from '../lib/floating';
 
 /** How long the hover toolbar waits for the pointer to reach it from the block. */
 const TOOLBAR_HOLD_MS = 100;
-
-export interface BlockRange {
-  start: number;
-  end: number;
-}
 
 interface DocumentViewerProps {
   /** Portalled controls must follow their owning panel’s visibility. */

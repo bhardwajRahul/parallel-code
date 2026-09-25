@@ -17,6 +17,10 @@ import {
   refreshWorktreeNodeModules,
 } from './git.js';
 import { loadEnvFile } from './env-file.js';
+import {
+  createTerminalQueryResponder,
+  type TerminalQueryResponder,
+} from './terminal-query-responder.js';
 import { HOOK_PTY_ENV_KEYS } from '../agent-hooks/hook-script.js';
 import { isClaudeCommand, withClaudeHookSettings } from '../agent-hooks/launch-args.js';
 import { debug as logDebug } from '../log.js';
@@ -35,6 +39,7 @@ interface PtySession {
   flushTimer: ReturnType<typeof setTimeout> | null;
   subscribers: Set<(encoded: string) => void>;
   scrollback: RingBuffer;
+  queries: TerminalQueryResponder;
   /** Assigned container name when running in Docker mode, null otherwise. */
   containerName: string | null;
 }
@@ -550,6 +555,7 @@ function replayCarriedScrollback(win: BrowserWindow, session: PtySession): void 
   const divider = Buffer.from('\x1b\\\x1b[0m\r\n\x1b[2m── resumed ──\x1b[0m\r\n', 'utf8');
   const replay = Buffer.concat([Buffer.from(carried, 'base64'), divider]);
   session.scrollback.write(replay);
+  session.queries.feedDisplayOnly(replay.toString('utf8'));
   sendToChannel(win, session.channelId, { type: 'Data', data: toIpcBytes(replay) });
 }
 
@@ -586,6 +592,7 @@ function attachPtyOutputHandlers(
       `[docker] command: ${innerCmd}\r\n` +
       `[docker] waiting for container to start…\x1b[0m\r\n\r\n`;
     console.warn(`[docker] spawning container ${containerName} — image=${image} cmd=${innerCmd}`);
+    session.queries.feedDisplayOnly(banner);
     send({ type: 'Data', data: toIpcBytes(Buffer.from(banner, 'utf8')) });
   }
 
@@ -614,6 +621,7 @@ function attachPtyOutputHandlers(
   };
 
   session.proc.onData((data: string) => {
+    session.queries.feed(data);
     const chunk = Buffer.from(data, 'utf8');
 
     tailChunks.push(chunk);
@@ -646,6 +654,7 @@ function attachPtyOutputHandlers(
   });
 
   session.proc.onExit(({ exitCode, signal }) => {
+    session.queries.dispose();
     if (sessions.get(args.agentId) !== session) return;
 
     if (containerName) {
@@ -734,6 +743,7 @@ export async function spawnAgent(
     existing.proc.resume();
     if (args.cols > 0 && args.rows > 0) {
       existing.proc.resize(args.cols, args.rows);
+      existing.queries.resize(args.cols, args.rows);
     }
     if (existing.scrollback.length > 0) {
       sendToChannel(win, channelId, {
@@ -824,6 +834,11 @@ export async function spawnAgent(
     flushTimer: null,
     subscribers: new Set(),
     scrollback: new RingBuffer(),
+    queries: createTerminalQueryResponder({
+      cols: args.cols,
+      rows: args.rows,
+      reply: (data) => proc.write(data),
+    }),
     containerName: spawnSpec.containerName,
   };
   sessions.set(args.agentId, session);
@@ -851,6 +866,7 @@ export function resizeAgent(agentId: string, cols: number, rows: number): void {
   const session = sessions.get(agentId);
   if (!session) throw new Error(`Agent not found: ${agentId}`);
   session.proc.resize(cols, rows);
+  session.queries.resize(cols, rows);
 }
 
 export function pauseAgent(agentId: string): void {
