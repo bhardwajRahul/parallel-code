@@ -184,6 +184,15 @@ export async function handoffClaudeTerminal(agentId: string): Promise<void> {
   }
 }
 
+/**
+ * Copy terminal bytes into an exact-sized array for IPC. Small Buffers are
+ * slices of Node's shared allocation pool; a copy guarantees only this view's
+ * bytes cross the process boundary, never the rest of that pool.
+ */
+function toIpcBytes(buf: Buffer): Uint8Array {
+  return new Uint8Array(buf);
+}
+
 function sendToChannel(win: BrowserWindow, channelId: string, msg: unknown): void {
   if (!win.isDestroyed()) {
     win.webContents.send(`channel:${channelId}`, msg);
@@ -541,7 +550,7 @@ function replayCarriedScrollback(win: BrowserWindow, session: PtySession): void 
   const divider = Buffer.from('\x1b\\\x1b[0m\r\n\x1b[2m── resumed ──\x1b[0m\r\n', 'utf8');
   const replay = Buffer.concat([Buffer.from(carried, 'base64'), divider]);
   session.scrollback.write(replay);
-  sendToChannel(win, session.channelId, { type: 'Data', data: replay.toString('base64') });
+  sendToChannel(win, session.channelId, { type: 'Data', data: toIpcBytes(replay) });
 }
 
 function cleanupExistingSession(agentId: string, existing: PtySession | undefined): void {
@@ -577,17 +586,24 @@ function attachPtyOutputHandlers(
       `[docker] command: ${innerCmd}\r\n` +
       `[docker] waiting for container to start…\x1b[0m\r\n\r\n`;
     console.warn(`[docker] spawning container ${containerName} — image=${image} cmd=${innerCmd}`);
-    send({ type: 'Data', data: Buffer.from(banner, 'utf8').toString('base64') });
+    send({ type: 'Data', data: toIpcBytes(Buffer.from(banner, 'utf8')) });
   }
+
+  let lastFlushAt = 0;
 
   const flush = () => {
     if (batchSize === 0) return;
+    lastFlushAt = Date.now();
     const batch = Buffer.concat(batchChunks);
-    const encoded = batch.toString('base64');
-    send({ type: 'Data', data: encoded });
+    // The renderer takes raw bytes; only the remote and coordinator
+    // subscribers still consume base64, so encode just when one is listening.
+    send({ type: 'Data', data: toIpcBytes(batch) });
     session.scrollback.write(batch);
-    for (const sub of session.subscribers) {
-      sub(encoded);
+    if (session.subscribers.size > 0) {
+      const encoded = batch.toString('base64');
+      for (const sub of session.subscribers) {
+        sub(encoded);
+      }
     }
     batchChunks = [];
     batchSize = 0;
@@ -612,7 +628,14 @@ function attachPtyOutputHandlers(
     batchChunks.push(chunk);
     batchSize += chunk.length;
 
-    if (batchSize >= BATCH_MAX || chunk.length < 1024) {
+    // Leading edge: output after a quiet spell (keystroke echo, a prompt) goes
+    // out at once. Anything arriving within BATCH_INTERVAL of the last send is
+    // coalesced — agent TUIs stream many tiny chunks, and one IPC message per
+    // chunk costs far more than the few ms of delay.
+    if (
+      batchSize >= BATCH_MAX ||
+      (!session.flushTimer && Date.now() - lastFlushAt >= BATCH_INTERVAL)
+    ) {
       flush();
       return;
     }
@@ -712,9 +735,11 @@ export async function spawnAgent(
     if (args.cols > 0 && args.rows > 0) {
       existing.proc.resize(args.cols, args.rows);
     }
-    const scrollback = existing.scrollback.toBase64();
-    if (scrollback) {
-      sendToChannel(win, channelId, { type: 'Data', data: scrollback });
+    if (existing.scrollback.length > 0) {
+      sendToChannel(win, channelId, {
+        type: 'Data',
+        data: toIpcBytes(existing.scrollback.read()),
+      });
     }
     emitPtyEvent('spawn', args.agentId);
     return;

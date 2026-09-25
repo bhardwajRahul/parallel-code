@@ -107,7 +107,8 @@ describe('TerminalView', () => {
     mountTerminal(onData);
     await vi.waitFor(() => expect(channelListeners.length).toBeGreaterThan(0));
 
-    for (const listener of channelListeners) listener({ type: 'Data', data: btoa('ready') });
+    for (const listener of channelListeners)
+      listener({ type: 'Data', data: new TextEncoder().encode('ready') });
 
     await vi.waitFor(() => expect(onData).toHaveBeenCalled());
   });

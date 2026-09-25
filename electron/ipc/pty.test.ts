@@ -99,6 +99,7 @@ import {
   projectImageTag,
   resolveProjectDockerfile,
   spawnAgent,
+  subscribeToAgent,
   validateCommand,
   writeToAgent,
 } from './pty.js';
@@ -835,6 +836,8 @@ describe('spawnAgent session reattach', () => {
       attachExisting: true,
       onOutput: { __CHANNEL_ID__: 'channel-2' },
     });
+    // Let the batch window close so the next chunk goes out immediately.
+    await new Promise((resolve) => setTimeout(resolve, 10));
     proc.emitData('after reload');
 
     expect(mockPtySpawn).toHaveBeenCalledTimes(1);
@@ -842,11 +845,11 @@ describe('spawnAgent session reattach', () => {
     expect(proc.resize).toHaveBeenCalledWith(90, 30);
     expect(win.webContents.send).toHaveBeenCalledWith('channel:channel-2', {
       type: 'Data',
-      data: Buffer.from('before reload', 'utf8').toString('base64'),
+      data: new Uint8Array(Buffer.from('before reload', 'utf8')),
     });
     expect(win.webContents.send).toHaveBeenLastCalledWith('channel:channel-2', {
       type: 'Data',
-      data: Buffer.from('after reload', 'utf8').toString('base64'),
+      data: new Uint8Array(Buffer.from('after reload', 'utf8')),
     });
   });
 
@@ -896,6 +899,63 @@ describe('spawnAgent session reattach', () => {
 
     expect(oldProc.kill).toHaveBeenCalled();
     expect(mockPtySpawn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('spawnAgent output batching', () => {
+  function dataMessages(win: BrowserWindow): string[] {
+    return vi
+      .mocked(win.webContents.send)
+      .mock.calls.map(([, message]) => message as { type: string; data?: Uint8Array })
+      .filter((payload) => payload.type === 'Data')
+      .map((payload) => Buffer.from(payload.data ?? []).toString());
+  }
+
+  async function launch(agentId: string) {
+    const win = createMockWindow();
+    await spawnAgent(
+      win,
+      buildSpawnArgs({ agentId, command: 'claude', args: [], dockerMode: false }),
+    );
+    const proc = mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1]
+      .value as ReturnType<typeof mockPtySpawn>;
+    return { win, proc };
+  }
+
+  it('sends output after a quiet spell at once and coalesces a burst', async () => {
+    vi.useFakeTimers();
+    try {
+      const { win, proc } = await launch('agent-batch-burst');
+      proc.emitData('a');
+      expect(dataMessages(win)).toEqual(['a']);
+
+      proc.emitData('b');
+      proc.emitData('c');
+      expect(dataMessages(win)).toEqual(['a']);
+
+      await vi.advanceTimersByTimeAsync(8);
+      expect(dataMessages(win)).toEqual(['a', 'bc']);
+
+      await vi.advanceTimersByTimeAsync(20);
+      proc.emitData('d');
+      expect(dataMessages(win)).toEqual(['a', 'bc', 'd']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sends raw bytes to the window and base64 to subscribers', async () => {
+    const { win, proc } = await launch('agent-batch-subscriber');
+    const sub = vi.fn();
+    subscribeToAgent('agent-batch-subscriber', sub);
+    proc.emitData('héllo');
+
+    const calls = vi.mocked(win.webContents.send).mock.calls;
+    const sent = calls[calls.length - 1][1] as { data: Uint8Array };
+    expect(sent.data).toBeInstanceOf(Uint8Array);
+    expect(Buffer.isBuffer(sent.data)).toBe(false);
+    expect(Buffer.from(sent.data).toString()).toBe('héllo');
+    expect(sub).toHaveBeenCalledWith(Buffer.from('héllo').toString('base64'));
   });
 });
 
@@ -1188,8 +1248,8 @@ describe('spawnAgent docker mode — credential redaction in logs', () => {
     const messages = vi.mocked(win.webContents.send).mock.calls;
     const banner = messages
       .map(([, message]) => {
-        const payload = message as { type: string; data?: string };
-        return payload.type === 'Data' ? Buffer.from(payload.data ?? '', 'base64').toString() : '';
+        const payload = message as { type: string; data?: Uint8Array };
+        return payload.type === 'Data' ? Buffer.from(payload.data ?? []).toString() : '';
       })
       .join('');
     expect(banner).toContain('[docker] command: codex --config <redacted MCP config>');
@@ -1399,8 +1459,8 @@ function channelData(win: BrowserWindow): string {
   return vi
     .mocked(win.webContents.send)
     .mock.calls.map(([, message]) => {
-      const payload = message as { type: string; data?: string };
-      return payload.type === 'Data' ? Buffer.from(payload.data ?? '', 'base64').toString() : '';
+      const payload = message as { type: string; data?: Uint8Array };
+      return payload.type === 'Data' ? Buffer.from(payload.data ?? []).toString() : '';
     })
     .join('');
 }
