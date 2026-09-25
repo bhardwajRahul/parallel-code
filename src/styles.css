@@ -1558,16 +1558,27 @@ button {
 }
 
 /* The change tour beside the diff: the understanding tour's card and threads,
-   compacted to fit the sidebar. */
+   compacted to fit the sidebar. It drives the file list below it, so an
+   accent rule and tint set it apart from that list in every look. */
 .change-tour {
   display: flex;
+  box-sizing: border-box;
   min-height: 0;
   max-height: 70%;
   flex-direction: column;
   flex-shrink: 0;
   gap: 8px;
-  margin: 12px;
+  padding: 12px;
   overflow: hidden;
+  border-top: 2px solid var(--accent);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 6%, var(--task-panel-bg));
+}
+
+/* The dialog keeps its step strip faint; beside the diff it is the main
+   sense of where you are, so it reads at near full strength. */
+.change-tour .understanding-segments {
+  opacity: 0.75;
 }
 
 .change-tour-top {
