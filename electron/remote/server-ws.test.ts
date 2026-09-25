@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import WebSocket from 'ws';
 import http from 'node:http';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -323,11 +323,18 @@ describe('buildRemoteCsp', () => {
     expect(csp).not.toContain('x; script-src');
     expect(buildRemoteCsp(undefined)).toContain("connect-src 'self';");
   });
+});
 
-  it('is sent with the mobile SPA static responses', async () => {
+describe('mobile SPA static responses', () => {
+  const html = '<!doctype html><title>Phone app</title>';
+  const javascript = 'document.body.textContent = "Phone app";';
+
+  beforeEach(async () => {
     await stop();
     const staticDir = mkdtempSync(join(tmpdir(), 'pc-remote-static-'));
-    writeFileSync(join(staticDir, 'index.html'), '<!doctype html><title>x</title>');
+    writeFileSync(join(staticDir, 'index.html'), html);
+    mkdirSync(join(staticDir, 'assets'));
+    writeFileSync(join(staticDir, 'assets', 'index-test.js'), javascript);
     const srv = await startRemoteServer({
       port: 0,
       host: '127.0.0.1',
@@ -341,10 +348,31 @@ describe('buildRemoteCsp', () => {
       await srv.stop();
       rmSync(staticDir, { recursive: true, force: true });
     };
-    const res = await fetch(`http://127.0.0.1:${port}/`);
+  });
+
+  it.each(['/', '/index.html', '/task'])('serves HTML with its CSP at %s', async (path) => {
+    const res = await fetch(`http://127.0.0.1:${port}${path}`);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-security-policy')).toBe(buildRemoteCsp(`127.0.0.1:${port}`));
     expect(res.headers.get('x-frame-options')).toBe('DENY');
+    expect(res.headers.get('cache-control')).toBe('no-cache');
+    expect(await res.text()).toBe(html);
+  });
+
+  it('serves the JavaScript body with immutable caching', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/assets/index-test.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('javascript');
+    expect(res.headers.get('cache-control')).toContain('immutable');
+    expect(await res.text()).toBe(javascript);
+  });
+
+  it('returns an uncached error when an existing path cannot be read as a file', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/assets`);
+    expect(res.status).toBe(500);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(await res.text()).toContain('Unable to load the phone app.');
   });
 });
 

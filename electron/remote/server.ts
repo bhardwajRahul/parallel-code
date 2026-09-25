@@ -1,7 +1,7 @@
 // electron/remote/server.ts
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
-import { existsSync, createReadStream, readFileSync, rmSync } from 'fs';
+import { existsSync, readFile, readFileSync, rmSync } from 'fs';
 import { join, resolve, relative, extname, isAbsolute } from 'path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes, randomInt, timingSafeEqual, createHash, createHmac } from 'crypto';
@@ -1543,22 +1543,29 @@ export function startRemoteServer(opts: {
     }
 
     const serveFile = (path: string, ct: string, cc: string) => {
-      const stream = createReadStream(path);
-      res.writeHead(200, {
-        ...SECURITY_HEADERS,
-        // The policy governs documents; assets only need to be served by one.
-        ...(ct.startsWith('text/html')
-          ? { 'Content-Security-Policy': buildRemoteCsp(req.headers.host) }
-          : {}),
-        'Content-Type': ct,
-        'Cache-Control': cc,
-      });
-      stream.pipe(res);
-      stream.on('error', () => {
-        if (!res.headersSent) {
-          res.writeHead(500);
+      // Electron streams ASAR entries through cached temporary extractions, which
+      // can disappear while the app is running. readFile reads the archive directly.
+      readFile(path, (error, data) => {
+        if (error) {
+          warn('remote', 'Failed to read phone UI asset', { code: error.code });
+          res.writeHead(500, {
+            ...SECURITY_HEADERS,
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Cache-Control': 'no-store',
+          });
+          res.end('Unable to load the phone app. Restart Parallel Code and try again.');
+          return;
         }
-        res.end();
+        res.writeHead(200, {
+          ...SECURITY_HEADERS,
+          // The policy governs documents; assets only need to be served by one.
+          ...(ct.startsWith('text/html')
+            ? { 'Content-Security-Policy': buildRemoteCsp(req.headers.host) }
+            : {}),
+          'Content-Type': ct,
+          'Cache-Control': cc,
+        });
+        res.end(data);
       });
     };
 
