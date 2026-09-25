@@ -364,6 +364,22 @@ it('reuses coordinator and sub-task ownership without granting access to other m
   await expect(child.readReasoning('task-1')).rejects.toThrow('403');
 });
 
+it('binds a coordinator agent token to the coordinator it was issued for', async () => {
+  coordinator = {
+    isRegisteredCoordinator: (id: string) => id === 'coordinator-1' || id === 'coordinator-2',
+    getTaskDoneToken: () => undefined,
+  } as unknown as Coordinator;
+  const url = `http://127.0.0.1:${server.port}`;
+  const agentToken = server.coordinatorTokenFor('coordinator-1');
+  expect(agentToken).not.toBe(server.token);
+  const own = new MCPClient(url, agentToken, 'coordinator-1');
+  await expect(own.readReasoning('coordinator-1')).resolves.toMatchObject({ revision: 0 });
+  // Another live coordinator's id in the header does not match the token.
+  const forged = new MCPClient(url, agentToken, 'coordinator-2');
+  await expect(forged.readReasoning('coordinator-2')).rejects.toThrow('401');
+  await expect(forged.readMindMap('coordinator-2')).rejects.toThrow('401');
+});
+
 it('distinguishes oversized, conflicting and unavailable requests by status and caps concurrency', async () => {
   const endpoint = `http://127.0.0.1:${server.port}/api/mindmaps/task-1`;
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };

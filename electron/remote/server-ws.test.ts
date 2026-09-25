@@ -93,6 +93,21 @@ function waitForClose(ws: WebSocket): Promise<number> {
   });
 }
 
+describe('coordinator agent token over WebSocket', () => {
+  it('is refused, so an agent cannot type into other terminals', async () => {
+    const agentToken = srv.coordinatorTokenFor('coordinator-1');
+    await expect(
+      connectAndAuth(agentToken, { 'X-Coordinator-Id': 'coordinator-1' }),
+    ).rejects.toThrow('4001');
+    await expect(
+      connectAndAuth(agentToken, {
+        Authorization: `Bearer ${agentToken}`,
+        'X-Coordinator-Id': 'coordinator-1',
+      }),
+    ).rejects.toThrow('4001');
+  });
+});
+
 describe('mobile token over WebSocket', () => {
   it('authenticates and can subscribe to agent output', async () => {
     const ws = await connectAndAuth(mobileToken);

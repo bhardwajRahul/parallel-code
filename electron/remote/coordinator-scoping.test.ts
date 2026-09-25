@@ -635,6 +635,28 @@ describe('coordinator scoping', () => {
 
 // ─── Subtask token access control ────────────────────────────────────────────
 
+describe('coordinator agent token — bound to its own coordinator', () => {
+  afterEach(async () => {
+    await serverStop();
+  });
+
+  it('reaches only its own tasks and never the app-wide agent routes', async () => {
+    const srv = await startServer(makeMockCoordinator());
+    const agentToken = srv.coordinatorTokenFor(COORD_A);
+    const call = (path: string, coordinatorId: string) =>
+      fetch(`http://127.0.0.1:${serverPort}${path}`, {
+        headers: { Authorization: `Bearer ${agentToken}`, 'X-Coordinator-Id': coordinatorId },
+      });
+    const own = await call('/api/tasks', COORD_A);
+    expect(own.status).toBe(200);
+    expect(((await own.json()) as ApiTaskSummary[]).map((task) => task.id)).toEqual([taskA.id]);
+    expect((await call('/api/tasks', COORD_B)).status).toBe(401);
+    expect((await call(`/api/tasks/${taskB.id}`, COORD_B)).status).toBe(401);
+    expect((await call('/api/agents', COORD_A)).status).toBe(403);
+    expect((await call('/api/agents/agent-b', COORD_A)).status).toBe(403);
+  });
+});
+
 describe('subtask token — restricted to sub-task terminal tools', () => {
   let subtaskToken = '';
   let stop: () => Promise<void>;

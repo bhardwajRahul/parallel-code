@@ -688,7 +688,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
     coordinator.setMCPServerInfo(
       task.taskId,
       getMCPRemoteServerUrl(server.port, task.dockerMode ? 'delegation' : undefined),
-      server.token,
+      server.coordinatorTokenFor(task.taskId),
       server.subtaskToken,
       serverPath,
     );
@@ -2395,7 +2395,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       const mcpConfig = buildCoordinatorMCPConfig({
         mcpServerPath,
         serverUrl,
-        token: remoteServer.token,
+        token: remoteServer.coordinatorTokenFor(args.coordinatorTaskId),
         coordinatorTaskId: args.coordinatorTaskId,
         skipPermissions: args.skipPermissions,
         propagateSkipPermissions: args.propagateSkipPermissions,
@@ -2440,7 +2440,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       coordinator.setMCPServerInfo(
         args.coordinatorTaskId,
         serverUrl,
-        remoteServer.token,
+        remoteServer.coordinatorTokenFor(args.coordinatorTaskId),
         remoteServer.subtaskToken,
         mcpServerPath,
       );
