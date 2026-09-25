@@ -150,7 +150,7 @@ vi.mock('../shared/prompt-detect.js', () => ({
       .slice(-1000)
       .split(/\r\n?|\n/)
       .some((line) =>
-        /(?:^|\s)❯\s*$|^\s*--\s*INSERT\s*--\s*$|^\s*[›>]\s*(?:Type your message|Ask Codex to do anything|$)/i.test(
+        /(?:^|\s)❯\s*$|^\s*❯\s+Try\s+"[^"]*(?:"|…)\s*$|^\s*--\s*INSERT\s*--\s*$|^\s*[›>]\s*(?:Type your message|Ask Codex to do anything|$)/i.test(
           line.trim(),
         ),
       );
@@ -175,7 +175,7 @@ vi.mock('../shared/prompt-detect.js', () => ({
     return tail
       .split(/\r\n?|\n/)
       .some((line) =>
-        /(?:^|\s)❯\s*$|^\s*--\s*INSERT\s*--\s*$|^\s*[›>]\s*(?:Type your message|Ask Codex to do anything|$)/i.test(
+        /(?:^|\s)❯\s*$|^\s*❯\s+Try\s+"[^"]*(?:"|…)\s*$|^\s*--\s*INSERT\s*--\s*$|^\s*[›>]\s*(?:Type your message|Ask Codex to do anything|$)/i.test(
           line.trim(),
         ),
       );

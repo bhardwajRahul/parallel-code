@@ -37,6 +37,25 @@ export const READY_AGENT_FRAME_FIXTURES: AgentFrameFixture[] = [
     ].join('\r'),
   },
   {
+    // Recorded from Claude Code v2.1.282: the empty input shows a dimmed
+    // `Try "…"` suggestion on the ❯ line until the user types.
+    name: 'Claude fresh prompt with Try placeholder',
+    frame: [
+      '▐▛███▛█Claude Codev2.1.282',
+      '────────────────────────────────────────────────────────────────',
+      '❯ Try "create a util logging.py that..."',
+      '────────────────────────────────────────────────────────────────',
+      '⏵⏵ auto mode on (shift+tab to cycle)',
+      'Opus 5.5 hi · task/example',
+    ].join('\r'),
+  },
+  {
+    // Recorded at 25 columns: a narrow pane truncates the suggestion, dropping
+    // its closing quote.
+    name: 'Claude fresh prompt with truncated Try placeholder',
+    frame: ['─────────────────────────', '❯ Try "refactor TaskPane…', '⏵⏵ auto mode on'].join('\r'),
+  },
+  {
     name: 'Codex prompt above long status footer',
     frame: [
       '›',
@@ -94,5 +113,15 @@ export const NOT_READY_AGENT_FRAME_FIXTURES: NotReadyAgentFrameFixture[] = [
     name: 'TUI selection menu',
     reason: 'no_prompt',
     frame: ['❯ Option A', '  Option B', '  Option C', 'Choose an option to continue'].join('\n'),
+  },
+  {
+    name: 'Claude prompt with user-typed input',
+    reason: 'no_prompt',
+    frame: [
+      '────────────────────────────────────────────────────────────────',
+      '❯ fix the failing sync test',
+      '────────────────────────────────────────────────────────────────',
+      '⏵⏵ auto mode on (shift+tab to cycle)',
+    ].join('\r'),
   },
 ];

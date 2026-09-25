@@ -28,6 +28,10 @@ export const PROMPT_PATTERNS: RegExp[] = [
  */
 export const AGENT_READY_TAIL_PATTERNS: RegExp[] = [
   /^\s*❯\s*$/,
+  // Claude Code fills an empty input with a dimmed `Try "…"` suggestion (cut
+  // short with … in narrow panes); the dimming is lost with ANSI stripping, so
+  // match the suggestion's wording.
+  /^\s*❯\s+Try\s+"[^"]*(?:"|…)\s*$/,
   /^\s*--\s*INSERT\s*--(?:$|\s|[^\w].*$)/i,
   /^\s*[›>]\s*(?:Type your message|Ask Codex to do anything|$)/i,
 ];
