@@ -146,3 +146,45 @@ it('opens a canvas view for a known task only', async () => {
   expect(invalid?.ok).toBe(false);
   expect(typeof invalid?.error).toBe('string');
 });
+
+it('adds a task created from a phone without taking focus from the active task', async () => {
+  const agentDef = {
+    id: 'claude',
+    name: 'Claude',
+    command: 'claude',
+    args: [],
+    resume_args: [],
+    skip_permissions_args: [],
+    description: '',
+  };
+  setStore('projects', [
+    { id: 'project', name: 'Project', path: '/tmp/project', color: '', defaultBaseBranch: 'main' },
+  ]);
+  setStore('availableAgents', [agentDef]);
+  setStore('taskOrder', ['task']);
+  setStore('activeTaskId', 'task');
+  setStore('activeAgentId', 'agent');
+  vi.mocked(invoke).mockImplementation(async (channel: string) => {
+    if (channel === IPC.GetGitignoredDirs) return [];
+    if (channel === IPC.CreateTask)
+      return { id: 'phone-task', branch_name: 'task/phone', worktree_path: '/tmp/phone' };
+    return undefined;
+  });
+
+  listeners.get(IPC.Remote_CreateTaskRequest)?.({
+    reqId: 'req',
+    projectId: 'project',
+    name: 'From phone',
+    prompt: 'Do it',
+  });
+  await vi.waitFor(() =>
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+      IPC.Remote_RendererReply,
+      expect.objectContaining({ ok: true, data: { taskId: 'phone-task' } }),
+    ),
+  );
+
+  expect(store.taskOrder).toContain('phone-task');
+  expect(store.activeTaskId).toBe('task');
+  expect(store.activeAgentId).toBe('agent');
+});

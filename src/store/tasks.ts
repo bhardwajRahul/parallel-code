@@ -134,12 +134,11 @@ function removeTaskDraftEntries(
 }
 
 function initTaskInStore(
-  taskId: string,
   task: Task,
   agent: Agent,
-  projectId: string,
-  agentDef: AgentDef | undefined,
+  opts: { agentDef: AgentDef | undefined; activate: boolean },
 ): void {
+  const taskId = task.id;
   setStore(
     produce((s) => {
       s.tasks[taskId] = task;
@@ -150,10 +149,12 @@ function initTaskInStore(
       // the second pane's — so pane one comes back with the wrong conversation.
       assignFreshSessionId(s, taskId, agent.id, agent.def.command);
       s.taskOrder.push(taskId);
-      s.activeTaskId = taskId;
-      s.activeAgentId = agent.id;
-      s.lastProjectId = projectId;
-      if (agentDef) s.lastAgentId = agentDef.id;
+      if (opts.activate) {
+        s.activeTaskId = taskId;
+        s.activeAgentId = agent.id;
+      }
+      s.lastProjectId = task.projectId;
+      if (opts.agentDef) s.lastAgentId = opts.agentDef.id;
     }),
   );
   markAgentSpawned(agent.id);
@@ -253,6 +254,9 @@ export interface CreateTaskOptions {
   autoSendChildUpdates?: boolean;
   propagateSkipPermissions?: boolean;
   maxConcurrentTasks?: number;
+  /** Defaults to true. Pass false when the desktop user did not ask for the task
+   *  (e.g. a phone created it), so it cannot take focus from their current work. */
+  activate?: boolean;
 }
 
 export async function createTask(opts: CreateTaskOptions): Promise<string> {
@@ -352,7 +356,7 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
   });
 
   await registerTaskAuthority(task, agentDef);
-  initTaskInStore(taskId, task, agent, projectId, agentDef);
+  initTaskInStore(task, agent, { agentDef, activate: opts.activate ?? true });
 
   saveState(); // fire-and-forget — errors handled internally
   return taskId;
@@ -410,7 +414,7 @@ export async function createImportedTask(opts: CreateImportedTaskOptions): Promi
   });
 
   await registerTaskAuthority(task, agentDef);
-  initTaskInStore(id, task, agent, projectId, agentDef);
+  initTaskInStore(task, agent, { agentDef, activate: true });
   saveState();
   return id;
 }

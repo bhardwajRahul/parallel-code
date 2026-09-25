@@ -109,6 +109,8 @@ async function handleCreateTask(req: CreateTaskRequest): Promise<void> {
       // Without this the flag was simply never passed, so every task created
       // from a phone launched bare regardless of the setting.
       skipPermissions: remoteSkipPermissions(store.defaultSkipPermissions, agentDef),
+      // Someone at the desktop may be mid-task; only they decide what gets focus.
+      activate: false,
     });
     reply(req.reqId, true, { taskId });
   } catch (err) {
