@@ -53,8 +53,9 @@ interface Props {
 interface QueuedRequest {
   kind: 'activation' | 'ask' | 'changes';
   run: () => Promise<void>;
-  /** Puts back what queueing cleared, so a request that never went out can be retried. */
-  restore?: () => void;
+  /** Puts back what queueing cleared, so a request that never went out can be retried.
+   *  Returns a sentence saying where it went, or nothing when it could not be put back. */
+  restore?: () => string | undefined;
 }
 
 const REQUEST_LABELS: Record<QueuedRequest['kind'], string> = {
@@ -102,19 +103,27 @@ export function TaskReasoningGraphHost(props: Props) {
   // Restarts keep the agent ID, so track the session generation and status explicitly.
   const agentSession = () => `${agent()?.status ?? ''}:${agent()?.generation ?? ''}`;
   const queued = () => request()?.kind === 'activation';
+  /** Gives back what an unsent request's queueing cleared, and tells the user where it went. */
+  function unsentMessage(unsent: QueuedRequest, message: string): string {
+    const note = unsent.restore?.();
+    if (!note) return message;
+    return `${/[.!?]$/.test(message) ? message : `${message}.`} ${note}`;
+  }
   function dropRequest(message: string) {
     const dropped = untrack(request);
     if (!dropped) return;
     setRequest(undefined);
-    dropped.restore?.();
-    setConnectionError(message);
-    if (dropped.kind !== 'activation') showNotification(message);
+    const text = unsentMessage(dropped, message);
+    setConnectionError(text);
+    if (dropped.kind !== 'activation') showNotification(text);
   }
   /** Activation and manual changes report their own failures; this catches what they leave. */
   function requestFailed(failed: QueuedRequest, error: unknown) {
     if (disposed) return;
-    failed.restore?.();
-    const message = `Could not send ${REQUEST_LABELS[failed.kind]}: ${errMessage(error)}`;
+    const message = unsentMessage(
+      failed,
+      `Could not send ${REQUEST_LABELS[failed.kind]}: ${errMessage(error)}`,
+    );
     setConnectionError(message);
     showNotification(message);
   }
@@ -132,9 +141,9 @@ export function TaskReasoningGraphHost(props: Props) {
       setConnectionError('');
       setRequest(undefined);
       if (!previous || !dropped || previous[0] !== current) return;
-      dropped.restore?.();
-      setConnectionError(stoppedMessage(dropped.kind));
-      if (dropped.kind !== 'activation') showNotification(stoppedMessage(dropped.kind));
+      const message = unsentMessage(dropped, stoppedMessage(dropped.kind));
+      setConnectionError(message);
+      if (dropped.kind !== 'activation') showNotification(message);
     }),
   );
   // The workflow only shapes the activation prompt; a live connection survives the change.
@@ -329,7 +338,7 @@ export function TaskReasoningGraphHost(props: Props) {
     });
   }
   /** The composer clears a question once it is queued; give it back if it never went out. */
-  function restoreQuestion(key: string, id: string, question: string) {
+  function restoreQuestion(key: string, id: string, question: string): string | undefined {
     // A new run has its own drafts, and a question typed since is the newer intent.
     if (disposed || graphKey() !== key) return;
     const current = workspace() ?? emptyWorkspace();
@@ -344,6 +353,7 @@ export function TaskReasoningGraphHost(props: Props) {
       key,
       updateDraft(current, id, { ...text, base: draft?.base ?? text, question }),
     );
+    return 'It’s back in the node’s question box.';
   }
   /** The inspector opens URLs itself and shows any error inline; file paths need the task. */
   async function openSource(target: GraphSource) {

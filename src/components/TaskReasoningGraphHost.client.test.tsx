@@ -972,7 +972,7 @@ it('reports a queued question that fails to send and gives it back for a retry',
   await vi.advanceTimersByTimeAsync(250);
   expect(sendPrompt).toHaveBeenCalledOnce();
   expect(showNotification).toHaveBeenCalledWith(
-    expect.stringContaining('Agent terminal unavailable'),
+    'Could not send your question: Agent terminal unavailable. It’s back in the node’s question box.',
   );
   expect(container.textContent).toContain('Agent terminal unavailable');
   button('Ask agent').click();
@@ -983,10 +983,21 @@ it('gives a queued question back when the agent exits before it is sent', async 
   await queueQuestion('Please check the evidence');
   setAgentStatus('exited');
   expect(showNotification).toHaveBeenCalledWith(
-    'The agent stopped before your question could be sent.',
+    'The agent stopped before your question could be sent. It’s back in the node’s question box.',
   );
   button('Ask agent').click();
   expect(questionBox()).toBe('Please check the evidence');
+});
+
+it('keeps a newer question and does not claim to restore the dropped one', async () => {
+  await queueQuestion('Please check the evidence');
+  button('Ask agent').click();
+  editField('Question for agent', 'A newer question');
+  setAgentStatus('exited');
+  expect(showNotification).toHaveBeenCalledWith(
+    'The agent stopped before your question could be sent.',
+  );
+  expect(questionBox()).toBe('A newer question');
 });
 
 it('blocks questions when the session has no canvas tools', async () => {
