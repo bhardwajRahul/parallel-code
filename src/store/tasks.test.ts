@@ -19,6 +19,7 @@ const core = vi.hoisted(() => ({
         projects: { id: string; path: string; tasksCollapsed?: boolean }[];
         availableAgents: unknown[];
         defaultStepsEnabled: boolean;
+        preferUiMode: boolean;
       }>
     | undefined,
 }));
@@ -82,6 +83,7 @@ vi.mock('./core', async () => {
       mockProjects = next;
     },
     availableAgents: [],
+    preferUiMode: false,
     get agentEnvFiles() {
       return mockAgentEnvFiles;
     },
@@ -1079,7 +1081,7 @@ describe('createTask does not mutate defaultStepsEnabled', () => {
 // pane launches on the positional default, which means "the newest session in
 // this worktree" — so as soon as a second pane exists, pane one resumes pane
 // two's conversation. That silent swap is the whole reason ids exist.
-describe('createTask assigns the first pane a session id', () => {
+describe('createTask initial agent state', () => {
   function agentDef(command: string) {
     return {
       id: 'agent-def',
@@ -1096,6 +1098,7 @@ describe('createTask assigns the first pane a session id', () => {
     vi.clearAllMocks();
     const harness = expectDefined(core.harness, 'mock store harness');
     harness.reset(harness.state());
+    harness.store.preferUiMode = false;
     mockTasks = {};
     mockAgents = {};
     mockTaskOrder = [];
@@ -1148,6 +1151,32 @@ describe('createTask assigns the first pane a session id', () => {
     await creating;
     expect(mockTasks['task-1']).toBeDefined();
   });
+
+  it.each([
+    ['codex', true, false, 'chat'],
+    ['claude-code', true, false, 'chat'],
+    ['codex', false, false, undefined],
+    ['claude-code', false, false, undefined],
+    ['custom-agent', true, false, undefined],
+    ['codex', true, true, undefined],
+    ['claude-code', true, true, undefined],
+  ] as const)(
+    'initial view for %s (prefer UI: %s, Docker: %s) is %s',
+    async (id, preferUiMode, dockerMode, expected) => {
+      const harness = expectDefined(core.harness, 'mock store harness');
+      harness.store.preferUiMode = preferUiMode;
+      await createTask({
+        name: 'My Task',
+        agentDef: { ...agentDef(id === 'claude-code' ? 'claude' : id), id },
+        projectId: 'proj-1',
+        gitIsolation: 'worktree',
+        baseBranch: 'main',
+        dockerMode,
+      });
+      expect(mockTasks['task-1'].mainAgentView).toBe(expected);
+      harness.store.preferUiMode = false;
+    },
+  );
 
   it('gives the first Claude pane an id of its own', async () => {
     const task = await createWith('claude');

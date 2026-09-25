@@ -9,7 +9,12 @@ import {
 import { store, setStore } from '../store/core';
 import { agentChatProvider } from '../store/agent-chat';
 import { saveState } from '../store/persistence';
-import { sendPrompt, setTaskPromptDraft, clearPrefillPrompt } from '../store/tasks';
+import {
+  sendPrompt,
+  setTaskPromptDraft,
+  clearPrefillPrompt,
+  clearInitialPrompt,
+} from '../store/tasks';
 import { registerAction, unregisterAction } from '../store/focus';
 import { registerFocusFn, unregisterFocusFn } from '../store/focused-panel';
 import type { Task } from '../store/types';
@@ -117,6 +122,23 @@ export function AgentChatView(props: {
       });
       if (disposed || !store.agents[props.agentId]) return;
       setStore('agents', props.agentId, 'canvasTools', result?.canvasTools === true);
+      // Chat tasks have no terminal composer to deliver the queued first prompt.
+      // Start the chat before sending so the backend has a session to receive it.
+      const initialPrompt = !fresh ? props.task.initialPrompt : undefined;
+      const draft = props.task.promptDraft?.trim();
+      if (initialPrompt && (!draft || draft === initialPrompt.trim())) {
+        try {
+          await sendPrompt(props.task.id, props.agentId, initialPrompt);
+          if (!disposed && props.task.promptDraft?.trim() === initialPrompt.trim())
+            setTaskPromptDraft(props.task.id, '');
+        } catch (error) {
+          // Keep the queue for a manual reconnect, and surface the text in an
+          // empty composer so a failed first send can also be retried by hand.
+          if (!disposed && store.tasks[props.task.id] && !props.task.promptDraft?.trim())
+            setTaskPromptDraft(props.task.id, initialPrompt);
+          throw error;
+        }
+      }
     } catch (error) {
       if (!disposed) setError(String(error));
     } finally {
@@ -194,6 +216,7 @@ export function AgentChatView(props: {
     onDraft: (text) => setTaskPromptDraft(props.task.id, text),
     onSend: async (text, images) => {
       await sendPrompt(props.task.id, props.agentId, text, { images });
+      if (props.task.initialPrompt) clearInitialPrompt(props.task.id);
       if (props.task.promptDraft?.trim() === text) setTaskPromptDraft(props.task.id, '');
     },
     onStop: () => invoke(IPC.AgentChat, { action: 'interrupt', agentId: props.agentId }),

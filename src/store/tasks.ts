@@ -1,7 +1,7 @@
 import { registerTaskAuthority, delegationRequest, applyDelegationChange } from './delegation';
 import type { DelegationChanged, IntegrationPolicy } from '../../electron/shared/delegation-types';
 import { produce } from 'solid-js/store';
-import { isAgentChat } from './agent-chat';
+import { isAgentChat, supportsAgentChat } from './agent-chat';
 import { invoke, Channel } from '../lib/ipc';
 import { asStoreVerificationRun } from '../lib/verification-run';
 import { IPC } from '../../electron/ipc/channels';
@@ -143,6 +143,9 @@ function initTaskInStore(
     produce((s) => {
       s.tasks[taskId] = task;
       s.agents[agent.id] = agent;
+      if (s.preferUiMode && task.mainAgentView === undefined && supportsAgentChat(task)) {
+        s.tasks[taskId].mainAgentView = 'chat';
+      }
       // The task's own first pane needs an id as much as any pane added later.
       // Without this it launches with the positional default, and once a second
       // pane exists that default means "the newest session in this worktree" —

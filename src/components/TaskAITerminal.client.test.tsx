@@ -641,3 +641,18 @@ it('copies the raw Markdown of a file opened in the viewer', async () => {
     expect(document.querySelector('[role="dialog"] [title="Copied"]')).not.toBeNull();
   });
 });
+
+it('starts a task in Chat without mounting a terminal and still allows switching', async () => {
+  setStore('tasks', 'task', 'mainAgentView', 'chat');
+  mount();
+  await vi.waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      IPC.AgentChat,
+      expect.objectContaining({ action: 'start', agentId: 'agent' }),
+    ),
+  );
+  expect(mocks.terminalMounts).not.toHaveBeenCalled();
+  clickTerminal();
+  await vi.waitFor(() => expect(mocks.terminalMounts).toHaveBeenCalled());
+  expect(store.tasks.task.mainAgentView).toBe('terminal');
+});

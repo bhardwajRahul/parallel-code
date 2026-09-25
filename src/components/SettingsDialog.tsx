@@ -43,6 +43,7 @@ import {
   setMcpOrchestrationEnabled,
   setDocumentWorkspacesEnabled,
   setCoordinatorNotificationDelayMs,
+  setPreferUiMode,
   setDefaultStepsEnabled,
   setDefaultSkipPermissions,
   setCanvasOwnershipBadges,
@@ -538,6 +539,12 @@ export function SettingsDialog(props: SettingsDialogProps) {
           </SettingsSection>
 
           <SettingsSection title="New Task Defaults">
+            <SettingsCheckboxRow
+              label="Always prefer UI mode"
+              checked={store.preferUiMode}
+              onChange={setPreferUiMode}
+              description="Start new Claude and Codex tasks in Chat when supported. You can still switch each task to Terminal. Existing tasks keep their current view."
+            />
             <SettingsCheckboxRow
               label="Steps tracking"
               checked={store.defaultStepsEnabled}

@@ -35,6 +35,7 @@ function structuralSnapshot(): string {
     windowState: store.windowState,
     autoTrustFolders: store.autoTrustFolders,
     showPlans: store.showPlans,
+    preferUiMode: store.preferUiMode,
     defaultStepsEnabled: store.defaultStepsEnabled,
     defaultSkipPermissions: store.defaultSkipPermissions,
     defaultPropagateSkipPermissions: store.defaultPropagateSkipPermissions,

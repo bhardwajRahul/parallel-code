@@ -35,6 +35,7 @@ function orchestrationCheckbox(): HTMLInputElement {
 beforeEach(() => {
   vi.mocked(invoke).mockResolvedValue(undefined);
   setStore('mcpOrchestrationEnabled', true);
+  setStore('preferUiMode', false);
   const host = document.createElement('div');
   document.body.append(host);
   dispose = render(() => <SettingsDialog open onClose={() => {}} />, host);
@@ -98,4 +99,18 @@ it('keeps the setting enabled and reports a rejected backend change', async () =
   expect(store.mcpOrchestrationEnabled).toBe(true);
   expect(checkbox.checked).toBe(true);
   expect(checkbox.disabled).toBe(false);
+});
+
+it('toggles the global UI mode preference in General settings', () => {
+  const label = [...document.querySelectorAll('label')].find((element) =>
+    element.textContent?.includes('Always prefer UI mode'),
+  );
+  const checkbox = label?.querySelector('input');
+  expect(checkbox).toBeDefined();
+  expect(checkbox?.checked).toBe(false);
+  checkbox?.click();
+  expect(store.preferUiMode).toBe(true);
+  expect(checkbox?.checked).toBe(true);
+  checkbox?.click();
+  expect(store.preferUiMode).toBe(false);
 });

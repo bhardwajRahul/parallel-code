@@ -480,6 +480,7 @@ export interface PersistedState {
   documentFullWidth?: boolean;
   coordinatorNotificationDelayMs?: number;
   coordinatorControlHintDismissed?: boolean;
+  preferUiMode?: boolean;
   defaultStepsEnabled?: boolean;
   defaultSkipPermissions?: boolean;
   defaultPropagateSkipPermissions?: boolean;
@@ -625,6 +626,7 @@ export interface AppStore {
   activeDocumentProjectId: string | null;
   coordinatorNotificationDelayMs: number;
   coordinatorControlHintDismissed: boolean;
+  preferUiMode: boolean;
   defaultStepsEnabled: boolean;
   defaultSkipPermissions: boolean;
   defaultPropagateSkipPermissions: boolean;

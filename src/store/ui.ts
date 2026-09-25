@@ -218,6 +218,10 @@ export function setVerboseLogging(enabled: boolean): void {
   setStore('verboseLogging', enabled);
 }
 
+export function setPreferUiMode(enabled: boolean): void {
+  setStore('preferUiMode', enabled);
+}
+
 export function setDefaultStepsEnabled(enabled: boolean): void {
   setStore('defaultStepsEnabled', enabled);
 }

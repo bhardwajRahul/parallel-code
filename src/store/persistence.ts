@@ -394,6 +394,7 @@ export async function saveState(): Promise<void> {
     documentWorkspacesEnabled: store.documentWorkspacesEnabled || undefined,
     documentFullWidth: store.documentFullWidth || undefined,
     coordinatorControlHintDismissed: store.coordinatorControlHintDismissed || undefined,
+    preferUiMode: store.preferUiMode || undefined,
     defaultStepsEnabled: store.defaultStepsEnabled || undefined,
     defaultSkipPermissions: store.defaultSkipPermissions || undefined,
     defaultPropagateSkipPermissions: store.defaultPropagateSkipPermissions || undefined,
@@ -587,6 +588,7 @@ interface LegacyPersistedState {
   documentWorkspacesEnabled?: unknown;
   documentFullWidth?: unknown;
   coordinatorControlHintDismissed?: unknown;
+  preferUiMode?: unknown;
   defaultStepsEnabled?: unknown;
   defaultSkipPermissions?: unknown;
   defaultPropagateSkipPermissions?: unknown;
@@ -885,6 +887,7 @@ export async function loadState(): Promise<void> {
           : 'defaultStepsEnabled' in (raw as object)
             ? false
             : raw.showSteps === true;
+      s.preferUiMode = raw.preferUiMode === true;
       s.defaultSkipPermissions = raw.defaultSkipPermissions === true;
       s.defaultPropagateSkipPermissions = raw.defaultPropagateSkipPermissions === true;
       s.canvasOwnershipBadges = raw.canvasOwnershipBadges !== false;

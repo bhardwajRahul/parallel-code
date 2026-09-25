@@ -174,6 +174,7 @@ export {
   setAskCodeModel,
   setMinimaxApiKey,
   setWindowState,
+  setPreferUiMode,
   setDefaultStepsEnabled,
   setDefaultSkipPermissions,
   setCanvasOwnershipBadges,

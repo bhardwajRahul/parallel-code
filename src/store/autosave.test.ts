@@ -4,6 +4,17 @@ import { persistedSnapshot } from './autosave';
 import type { Task } from './types';
 
 describe('autosave snapshot includes new-task-default fields', () => {
+  it('preferUiMode changes the snapshot', () => {
+    setStore('preferUiMode', false);
+    const before = persistedSnapshot();
+    setStore('preferUiMode', true);
+    try {
+      expect(persistedSnapshot()).not.toBe(before);
+    } finally {
+      setStore('preferUiMode', false);
+    }
+  });
+
   it('mcpOrchestrationEnabled changes the snapshot', () => {
     setStore('mcpOrchestrationEnabled', true);
     const before = persistedSnapshot();

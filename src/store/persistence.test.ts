@@ -86,6 +86,7 @@ beforeEach(() => {
   setStore('coordinatorControlHintDismissed', false);
   setStore('autoStartRemoteAccess', false);
   setStore('terminalScreenReaderMode', false);
+  setStore('preferUiMode', false);
 });
 
 describe('resolveIncomingPanelUserSize', () => {
@@ -1277,6 +1278,35 @@ describe('project task group collapsed persistence', () => {
     const saved = JSON.parse(mockInvoke.mock.calls[0][1].json);
     expect(saved.projects[0].tasksCollapsed).toBe(true);
   });
+});
+
+describe('UI mode preference persistence', () => {
+  it.each([true, false, undefined, 'true', 1])('restores only boolean true (%s)', async (value) => {
+    setStore('preferUiMode', true);
+    mockInvoke.mockResolvedValueOnce(basePayload({ preferUiMode: value }));
+    await loadState();
+    expect(store.preferUiMode).toBe(value === true);
+  });
+
+  it.each([true, false])(
+    'round-trips the preference (%s) without changing saved task views',
+    async (enabled) => {
+      setStore('preferUiMode', enabled);
+      await saveState();
+      const saved = JSON.parse(mockInvoke.mock.calls.at(-1)?.[1].json);
+      expect(saved.preferUiMode).toBe(enabled || undefined);
+      mockInvoke.mockResolvedValueOnce(
+        basePayload({
+          ...saved,
+          tasks: { 'task-1': { ...persistedTask(agentDef()), mainAgentView: 'terminal' } },
+          taskOrder: ['task-1'],
+        }),
+      );
+      await loadState();
+      expect(store.preferUiMode).toBe(enabled);
+      expect(store.tasks['task-1'].mainAgentView).not.toBe('chat');
+    },
+  );
 });
 
 describe('new task defaults persistence', () => {

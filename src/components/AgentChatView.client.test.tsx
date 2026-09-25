@@ -39,6 +39,7 @@ vi.mock('../store/canvas', () => ({ openCanvasDocument: mocks.openCanvasDocument
 vi.mock('../store/tasks', () => ({
   sendPrompt: mocks.sendPrompt,
   clearPrefillPrompt: (taskId: string) => setStore('tasks', taskId, 'prefillPrompt', undefined),
+  clearInitialPrompt: (taskId: string) => setStore('tasks', taskId, 'initialPrompt', undefined),
   setTaskPromptDraft: (taskId: string, value: string) =>
     setStore('tasks', taskId, 'promptDraft', value),
 }));
@@ -91,6 +92,8 @@ async function tick(): Promise<ChatProps> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.sendPrompt.mockReset();
+  mocks.sendPrompt.mockResolvedValue(undefined);
   mocks.chatProps = undefined;
   mocks.invoke.mockResolvedValue(undefined);
   setStore('tasks', {
@@ -134,6 +137,71 @@ afterEach(() => {
 });
 
 describe('Codex chat view', () => {
+  it('sends a queued first prompt once the chat has started', async () => {
+    let finishStart = () => {};
+    mocks.invoke.mockImplementation((channel, args) =>
+      channel === IPC.AgentChat && (args as { action?: string })?.action === 'start'
+        ? new Promise((resolve) => (finishStart = () => resolve(undefined)))
+        : Promise.resolve(undefined),
+    );
+    setStore('tasks', 'task-1', 'initialPrompt', 'Fix the tests');
+    setStore('tasks', 'task-1', 'promptDraft', 'Fix the tests');
+    mocks.sendPrompt.mockImplementationOnce(async () => {
+      setStore('tasks', 'task-1', 'initialPrompt', undefined);
+    });
+
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    await vi.waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        IPC.AgentChat,
+        expect.objectContaining({ action: 'start' }),
+      ),
+    );
+    expect(mocks.sendPrompt).not.toHaveBeenCalled();
+    finishStart();
+    await vi.waitFor(() =>
+      expect(mocks.sendPrompt).toHaveBeenCalledExactlyOnceWith(
+        'task-1',
+        'agent-1',
+        'Fix the tests',
+      ),
+    );
+    mocks.channel?.onmessage?.(state());
+    mocks.channel?.onmessage?.(state());
+    expect(mocks.sendPrompt).toHaveBeenCalledTimes(1);
+    expect(task().initialPrompt).toBeUndefined();
+    expect(task().promptDraft).toBe('');
+  });
+
+  it('keeps a failed first prompt available for a manual retry', async () => {
+    setStore('tasks', 'task-1', 'initialPrompt', 'Original request');
+    setStore('tasks', 'task-1', 'promptDraft', '');
+    mocks.sendPrompt.mockRejectedValueOnce(new Error('Send failed'));
+
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    await vi.waitFor(() =>
+      expect(container.querySelector('.codex-chat-error')?.textContent ?? '').toContain(
+        'Send failed',
+      ),
+    );
+    expect(task().initialPrompt).toBe('Original request');
+    expect(task().promptDraft).toBe('Original request');
+    mocks.channel?.onmessage?.(state());
+    expect(mocks.sendPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a user edited draft alone while the chat starts', async () => {
+    setStore('tasks', 'task-1', 'initialPrompt', 'Original request');
+    setStore('tasks', 'task-1', 'promptDraft', 'User edited draft');
+    dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
+    await vi.waitFor(() => expect(mocks.chatProps?.disabled).toBe(false));
+    expect(mocks.sendPrompt).not.toHaveBeenCalled();
+    expect(task().initialPrompt).toBe('Original request');
+    expect(task().promptDraft).toBe('User edited draft');
+    await mocks.chatProps?.onSend('User edited draft', []);
+    expect(task().initialPrompt).toBeUndefined();
+  });
+
   it('opens the actual file for links containing line and column suffixes', async () => {
     dispose = render(() => <AgentChatView task={task()} agentId="agent-1" active />, container);
     const chat = await tick();

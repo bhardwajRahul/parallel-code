@@ -98,6 +98,7 @@ export const [store, setStore] = createStore<AppStore>({
   activeDocumentProjectId: null,
   coordinatorNotificationDelayMs: 60_000,
   coordinatorControlHintDismissed: false,
+  preferUiMode: false,
   defaultStepsEnabled: false,
   defaultSkipPermissions: false,
   defaultPropagateSkipPermissions: false,
