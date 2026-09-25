@@ -74,6 +74,7 @@ it('writes a Mermaid flowchart with positional ids, escaped labels and labelled 
       ...document.relations,
       { id: 'c', source: 'weird id', target: 'a', kind: 'challenges' },
       { id: 'gone', source: 'a', target: 'missing' },
+      { id: 'piped', source: 'a', target: 'b', kind: 'x| n1 --> n2' },
     ],
   };
   expect(graphToMermaid(quoted, 'Map: "1"')).toBe(
@@ -93,6 +94,7 @@ it('writes a Mermaid flowchart with positional ids, escaped labels and labelled 
       '  n1 --> n5',
       '  n4 -->|supports| n2',
       '  n5 -.->|challenges| n3',
+      '  n3 -->|x#124; n1 --#62; n2| n2',
       '',
     ].join('\n'),
   );

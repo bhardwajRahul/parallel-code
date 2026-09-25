@@ -64,4 +64,19 @@ describe('GraphSearch', () => {
     arrow('ArrowUp');
     expect(highlighted()).toBe('Match b');
   });
+
+  it('leaves Enter and arrows to the input method while composing', () => {
+    const { container, search, highlighted, onPick } = mount(['a', 'b'].map(note));
+    search('Match');
+    const input = container.querySelector('input');
+    const key = (name: string) =>
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: name, isComposing: true, bubbles: true }),
+      );
+    key('ArrowDown');
+    key('ArrowDown');
+    expect(highlighted()).toBe('Match a');
+    key('Enter');
+    expect(onPick).not.toHaveBeenCalled();
+  });
 });

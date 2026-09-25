@@ -1,6 +1,8 @@
 import { GRAPH_ID_REGEX } from './graph-limits.js';
 
 export const REASONING_MAX_BYTES = 1024 * 1024;
+/** Updates one run may hold before the agent must start a new one. */
+export const REASONING_MAX_UPDATES = 1000;
 
 export interface ReasoningDocument {
   runId: string | null;
