@@ -39,6 +39,7 @@ import type { GitIsolationMode } from '../store/types';
 import { ChangeTour } from './ChangeTour';
 import { createChangeTour, type ChangeTourController } from '../lib/create-change-tour';
 import type { TourLocation } from '../lib/change-tour';
+import { store, updateTaskNotes } from '../store/store';
 
 interface DiffViewerDialogProps {
   tour?: ChangeTourController;
@@ -156,6 +157,7 @@ export function DiffViewerDialog(props: DiffViewerDialogProps) {
 /** Inner content rendered inside ReviewProvider so it can call useReview(). */
 function DiffViewerContent(props: DiffViewerDialogProps & { tour: ChangeTourController }) {
   const review = useReview();
+  const task = () => (props.taskId ? store.tasks[props.taskId] : undefined);
   const headerPaddingTop = `${windowChromeTopInset + 12}px`;
 
   const [parsedFiles, setParsedFiles] = createSignal<FileDiff[]>([]);
@@ -470,13 +472,15 @@ function DiffViewerContent(props: DiffViewerDialogProps & { tour: ChangeTourCont
       {/* Body */}
       <div style={{ flex: '1', overflow: 'hidden', display: 'flex' }}>
         <aside
+          class="diff-viewer-sidebar"
           style={{
             width: tourOpen() ? '380px' : '300px',
             'min-width': '240px',
             'max-width': tourOpen() ? '40vw' : '34vw',
             display: 'flex',
             'flex-direction': 'column',
-            background: theme.taskPanelBg,
+            background: theme.taskContainerBg,
+            'overflow-y': 'auto',
             'border-right': `1px solid ${theme.border}`,
             'flex-shrink': '0',
           }}
@@ -538,7 +542,7 @@ function DiffViewerContent(props: DiffViewerDialogProps & { tour: ChangeTourCont
               </button>
             </div>
           </Show>
-          <div style={{ flex: '1', 'min-height': '0', overflow: 'hidden' }}>
+          <div style={{ flex: '1', 'min-height': '100px', overflow: 'hidden' }}>
             <ChangedFilesList
               worktreePath={props.worktreePath}
               filesOverride={
@@ -571,6 +575,42 @@ function DiffViewerContent(props: DiffViewerDialogProps & { tour: ChangeTourCont
               onFileClick={(file) => setActiveFilePath(file.path)}
             />
           </div>
+          <Show when={task()}>
+            {(currentTask) => (
+              <label
+                class="diff-task-notes focusable-panel"
+                style={{
+                  display: 'flex',
+                  'flex-direction': 'column',
+                  gap: '6px',
+                  padding: '8px 10px',
+                  'flex-shrink': '0',
+                  color: theme.fgMuted,
+                  'font-size': sf(11),
+                }}
+              >
+                Task notes
+                <textarea
+                  aria-label="Task notes"
+                  placeholder="Add a note…"
+                  value={currentTask().notes}
+                  onInput={(e) => updateTaskNotes(currentTask().id, e.currentTarget.value)}
+                  style={{
+                    width: '100%',
+                    height: '140px',
+                    'max-height': '25vh',
+                    background: 'transparent',
+                    border: 'none',
+                    padding: '6px 8px',
+                    color: theme.fg,
+                    'font-size': sf(12),
+                    'font-family': "'JetBrains Mono', monospace",
+                    resize: 'none',
+                  }}
+                />
+              </label>
+            )}
+          </Show>
         </aside>
 
         <div style={{ flex: '1', overflow: 'hidden' }}>

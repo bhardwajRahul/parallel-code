@@ -1784,6 +1784,20 @@ button {
   background: color-mix(in srgb, var(--accent) 6%, var(--task-panel-bg));
 }
 
+.diff-viewer-sidebar > .change-tour {
+  /* Leave room for files and notes; shorter windows scroll the sidebar. */
+  flex-shrink: 1;
+  min-height: 240px;
+}
+
+.diff-task-notes {
+  margin: 8px;
+  background: var(--task-panel-bg);
+  border: 1px solid var(--island-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
+}
+
 /* The dialog keeps its step strip faint; beside the diff it is the main
    sense of where you are, so it reads at near full strength. */
 .change-tour .understanding-segments {

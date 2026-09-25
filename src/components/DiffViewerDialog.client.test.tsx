@@ -9,6 +9,8 @@ import { createChangeTour, type ChangeTourController } from '../lib/create-chang
 import type { TourStop } from '../lib/change-tour';
 import type { ChangedFile } from '../ipc/types';
 import { useReview } from './ReviewProvider';
+import { store, updateTaskNotes } from '../store/store';
+import type { Task } from '../store/types';
 
 const channels = vi.hoisted(
   () =>
@@ -28,7 +30,20 @@ vi.mock('../lib/ipc', () => ({
   },
 }));
 vi.mock('../store/tasks', () => ({ sendPrompt: vi.fn() }));
-vi.mock('../store/store', () => ({ store: { askCodeProvider: 'claude', agentEnvFiles: {} } }));
+vi.mock('../store/store', async () => {
+  const { createStore } = await import('solid-js/store');
+  const [store, setStore] = createStore({
+    askCodeProvider: 'claude',
+    agentEnvFiles: {},
+    tasks: {} as Record<string, Pick<Task, 'id' | 'notes'>>,
+  });
+  return {
+    store,
+    updateTaskNotes: vi.fn((id: string, notes: string) => {
+      setStore('tasks', id, { id, notes });
+    }),
+  };
+});
 vi.mock('./Dialog', () => ({
   Dialog: (props: { children: JSX.Element }) => <div>{props.children}</div>,
 }));
@@ -279,6 +294,28 @@ it('loads the whole diff when opened without a file to scroll to', async () => {
     ),
   );
   expect(host.querySelector('h2')?.textContent).toContain('all changes');
+});
+
+it('shares task notes with the changed-files dialog and retains edits after reopening', () => {
+  updateTaskNotes('task', 'Check error handling');
+  const { host, setTarget } = mount();
+  const notes = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Task notes"]');
+  expect(notes?.value).toBe('Check error handling');
+  if (!notes) throw new Error('Missing task notes');
+  notes.value = 'Add a regression test';
+  notes.dispatchEvent(new Event('input', { bubbles: true }));
+  expect(updateTaskNotes).toHaveBeenLastCalledWith('task', 'Add a regression test');
+  expect(store.tasks.task.notes).toBe('Add a regression test');
+
+  setTarget(null);
+  expect(host.querySelector('textarea')).toBeNull();
+  setTarget('first.ts');
+  expect(host.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Add a regression test');
+
+  updateTaskNotes('task', 'Updated outside the dialog');
+  expect(host.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(
+    'Updated outside the dialog',
+  );
 });
 
 it.each(['cancel', 'reset'] as const)('ignores a pending diff load after %s', async (action) => {
