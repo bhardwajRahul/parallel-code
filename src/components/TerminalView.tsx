@@ -19,7 +19,7 @@ import { TerminalBookmarkGutter } from './TerminalBookmarks';
 import { invoke, fireAndForget, Channel } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import { getTerminalFontFamily } from '../lib/fonts';
-import { TERMINAL_SCROLL_OPTIONS, base64ToUint8Array } from '../lib/terminalConstants';
+import { TERMINAL_SCROLL_OPTIONS } from '../lib/terminalConstants';
 import {
   getTerminalSearchDecorations,
   getTerminalTheme,
@@ -882,7 +882,7 @@ export function TerminalView(props: TerminalViewProps) {
     let initialCommandSent = false;
     onOutput.onmessage = (msg) => {
       if (msg.type === 'Data') {
-        enqueueOutput(base64ToUint8Array(msg.data));
+        enqueueOutput(msg.data);
         if (!initialCommandSent && props.initialCommand) {
           const cmd = props.initialCommand;
           initialCommandSent = true;
