@@ -54,7 +54,7 @@ type DemoAgent =
       busy?: string;
     };
 
-type DemoTask = DemoAgent & {
+export type DemoTask = DemoAgent & {
   slug: string;
   name: string;
   /** Text in the task's notes panel. */
@@ -143,12 +143,14 @@ const createRepo = (repo: string): void => {
 
 /**
  * - `withTasks`: restore the three demo tasks.
+ * - `tasks`: restore these tasks instead, e.g. a benchmark's.
  * - `planner`: add the planning task with the v2 mind map, first in line.
  * - `focus`: the slug of the task to open in focus mode.
  * - `shell`: give the focused task an open shell.
  */
 export type DemoWorkspaceOptions = {
   withTasks?: boolean;
+  tasks?: DemoTask[];
   planner?: boolean;
   focus?: string;
   shell?: boolean;
@@ -241,9 +243,9 @@ export const seedDemoWorkspace = (
 ): string => {
   const repo = path.join(dir, 'weather-app');
   createRepo(repo);
-  const demoTasks = options.withTasks
-    ? [...(options.planner ? [PLANNER_TASK] : []), ...DEMO_TASKS]
-    : [];
+  const demoTasks =
+    options.tasks ??
+    (options.withTasks ? [...(options.planner ? [PLANNER_TASK] : []), ...DEMO_TASKS] : []);
   const tasks = demoTasks.map((task) =>
     createTask({ dir, repo, home }, task, options.shell && task.slug === options.focus ? 1 : 0),
   );

@@ -95,9 +95,9 @@ export default [
     },
   },
 
-  // Showcase video scripts are command-line tools that report progress on stdout.
+  // Showcase and benchmark scripts are command-line tools that report on stdout.
   {
-    files: ['scripts/showcase/**/*.ts'],
+    files: ['scripts/showcase/**/*.ts', 'scripts/bench/**/*.ts'],
     rules: {
       'no-console': 'off',
     },

@@ -11,7 +11,7 @@ import * as path from 'node:path';
 /** See chat-agent.mjs for what each step does. */
 type ChatStep =
   | { text: string }
-  | { stream: string }
+  | { stream: string; chunks?: number }
   | { tool: string; input: Record<string, unknown>; result?: string }
   | { approve: { tool: string; input: Record<string, unknown> }; after?: string };
 

@@ -53,13 +53,25 @@ const toolResult = (toolUseId, output, isError = false) =>
     },
   });
 
-/** Text that is still being written: the turn never ends, so the task stays working. */
-const streaming = (text) => {
+// Close to how often a model's text deltas arrive.
+const CHUNK_MS = 10;
+
+/**
+ * Text that is still being written: the turn never ends, so the task stays working.
+ * `chunks` splits it into that many deltas, CHUNK_MS apart, until `stopped()`.
+ */
+const streaming = async (text, chunks = 1, stopped = () => false) => {
   const id = randomUUID();
   const event = (value) =>
     emit({ type: 'stream_event', event: value, session_id: sessionId, parent_tool_use_id: null });
   event({ type: 'message_start', message: { id } });
-  event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } });
+  const size = Math.ceil(text.length / chunks);
+  for (let at = 0; at < text.length; at += size) {
+    if (at) await sleep(CHUNK_MS);
+    if (stopped()) return;
+    const delta = { type: 'text_delta', text: text.slice(at, at + size) };
+    event({ type: 'content_block_delta', index: 0, delta });
+  }
 };
 
 /** Ends the turn; until then the app shows the agent as working. */
@@ -80,7 +92,7 @@ let pending;
 
 /**
  * Steps: `{ text }` says something, `{ tool, input, result? }` calls a tool
- * (still running without a result), and `{ stream }` leaves text mid-sentence.
+ * (still running without a result), and `{ stream, chunks? }` leaves text mid-sentence.
  * `{ approve: { tool, input }, after? }` asks for permission and waits: once
  * answered, the turn ends, with `after` said if it was allowed.
  */
@@ -90,7 +102,7 @@ const play = async (steps = []) => {
     await sleep(STEP_MS);
     if (current !== turn) return;
     if (step.text) assistant([{ type: 'text', text: step.text }]);
-    if (step.stream) streaming(step.stream);
+    if (step.stream) await streaming(step.stream, step.chunks, () => current !== turn);
     const call = step.tool ? step : step.approve;
     if (!call) continue;
     const id = `toolu_${randomUUID().replaceAll('-', '')}`;

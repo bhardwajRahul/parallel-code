@@ -209,8 +209,8 @@ export const launchShowcaseApp = async (
 ): Promise<ShowcaseApp> => {
   // The seeded chat tasks resume sessions that chats.ts made up. With a real
   // Claude, the app would hand those to the billed CLI instead of chat-agent.mjs.
-  if (options.withTasks && options.realAgents?.includes('claude')) {
-    throw new Error('withTasks cannot be combined with realAgents: ["claude"]');
+  if ((options.withTasks || options.tasks) && options.realAgents?.includes('claude')) {
+    throw new Error('withTasks and tasks cannot be combined with realAgents: ["claude"]');
   }
   const dir = createDemoDir();
   const removeDir = (): void => fs.rmSync(dir, { recursive: true, force: true });
