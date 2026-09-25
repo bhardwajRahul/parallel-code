@@ -546,6 +546,215 @@ body:has(
   border-color: color-mix(in srgb, var(--fg-subtle) 26%, transparent);
 }
 
+/* Shown in place of empty notes and changed files. */
+.task-support-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-support-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.task-support-toggle:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
+/* Noir: a quiet frame, softly rounded workspaces, and a single focus accent.
+   Keep geometry stable when controls appear so parallel tasks never shift. */
+html[data-look='noir'] {
+  color-scheme: dark;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: var(--font-ui);
+  --bg: #101014;
+  --bg-elevated: #1c1c24;
+  --bg-input: #202029;
+  --bg-hover: #2a2935;
+  --bg-selected: #343043;
+  --bg-selected-subtle: #282432;
+  --border: #33323e;
+  --border-subtle: #25252e;
+  --border-focus: #b7a5f5;
+  --fg: #e8e8ef;
+  --fg-muted: #b1b0bf;
+  --fg-subtle: #9392a3;
+  --accent: #b7a5f5;
+  --accent-hover: #cbbcfb;
+  --accent-text: #191421;
+  --link: #cbbcfb;
+  --success: #98c9ae;
+  --error: #f08f8a;
+  --warning: #dfba83;
+  --review: #8fbddd;
+  --info: #c4c3d0;
+  --diff-add-bg: rgba(152, 201, 174, 0.1);
+  --diff-remove-bg: rgba(240, 143, 138, 0.1);
+  --search-match: #dfc18e;
+  --search-match-active: #efa66f;
+  --island-bg: #15151b;
+  --island-border: #33323e;
+  --island-radius: 12px;
+  --task-container-bg: #15151b;
+  --task-panel-bg: #15151b;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --shadow-soft: 0 12px 32px rgba(0, 0, 0, 0.24);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.4);
+}
+
+.app-shell[data-look='noir']::before {
+  background: none;
+}
+
+html[data-look='noir'] .sidebar-panel {
+  padding: 12px 14px 16px !important;
+  gap: 20px !important;
+}
+
+html[data-look='noir'] .icon-btn:not(:hover):not(:focus-visible) {
+  border-color: transparent !important;
+}
+
+html[data-look='noir'] .sidebar-create-btn {
+  padding: 9px 12px !important;
+  background: var(--accent) !important;
+  color: var(--accent-text) !important;
+  border-color: transparent !important;
+  font-weight: 600 !important;
+}
+
+html[data-look='noir'] .sidebar-create-btn:hover {
+  background: var(--accent-hover) !important;
+}
+
+html[data-look='noir'] .app-shell:has(.task-column.active) .sidebar-create-btn {
+  background: var(--bg-input) !important;
+  color: var(--fg) !important;
+  border-color: var(--border) !important;
+  font-weight: 500 !important;
+}
+
+html[data-look='noir'] .app-shell:has(.task-column.active) .sidebar-create-btn:hover {
+  background: var(--bg-hover) !important;
+}
+
+html[data-look='noir'] .task-item {
+  border-radius: var(--radius-md) !important;
+}
+
+html[data-look='noir'] .task-item[aria-current='true'] {
+  box-shadow: inset 2px 0 var(--accent);
+}
+
+html[data-look='noir'] .task-column {
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: none;
+}
+
+html[data-look='noir'] .task-column.active {
+  box-shadow: none;
+}
+
+html[data-look='noir'] .task-title-bar {
+  background: var(--island-bg);
+}
+
+html[data-look='noir'] .task-title-bar[data-active='true'],
+html[data-look='noir'] .island-header-active {
+  box-shadow: inset 0 2px var(--accent);
+}
+
+html[data-look='noir'] .task-title-actions {
+  background: transparent;
+}
+
+html[data-look='noir'] .task-action-group + .task-action-group {
+  border-left-color: var(--border-subtle);
+}
+
+/* Only lifecycle controls recede. Navigation, Git progress, and attention
+   remain visible. Opacity preserves tab order; focus-within reveals the group
+   before a keyboard user can activate it. Touch keeps every control visible. */
+@media (hover: hover) and (pointer: fine) {
+  html[data-look='noir']
+    .task-title-bar[data-active='false']:not(:hover):not(:focus-within)
+    .task-lifecycle-actions {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
+html[data-look='noir'] .task-branch-info-bar {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+html[data-look='noir'] :is(.info-bar, .changed-files-list-panel, .task-notes-body textarea) {
+  font-family: var(--font-ui) !important;
+}
+
+html[data-look='noir'] :is(.info-bar, .changed-files-list-panel, .sidebar-footer) {
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-look='noir'] .info-bar button:not(:hover):not(:focus-visible) {
+  border-color: transparent !important;
+}
+
+html[data-look='noir'] .prompt-textarea {
+  font-family: var(--font-ui) !important;
+  box-shadow: none !important;
+}
+
+html[data-look='noir'] .prompt-textarea:focus {
+  border-color: var(--border-focus) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent) !important;
+}
+
+html[data-look='noir'] textarea::placeholder {
+  color: var(--fg-subtle);
+  opacity: 1;
+}
+
+html[data-look='noir'] .task-notes-body textarea::placeholder {
+  color: var(--fg-muted);
+}
+
+html[data-look='noir'] .task-git-status-badge:not([data-result='pending']) {
+  color: var(--accent-text) !important;
+}
+
+html[data-look='noir'] .prompt-send-btn:not(:disabled) {
+  background: var(--accent) !important;
+  color: var(--accent-text) !important;
+  border-radius: var(--radius-sm) !important;
+}
+
+html[data-look='noir'] .task-changed-files-section .changed-files-list-panel::after {
+  content: none;
+}
+
+html[data-look='noir'] .settings-theme-card.active {
+  background: var(--bg-selected-subtle);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
 /* Obsidian: flat, square-edged workspaces with quiet navigation.
    All styling is scoped to the preset, including portalled dialogs.
    Structural rules match both variants via [data-look^='obsidian'].

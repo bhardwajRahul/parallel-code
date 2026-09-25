@@ -1,5 +1,5 @@
 import { expectDefined } from '../store/test-helpers';
-import { Show, createSignal, type ComponentProps } from 'solid-js';
+import { Show, createEffect, createSignal, onCleanup, type ComponentProps } from 'solid-js';
 import { render } from 'solid-js/web';
 import { createStore } from 'solid-js/store';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -10,6 +10,7 @@ import {
   activateCanvasTab,
   showNotification,
   toggleFocusMode,
+  setTaskFocusedPanel,
 } from '../store/store';
 import { GIST_LABEL } from '../lib/understanding-tour';
 import type { Task } from '../store/types';
@@ -18,6 +19,12 @@ import type { TaskNotesBody } from './TaskNotesBody';
 import type { UnderstandingTourDialog } from './UnderstandingTourDialog';
 
 // Understanding tours stream through Channel, so the panel's ipc mock provides one.
+const fileInventory = vi.hoisted(() => ({
+  report: (_count: number) => {},
+  mounts: 0,
+  disposals: 0,
+}));
+
 const channels = vi.hoisted(
   () =>
     [] as {
@@ -30,6 +37,8 @@ vi.mock('../store/store', () => {
   const [store, setStore] = createStore({
     activeTaskId: 'other-task',
     focusMode: false,
+    themePreset: 'obsidian',
+    showPlans: true,
     focusedPanel: { task: 'prompt' },
     showPromptInput: true,
     taskGitStatus: {},
@@ -56,7 +65,9 @@ vi.mock('../store/store', () => {
     registerFocusFn: vi.fn(),
     unregisterFocusFn: vi.fn(),
     setActiveAgent: vi.fn(),
-    setTaskFocusedPanel: vi.fn(),
+    setTaskFocusedPanel: vi.fn((_taskId: string, panel: string) =>
+      setStore('focusedPanel', 'task', panel),
+    ),
     triggerFocus: vi.fn(),
     setActiveTask: (id: string) => setStore('activeTaskId', id),
     activateTaskFromPointer: (id: string) => setStore('activeTaskId', id),
@@ -150,7 +161,16 @@ vi.mock('./UnderstandingTourDialog', () => ({
     </div>
   ),
 }));
-vi.mock('./TaskChangedFilesSection', () => ({ TaskChangedFilesSection: () => null }));
+vi.mock('./TaskChangedFilesSection', () => ({
+  TaskChangedFilesSection: (props: { onFileCountChange?: (count: number) => void }) => {
+    fileInventory.mounts++;
+    createEffect(() => {
+      fileInventory.report = props.onFileCountChange ?? (() => {});
+    });
+    onCleanup(() => fileInventory.disposals++);
+    return <div class="test-files" />;
+  },
+}));
 vi.mock('./TaskShellSection', () => ({ TaskShellSection: () => null }));
 vi.mock('./CanvasFilePicker', () => ({ CanvasFilePicker: () => null }));
 vi.mock('./TaskCanvasDocument', () => ({
@@ -167,8 +187,9 @@ vi.mock('./TaskReasoningGraphHost', () => ({
 
 let dispose: (() => void) | undefined;
 afterEach(() => {
-  toggleFocusMode(false);
   dispose?.();
+  toggleFocusMode(false);
+  setTaskFocusedPanel('task', 'prompt');
   document.body.replaceChildren();
   channels.length = 0;
   vi.mocked(showNotification).mockClear();
@@ -240,7 +261,8 @@ it.each(['reasoning', 'mindmap'] as const)(
       projectId: 'project',
       agentIds: ['agent'],
       shellAgentIds: [],
-      notes: '',
+      // Saved notes keep the support panel open; empty ones would collapse it.
+      notes: 'Saved notes',
       gitIsolation: 'none',
       branchName: '',
       worktreePath: '/tmp/task',
@@ -468,4 +490,102 @@ it('keeps a plan tour while browsing commits and drops it when the task changes'
   expect(tourState().subject).toBe('');
   expect(tourState().kind).toBe('');
   expect(tourState().open).toBe('false');
+});
+
+function mountEmptyTask() {
+  const [task, setTask] = createStore<Task>({
+    id: 'task',
+    name: 'Task',
+    projectId: 'project',
+    agentIds: [],
+    shellAgentIds: [],
+    notes: '',
+    gitIsolation: 'worktree',
+    branchName: 'task-branch',
+    worktreePath: '/tmp/task',
+    lastPrompt: '',
+  });
+  const container = document.createElement('div');
+  document.body.append(container);
+  dispose = render(() => <TaskPanel task={task} isActive />, container);
+  return { container, setTask };
+}
+
+it('collapses empty support panels without disposing file watching or terminal state', () => {
+  const mounts = fileInventory.mounts;
+  const disposals = fileInventory.disposals;
+  const { container } = mountEmptyTask();
+  const terminal = expectDefined(container.querySelector('.test-terminal'));
+  const prompt = expectDefined(container.querySelector<HTMLTextAreaElement>('.test-prompt'));
+  prompt.value = 'Unsent prompt';
+  const toggle = () =>
+    expectDefined(container.querySelector<HTMLButtonElement>('.task-support-toggle'));
+  expect(toggle().getAttribute('aria-expanded')).toBe('false');
+  expect(container.querySelector('.test-notes')).toBeNull();
+  expect(fileInventory.mounts).toBe(mounts + 1);
+  expect(fileInventory.disposals).toBe(disposals);
+  toggle().click();
+  const notes = expectDefined(container.querySelector('.test-notes'));
+  expect(toggle().getAttribute('aria-expanded')).toBe('true');
+  toggle().click();
+  expect(container.querySelector('.test-notes')).toBeNull();
+  fileInventory.report(2);
+  expect(container.querySelector('.test-notes')).toBe(notes);
+  expect(container.querySelector('.test-files')).not.toBeNull();
+  expect(container.querySelector('.task-support-toggle')).toBeNull();
+  expect(container.querySelector('.test-terminal')).toBe(terminal);
+  expect(container.querySelector('.test-prompt')).toBe(prompt);
+  expect(prompt.value).toBe('Unsent prompt');
+  expect(fileInventory.mounts).toBe(mounts + 1);
+  expect(fileInventory.disposals).toBe(disposals);
+});
+
+it.each(['notes', 'changed-files'])(
+  'reveals compact support when keyboard navigation targets %s',
+  (panel) => {
+    const { container } = mountEmptyTask();
+    expect(container.querySelector('.test-notes')).toBeNull();
+    setTaskFocusedPanel('task', panel);
+    expect(container.querySelector('.test-notes')).not.toBeNull();
+    expect(container.querySelector('.task-support-toggle')?.getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+  },
+);
+
+it('keeps plans, steps and shells visible even with no notes or files', () => {
+  const { container, setTask } = mountEmptyTask();
+  const isCollapsed = () =>
+    container.querySelector('.task-support-toggle')?.getAttribute('aria-expanded') === 'false';
+  expect(isCollapsed()).toBe(true);
+  setTask('planContent', '# Plan');
+  expect(isCollapsed()).toBe(false);
+  expect(container.querySelector('.test-notes')).not.toBeNull();
+  setTask('planContent', undefined);
+  expect(isCollapsed()).toBe(true);
+  setTask('stepsEnabled', true);
+  expect(isCollapsed()).toBe(false);
+  setTask('stepsEnabled', false);
+  setTask('shellAgentIds', ['shell']);
+  expect(isCollapsed()).toBe(false);
+  setTask('shellAgentIds', []);
+  expect(isCollapsed()).toBe(true);
+});
+
+it('keeps prompt focus when incoming files reopen the supporting column', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200);
+  try {
+    toggleFocusMode(true);
+    const { container } = mountEmptyTask();
+    const prompt = expectDefined(container.querySelector<HTMLTextAreaElement>('.test-prompt'));
+    prompt.value = 'Keep typing';
+    prompt.focus();
+    fileInventory.report(1);
+    await flush();
+    expect(document.activeElement).toBe(prompt);
+    expect(prompt.value).toBe('Keep typing');
+    expect(container.querySelector('.test-files')).not.toBeNull();
+  } finally {
+    width.mockRestore();
+  }
 });

@@ -43,6 +43,23 @@ describe('getTerminalTheme', () => {
     expect(getTerminalTheme('classic')).not.toHaveProperty('foreground');
   });
 
+  it('keeps Noir terminal text readable on its workspace surface', () => {
+    const root = { dataset: { look: 'noir' } };
+    vi.stubGlobal('document', { documentElement: root, getElementById: () => null });
+    vi.stubGlobal('getComputedStyle', () => ({
+      getPropertyValue: (name: string) => (name === '--task-panel-bg' ? '#15151b' : ''),
+    }));
+
+    const noir = getTerminalTheme('noir');
+    expect(noir).toMatchObject({ background: '#15151b', cursor: '#b7a5f5' });
+    if (!('brightBlack' in noir)) throw new Error('Noir terminal palette is missing');
+    for (const color of [noir.foreground, noir.brightBlack, noir.cursor]) {
+      const contrast =
+        (colord(color).luminance() + 0.05) / (colord(noir.background).luminance() + 0.05);
+      expect(contrast).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it('uses the Islands Dark ANSI palette on its CSS-derived background only', () => {
     const root = { dataset: { look: 'classic' } };
     vi.stubGlobal('document', { documentElement: root, getElementById: () => null });

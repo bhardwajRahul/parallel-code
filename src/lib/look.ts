@@ -1,4 +1,5 @@
 export type LookPreset =
+  | 'noir'
   | 'obsidian'
   | 'obsidian-light'
   | 'classic'
@@ -24,6 +25,12 @@ export interface LookPresetOption {
 }
 
 export const LOOK_PRESETS: LookPresetOption[] = [
+  {
+    id: 'noir',
+    label: 'Noir',
+    description: 'Ink-dark surfaces, soft lilac, and quiet controls that follow your focus',
+    tone: 'dark',
+  },
   {
     id: 'obsidian',
     label: 'Obsidian',

@@ -141,6 +141,17 @@ export function getTerminalTheme(preset: LookPreset) {
   if (preset === 'obsidian') {
     return { background, ...OBSIDIAN_TERMINAL_THEME };
   }
+  if (preset === 'noir') {
+    return {
+      background,
+      ...OBSIDIAN_TERMINAL_THEME,
+      foreground: '#e8e8ef',
+      cursor: '#b7a5f5',
+      cursorAccent: '#15151b',
+      selectionBackground: '#393247',
+      brightBlack: '#90909e',
+    };
+  }
   if (preset === 'islands-dark') {
     return { background, ...ISLANDS_DARK_TERMINAL_THEME };
   }

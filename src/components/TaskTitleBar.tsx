@@ -292,6 +292,7 @@ export function TaskTitleBar(props: TaskTitleBarProps) {
                 fallback={
                   <Show when={props.pushSuccess}>
                     <div
+                      class="task-git-status-badge"
                       style={{
                         position: 'absolute',
                         bottom: '-4px',
@@ -303,10 +304,11 @@ export function TaskTitleBar(props: TaskTitleBarProps) {
                         display: 'flex',
                         'align-items': 'center',
                         'justify-content': 'center',
+                        color: 'white',
                         'pointer-events': 'none',
                       }}
                     >
-                      <svg width="8" height="8" viewBox="0 0 16 16" fill="white">
+                      <svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor">
                         <path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z" />
                       </svg>
                     </div>
@@ -315,6 +317,8 @@ export function TaskTitleBar(props: TaskTitleBarProps) {
               >
                 {(c) => (
                   <div
+                    class="task-git-status-badge"
+                    data-result={c().overall}
                     style={{
                       position: 'absolute',
                       bottom: '-4px',
@@ -391,7 +395,11 @@ export function TaskTitleBar(props: TaskTitleBarProps) {
             title={store.focusMode ? 'Exit focus mode' : 'Focus on this task'}
           />
         </div>
-        <div class="task-action-group" role="group" aria-label="Task actions">
+        <div
+          class="task-action-group task-lifecycle-actions"
+          role="group"
+          aria-label="Task actions"
+        >
           <IconButton
             icon={
               <svg

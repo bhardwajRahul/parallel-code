@@ -11,6 +11,7 @@ import {
   onMount,
   onCleanup,
   batch,
+  untrack,
 } from 'solid-js';
 import {
   store,
@@ -304,22 +305,72 @@ export function TaskPanel(props: TaskPanelProps) {
   let titleEditHandle: EditableTextHandle | undefined;
   let promptHandle: PromptInputHandle | undefined;
 
+  const isGitUnavailable = () => props.task.gitIsolation === 'none' || isLandedTask();
+  const [changedFileCount, setChangedFileCount] = createSignal(0);
+  // An empty notes box next to an empty file list still claimed half the
+  // column. Until either has content the strip stays thin and the AI terminal
+  // takes the space; a user drag on the divider pins a size as usual.
+  const topStripEmpty = createMemo(
+    () => !props.task.notes?.trim() && (isGitUnavailable() || changedFileCount() === 0),
+  );
+
+  const [emptySupportExpanded, setEmptySupportExpanded] = createSignal(false);
+  // Hide only genuinely empty support panels. Plans, tours, commit navigation,
+  // steps and shells are useful content even when the file/notes counts are zero.
+  const canCollapseSupport = createMemo(
+    () =>
+      topStripEmpty() &&
+      !(store.showPlans && props.task.planContent) &&
+      !props.task.agentTour &&
+      !props.task.stepsEnabled &&
+      props.task.shellAgentIds.length === 0 &&
+      commitList().length === 0 &&
+      selectedCommit() === null &&
+      !tour.loading() &&
+      !tour.error() &&
+      tour.stops().length === 0,
+  );
+  const supportCollapsed = () => canCollapseSupport() && !emptySupportExpanded();
+  createEffect(() => {
+    const panel = store.focusedPanel[props.task.id];
+    if (props.isActive && (panel === 'notes' || panel === 'changed-files')) {
+      // Focus is scheduled after this effect, so shortcuts can still enter a
+      // panel whose DOM was temporarily detached from the compact layout.
+      setEmptySupportExpanded(true);
+    }
+  });
+
   // Two-column focus-mode layout kicks in once the main column is wide enough.
   // Hysteresis: enter at >=1080, leave at <1030. A single threshold flickers
-  // when the user drags the window edge across it, and every flip remounts the
-  // xterm terminal inside the left column. With a graph tab primary the main
+  // when the user drags the window edge across it, repeatedly reparenting the
+  // terminal inside the left column. With a graph tab primary the main
   // column is about a third of the tile, so the split stays off by design.
   const SPLIT_ENTER_WIDTH = 1080;
   const SPLIT_EXIT_WIDTH = 1030;
   const [panelWidth, setPanelWidth] = createSignal(0);
   const [useSplit, setUseSplit] = createSignal(false);
   createEffect(() => {
-    if (!store.focusMode) {
-      setUseSplit(false);
-      return;
-    }
+    const canSplit = store.focusMode && !supportCollapsed();
     const w = panelWidth();
-    setUseSplit((prev) => (prev ? w >= SPLIT_EXIT_WIDTH : w >= SPLIT_ENTER_WIDTH));
+    const focused = document.activeElement;
+    const ownsFocus = focused instanceof HTMLElement && mainRef?.contains(focused);
+    let changed = false;
+    setUseSplit((prev) => {
+      const next = canSplit && (prev ? w >= SPLIT_EXIT_WIDTH : w >= SPLIT_ENTER_WIDTH);
+      changed = next !== prev;
+      return next;
+    });
+    // New files can reopen the supporting column while a prompt is being typed.
+    // Reparenting preserves the element but Chromium drops its native focus.
+    if (changed && ownsFocus) {
+      queueMicrotask(() =>
+        untrack(() => {
+          if (props.isActive && focused.isConnected && document.activeElement === document.body) {
+            focused.focus({ preventScroll: true });
+          }
+        }),
+      );
+    }
   });
 
   // Mirror split state into the store so keyboard navigation (focus.ts)
@@ -461,15 +512,6 @@ export function TaskPanel(props: TaskPanelProps) {
     }
     return props.task.agentIds[0] ?? '';
   };
-
-  const isGitUnavailable = () => props.task.gitIsolation === 'none' || isLandedTask();
-  const [changedFileCount, setChangedFileCount] = createSignal(0);
-  // An empty notes box next to an empty file list still claimed half the
-  // column. Until either has content the strip stays thin and the AI terminal
-  // takes the space; a user drag on the divider pins a size as usual.
-  const topStripEmpty = createMemo(
-    () => !props.task.notes?.trim() && (isGitUnavailable() || changedFileCount() === 0),
-  );
 
   // Heavy components are created once and reused in both stack and split
   // layouts. Solid owns their reactive scope under TaskPanel (not under the
@@ -728,72 +770,107 @@ export function TaskPanel(props: TaskPanelProps) {
   // The task body left of the canvas. Created once so toggling the canvas
   // column reparents it instead of remounting the terminal.
   const mainEl = (
-    <div ref={mainRef} style={{ height: '100%', 'min-height': '0' }}>
-      {/* Layout flips swap containers; the terminal, composer, notes, and canvas stay mounted. */}
-      <Show
-        when={useSplit()}
-        fallback={
+    <div
+      ref={mainRef}
+      style={{ height: '100%', 'min-height': '0', display: 'flex', 'flex-direction': 'column' }}
+      onFocusIn={(event) => {
+        if (event.target.closest('.task-notes-body, .task-changed-files-section')) {
+          setEmptySupportExpanded(true);
+        }
+      }}
+    >
+      <Show when={canCollapseSupport()}>
+        <button
+          type="button"
+          class="task-support-toggle"
+          aria-expanded={!supportCollapsed()}
+          onClick={() => {
+            if (supportCollapsed()) {
+              setEmptySupportExpanded(true);
+              setTaskFocusedPanel(props.task.id, 'notes');
+            } else {
+              batch(() => {
+                setTaskFocusedPanel(props.task.id, 'ai-terminal');
+                setEmptySupportExpanded(false);
+              });
+            }
+          }}
+        >
+          <span aria-hidden="true">{supportCollapsed() ? '›' : '⌄'}</span>
+          {supportCollapsed()
+            ? isGitUnavailable()
+              ? 'Notes'
+              : 'Notes & files'
+            : 'Hide empty panels'}
+        </button>
+      </Show>
+      <div style={{ flex: '1', 'min-height': '0' }}>
+        {/* Layout flips swap containers; the terminal, composer, notes, and canvas stay mounted. */}
+        <Show
+          when={useSplit()}
+          fallback={
+            <ResizablePanel
+              direction="vertical"
+              persistKey={`task:${props.task.id}`}
+              absorberIds={topStripEmpty() ? ['ai-terminal'] : ['notes-files', 'ai-terminal']}
+              children={[
+                ...(supportCollapsed() ? [] : [notesAndFilesChild]),
+                shellSectionChild,
+                aiTerminalChild,
+                ...(props.task.stepsEnabled ? [stepsSectionChild] : []),
+                ...(!isAgentChat(props.task, firstAgentId()) &&
+                (store.showPromptInput || autoSendChildUpdates())
+                  ? [promptInputChild]
+                  : []),
+              ]}
+            />
+          }
+        >
           <ResizablePanel
-            direction="vertical"
-            persistKey={`task:${props.task.id}`}
-            absorberIds={topStripEmpty() ? ['ai-terminal'] : ['notes-files', 'ai-terminal']}
+            direction="horizontal"
+            persistKey={`task:${props.task.id}:split-cols`}
+            absorberIds={['left-col']}
             children={[
-              notesAndFilesChild,
-              shellSectionChild,
-              aiTerminalChild,
-              ...(props.task.stepsEnabled ? [stepsSectionChild] : []),
-              ...(!isAgentChat(props.task, firstAgentId()) &&
-              (store.showPromptInput || autoSendChildUpdates())
-                ? [promptInputChild]
-                : []),
+              {
+                id: 'left-col',
+                minSize: 420,
+                content: () => (
+                  <ResizablePanel
+                    direction="vertical"
+                    persistKey={`task:${props.task.id}:split-left`}
+                    absorberIds={['ai-terminal']}
+                    children={[
+                      aiTerminalChild,
+                      ...(!isAgentChat(props.task, firstAgentId()) &&
+                      (store.showPromptInput || autoSendChildUpdates())
+                        ? [promptInputChild]
+                        : []),
+                    ]}
+                  />
+                ),
+              },
+              {
+                id: 'right-col',
+                minSize: 360,
+                defaultSize: 420,
+                content: () => (
+                  <ResizablePanel
+                    direction="vertical"
+                    persistKey={`task:${props.task.id}:split-right`}
+                    absorberIds={['shell-section']}
+                    children={[
+                      ...(isGitUnavailable() ? [] : [changedFilesChild]),
+                      notesChild,
+                      ...(props.task.stepsEnabled ? [stepsSectionChild] : []),
+                      shellSectionChild,
+                    ]}
+                  />
+                ),
+              },
             ]}
           />
-        }
-      >
-        <ResizablePanel
-          direction="horizontal"
-          persistKey={`task:${props.task.id}:split-cols`}
-          absorberIds={['left-col']}
-          children={[
-            {
-              id: 'left-col',
-              minSize: 420,
-              content: () => (
-                <ResizablePanel
-                  direction="vertical"
-                  persistKey={`task:${props.task.id}:split-left`}
-                  absorberIds={['ai-terminal']}
-                  children={[
-                    aiTerminalChild,
-                    ...(!isAgentChat(props.task, firstAgentId()) &&
-                    (store.showPromptInput || autoSendChildUpdates())
-                      ? [promptInputChild]
-                      : []),
-                  ]}
-                />
-              ),
-            },
-            {
-              id: 'right-col',
-              minSize: 360,
-              defaultSize: 420,
-              content: () => (
-                <ResizablePanel
-                  direction="vertical"
-                  persistKey={`task:${props.task.id}:split-right`}
-                  absorberIds={['shell-section']}
-                  children={[
-                    ...(isGitUnavailable() ? [] : [changedFilesChild]),
-                    notesChild,
-                    ...(props.task.stepsEnabled ? [stepsSectionChild] : []),
-                    shellSectionChild,
-                  ]}
-                />
-              ),
-            },
-          ]}
-        />
-      </Show>
+        </Show>
+      </div>
     </div>
   );
   const mainChild: PanelChild = {
