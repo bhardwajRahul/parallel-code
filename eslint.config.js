@@ -95,6 +95,14 @@ export default [
     },
   },
 
+  // Showcase video scripts are command-line tools that report progress on stdout.
+  {
+    files: ['scripts/showcase/**/*.ts'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+
   // CJS files (electron/preload.cjs): allow require(), CommonJS globals
   {
     files: ['**/*.cjs'],

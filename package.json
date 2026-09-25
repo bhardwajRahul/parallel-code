@@ -31,6 +31,7 @@
     "test:client": "vitest run --config vitest.client.config.ts",
     "test:coordinator-pty": "RUN_COORDINATOR_PTY_TEST=1 vitest run electron/mcp/coordinator-real-pty.integration.test.ts",
     "test:coverage": "vitest run --coverage",
+    "showcase:capture": "npm run compile && npm run build:mcp && npm run build:frontend && npm run build:remote && playwright test --config scripts/showcase/playwright.config.ts",
     "test:ci": "vitest run --coverage && npm run test:client",
     "check:coordinator-log": "node scripts/check-coordinator-run.mjs",
     "check": "npm run compile && npm run typecheck && npm run lint && npm run format:check",
@@ -79,6 +80,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.3",
+    "@playwright/test": "^1.63.0",
     "@types/d3-hierarchy": "^3.1.7",
     "@types/d3-selection": "^3.0.11",
     "@types/d3-zoom": "^3.0.8",
