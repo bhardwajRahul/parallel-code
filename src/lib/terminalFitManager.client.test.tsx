@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 let manager: typeof import('./terminalFitManager');
 let frames: Map<number, FrameRequestCallback>;
 let nextFrame: number;
+let reportIntersection: (target: Element, isIntersecting: boolean) => void;
+let reportResize: (target: Element) => void;
 
 function frame() {
   const callbacks = [...frames.values()];
@@ -22,6 +24,31 @@ beforeEach(async () => {
     return nextFrame;
   });
   vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id));
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      constructor(callback: IntersectionObserverCallback) {
+        reportIntersection = (target, isIntersecting) =>
+          callback(
+            [{ target, isIntersecting } as IntersectionObserverEntry],
+            this as unknown as IntersectionObserver,
+          );
+      }
+      observe() {}
+      unobserve() {}
+    },
+  );
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        reportResize = (target) =>
+          callback([{ target } as ResizeObserverEntry], this as unknown as ResizeObserver);
+      }
+      observe() {}
+      unobserve() {}
+    },
+  );
   manager = await import('./terminalFitManager');
 });
 
@@ -93,5 +120,68 @@ describe('terminal unregistration', () => {
 
     expect(vi.getTimerCount()).toBe(0);
     expect(frames.size).toBe(0);
+  });
+});
+
+describe('deferred resizes', () => {
+  function longTerminal() {
+    const container = document.createElement('div');
+    const term = {
+      rows: 20,
+      cols: 80,
+      buffer: { active: { viewportY: 0, baseY: 0 }, normal: { length: 1000 } },
+      resize: vi.fn((cols: number, rows: number) => {
+        term.cols = cols;
+        term.rows = rows;
+      }),
+      scrollToLine: vi.fn(),
+    };
+    const addon = {
+      proposeDimensions: () => ({ cols: 100, rows: 30 }),
+      fit: vi.fn(() => term.resize(100, 30)),
+    };
+    manager.registerTerminal(
+      'test',
+      container,
+      addon as unknown as FitAddon,
+      term as unknown as Terminal,
+    );
+    return { container, term, addon };
+  }
+
+  it('applies rows at once but reflows columns only once resizing settles', () => {
+    const { container, term, addon } = longTerminal();
+    vi.advanceTimersByTime(150);
+    reportResize(container);
+    frame();
+    expect(addon.fit).not.toHaveBeenCalled();
+    expect(term).toMatchObject({ cols: 80, rows: 30 });
+
+    vi.advanceTimersByTime(150);
+    frame();
+    expect(addon.fit).toHaveBeenCalledTimes(1);
+    expect(term).toMatchObject({ cols: 100, rows: 30 });
+  });
+
+  it('fits in full on the next frame when asked to directly', () => {
+    const { addon } = longTerminal();
+    vi.advanceTimersByTime(150);
+    manager.markDirty('test');
+    frame();
+    expect(addon.fit).toHaveBeenCalledTimes(1);
+  });
+
+  it('fits a pane in full as soon as it comes into view', () => {
+    const { container, addon } = longTerminal();
+    reportIntersection(container, false);
+    reportResize(container);
+    vi.advanceTimersByTime(150);
+    frame();
+    expect(addon.fit).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(150);
+    reportIntersection(container, true);
+    frame();
+    expect(addon.fit).toHaveBeenCalledTimes(1);
   });
 });
