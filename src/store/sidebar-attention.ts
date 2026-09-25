@@ -1,5 +1,6 @@
 import { batch } from 'solid-js';
 import { store } from './core';
+import { isTaskBackgrounded } from './background-tasks';
 import { unfocusSidebar } from './focus';
 import {
   agentIdFromAiTerminalPanel,
@@ -57,7 +58,7 @@ export function computeNeedsInputTasks(): NeedsInputEntry[] {
   for (const taskId of [...store.taskOrder, ...store.collapsedTaskOrder]) {
     if (seen.has(taskId)) continue;
     seen.add(taskId);
-    if (!store.tasks[taskId]) continue;
+    if (!store.tasks[taskId] || isTaskBackgrounded(taskId)) continue;
     const question = getTaskOpenQuestion(taskId);
     if (!question) continue;
     entries.push({

@@ -6,6 +6,11 @@ import { invoke } from '../lib/ipc';
 import { store, setStore } from '../store/core';
 import { setActiveTask, toggleNewTaskPanel } from '../store/navigation';
 import { setTaskFocusedPanel } from '../store/focused-panel';
+import {
+  bringTaskToFront,
+  sendTaskToBack,
+  startBackgroundTaskWatcher,
+} from '../store/background-tasks';
 import { createTask } from '../store/tasks';
 import { deletePanelUserSize, getPanelUserSize, setPanelUserSize } from '../store/ui';
 import { TilingLayout } from './TilingLayout';
@@ -81,6 +86,85 @@ async function openDraft() {
   assert(prompt);
   return prompt;
 }
+
+it('keeps the active tile visible when a background task returns ahead of it', async () => {
+  for (const id of ['returning', 'current', 'other']) {
+    setStore('tasks', id, {
+      id,
+      name: id,
+      projectId: 'project',
+      branchName: id,
+      worktreePath: `/repo/${id}`,
+      gitIsolation: 'worktree',
+      agentIds: [],
+      shellAgentIds: [],
+      notes: '',
+      lastPrompt: '',
+    });
+  }
+  setStore('taskOrder', ['returning', 'current', 'other']);
+  setActiveTask('returning');
+  const stop = startBackgroundTaskWatcher();
+  sendTaskToBack('returning');
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  const current = container.querySelector<HTMLElement>('[data-task-id="current"]');
+  const returning = container.querySelector<HTMLElement>('[data-task-id="returning"]');
+  const strip = container.querySelector<HTMLElement>('[data-tiling-strip]');
+  assert(current && returning && strip);
+  Object.defineProperty(strip, 'clientWidth', { configurable: true, value: 800 });
+  Object.defineProperty(strip, 'scrollWidth', { configurable: true, value: 1800 });
+  Object.defineProperty(current, 'offsetWidth', { configurable: true, value: 600 });
+  const currentScroll = vi.spyOn(current, 'scrollIntoView');
+  const returningScroll = vi.spyOn(returning, 'scrollIntoView');
+  try {
+    setStore('tasks', 'returning', 'needsReview', true);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(store.taskOrder).toEqual(['returning', 'current', 'other']);
+    expect(store.activeTaskId).toBe('current');
+    expect(currentScroll).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'instant' }));
+    expect(returningScroll).not.toHaveBeenCalled();
+  } finally {
+    stop();
+    bringTaskToFront('returning');
+    currentScroll.mockRestore();
+    returningScroll.mockRestore();
+  }
+});
+
+it('keeps focus inside a background tile that moves forward when selected', async () => {
+  for (const id of ['current', 'returning']) {
+    setStore('tasks', id, {
+      id,
+      name: id,
+      projectId: 'project',
+      branchName: id,
+      worktreePath: `/repo/${id}`,
+      gitIsolation: 'worktree',
+      agentIds: [],
+      shellAgentIds: [],
+      notes: '',
+      lastPrompt: '',
+    });
+  }
+  setStore('taskOrder', ['returning', 'current']);
+  setActiveTask('returning');
+  const stop = startBackgroundTaskWatcher();
+  try {
+    sendTaskToBack('returning');
+    const tile = container.querySelector<HTMLElement>('[data-task-id="returning"]');
+    assert(tile);
+    // Stands in for the terminal the user clicks, which selects its task on focus.
+    const input = document.createElement('textarea');
+    tile.append(input);
+    input.focus();
+    setActiveTask('returning');
+    expect(store.taskOrder).toEqual(['returning', 'current']);
+    await Promise.resolve();
+    expect(document.activeElement).toBe(input);
+  } finally {
+    stop();
+  }
+});
 
 describe('inline task creation', () => {
   it('hides add controls until the first task exists, including during its draft', async () => {

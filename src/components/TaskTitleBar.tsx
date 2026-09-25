@@ -31,6 +31,7 @@ import { getTaskDockerBadgeLabel } from '../lib/docker';
 import { displayTaskNameFromPrompt, shouldUsePromptDerivedTaskName } from '../lib/clean-task-name';
 import type { Task } from '../store/types';
 import { isLandedTaskState } from '../store/landing';
+import { bringTaskToFront, isTaskBackgrounded, sendTaskToBack } from '../store/background-tasks';
 
 // Kinds without an entry stay silent: a configured-but-never-run command on
 // every task would be noise, and cancelled runs carry no signal.
@@ -200,6 +201,9 @@ export function TaskTitleBar(props: TaskTitleBarProps) {
         </Show>
         <Show when={props.task.externalWorktree}>
           <span style={badgeStyle(theme.accent)}>Imported</span>
+        </Show>
+        <Show when={isTaskBackgrounded(props.task.id)}>
+          <span style={badgeStyle(theme.fgMuted)}>Background</span>
         </Show>
         <Show when={props.task.needsReview}>
           <span
@@ -388,6 +392,39 @@ export function TaskTitleBar(props: TaskTitleBarProps) {
           />
         </div>
         <div class="task-action-group" role="group" aria-label="Task actions">
+          <IconButton
+            icon={
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M3 3h10M3 13h10" />
+                <path
+                  d={
+                    isTaskBackgrounded(props.task.id)
+                      ? 'M8 11V5m0 0L5.5 7.5M8 5l2.5 2.5'
+                      : 'M8 5v6m0 0L5.5 8.5M8 11l2.5-2.5'
+                  }
+                />
+              </svg>
+            }
+            onClick={() =>
+              isTaskBackgrounded(props.task.id)
+                ? bringTaskToFront(props.task.id)
+                : sendTaskToBack(props.task.id)
+            }
+            title={
+              isTaskBackgrounded(props.task.id)
+                ? 'Bring task to front'
+                : 'Send task to back until new activity'
+            }
+          />
           <Show when={!props.task.coordinatorMode && !props.task.delegationParent}>
             <IconButton
               icon={

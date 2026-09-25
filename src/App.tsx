@@ -101,6 +101,7 @@ import { dismissPinnedBubbles } from './documents/workspace-ui';
 import { resetForNewMatch } from './arena/store';
 import { startDesktopNotificationWatcher } from './store/desktopNotifications';
 import { startSuperProductivitySync, startSpOpenListener } from './store/store';
+import { startBackgroundTaskWatcher } from './store/background-tasks';
 import { startPrChecksSubscription } from './store/pr-checks';
 import { startUpdateSubscription } from './store/updates';
 import { startRemoteTaskHandlers } from './store/remoteTaskHandler';
@@ -565,6 +566,7 @@ function App() {
     const stopNotificationWatcher = startDesktopNotificationWatcher(windowFocused);
     const stopSuperProductivitySync = startSuperProductivitySync(windowFocused);
     const stopSpOpenListener = startSpOpenListener();
+    const stopBackgroundTaskWatcher = startBackgroundTaskWatcher();
     const stopPrChecksSubscription = startPrChecksSubscription();
     const stopUpdateSubscription = startUpdateSubscription();
     const stopRemoteTaskHandlers = startRemoteTaskHandlers();
@@ -774,6 +776,7 @@ function App() {
       stopNotificationWatcher();
       stopSuperProductivitySync();
       stopSpOpenListener();
+      stopBackgroundTaskWatcher();
       stopPrChecksSubscription();
       stopUpdateSubscription();
       stopRemoteTaskHandlers();

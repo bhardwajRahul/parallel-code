@@ -58,6 +58,7 @@ import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import type { ImportableWorktree } from '../ipc/types';
 import { shouldAnimateTaskAppearance } from '../lib/reducedMotion';
+import { isTaskBackgrounded } from '../store/background-tasks';
 
 const DRAG_THRESHOLD = 5;
 const SIDEBAR_DEFAULT_WIDTH = 240;
@@ -154,15 +155,29 @@ function DirectBranchBadge(props: { branchName: string }) {
 /** Task name, wrapping to at most two lines so long names stay readable in a
  *  narrow sidebar. Full name always available as a tooltip. Bold, not badged,
  *  when an agent finished while the task was off screen. */
-function TaskName(props: { name: string; unread?: boolean }) {
+function TaskName(props: { name: string; unread?: boolean; backgrounded?: boolean }) {
   return (
-    <span
-      class="task-item-name"
-      title={props.name}
-      style={{ 'font-weight': props.unread ? '700' : undefined }}
-    >
-      {props.name}
-    </span>
+    <>
+      <span
+        class="task-item-name"
+        title={props.name}
+        style={{ 'font-weight': props.unread ? '700' : undefined }}
+      >
+        {props.name}
+      </span>
+      <Show when={props.backgrounded}>
+        <span
+          title="Sent to back until new activity"
+          style={{
+            'font-size': sf(10),
+            color: theme.fgSubtle,
+            'flex-shrink': '0',
+          }}
+        >
+          Background
+        </span>
+      </Show>
+    </>
   );
 }
 
@@ -1233,7 +1248,11 @@ function CoordinatorFolder(props: TaskEntryProps) {
                 size="sm"
                 attention={getTaskAttentionState(props.taskId)}
               />
-              <TaskName name={t().name} unread={isTaskUnread(props.taskId)} />
+              <TaskName
+                name={t().name}
+                unread={isTaskUnread(props.taskId)}
+                backgrounded={isTaskBackgrounded(props.taskId)}
+              />
               <Show when={childCount() > 0}>
                 <span
                   style={{
@@ -1443,7 +1462,11 @@ function TaskRow(props: TaskRowProps) {
                 size="sm"
                 attention={getTaskAttentionState(props.taskId)}
               />
-              <TaskName name={t().name} unread={isTaskUnread(props.taskId)} />
+              <TaskName
+                name={t().name}
+                unread={isTaskUnread(props.taskId)}
+                backgrounded={isTaskBackgrounded(props.taskId)}
+              />
               <Show when={t().gitIsolation === 'direct'}>
                 <DirectBranchBadge branchName={t().branchName} />
               </Show>
