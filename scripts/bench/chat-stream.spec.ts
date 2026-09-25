@@ -7,7 +7,9 @@
  * transcript entries, the cheapest candidate fix.
  *
  * Sizes: BENCH_SIZES=100,1000,3000 (default); BENCH_TRACE=1 adds a trace
- * breakdown. Build the app first, as `npm run showcase:capture` does, then run
+ * breakdown and BENCH_PROFILE=1 a JavaScript profile. Measured phases must not
+ * wait on Playwright locators: each retry walks the whole transcript and skewed
+ * earlier results by seconds. Build the app first, as `npm run showcase:capture` does, then run
  * `npx playwright test --config scripts/bench/playwright.config.ts`.
  */
 import { randomUUID } from 'node:crypto';
@@ -16,13 +18,16 @@ import * as path from 'node:path';
 import { type CDPSession, expect, type Page, test } from '@playwright/test';
 import type { DemoChat } from '../showcase/chats';
 import type { DemoTask } from '../showcase/demo-workspace';
-import { launchShowcaseApp, sendChatMessage, taskColumn } from '../showcase/electron-app';
+import { launchShowcaseApp, taskColumn } from '../showcase/electron-app';
+import { startProfile, summarizeProfile } from './profile-summary';
 import { startTrace, summarizeTrace } from './trace-summary';
 
 const SIZES = (process.env.BENCH_SIZES ?? '100,1000,3000').split(',').map(Number);
 const STREAM_CHUNKS = 500;
 // BENCH_TRACE=1 records a Chrome trace of each stream and reports where the time went.
 const TRACE = process.env.BENCH_TRACE === '1';
+// BENCH_PROFILE=1 samples the renderer's JavaScript during each stream.
+const PROFILE = process.env.BENCH_PROFILE === '1';
 // Resuming a long history is slow; how slow is one of the results.
 const RESUME_TIMEOUT_MS = 240_000;
 const OUT_DIR = path.join(import.meta.dirname, '..', '..', '.tmp', 'bench');
@@ -120,6 +125,21 @@ const frameStats = (intervals: number[]) => ({
   slowFrames: intervals.filter((interval) => interval > 50).length,
 });
 
+/**
+ * Waits until the transcript's last entry contains `text`, checking in the page
+ * every 250 ms. A retrying Playwright locator would walk the whole transcript's
+ * text and accessibility tree on every try, loading the renderer being measured.
+ */
+const waitForLastEntry = (page: Page, text: string, timeout: number) =>
+  page.waitForFunction(
+    (wanted) =>
+      document
+        .querySelector('[data-task-id="task-bench"] .chat-transcript > :last-child')
+        ?.textContent?.includes(wanted) ?? false,
+    text,
+    { polling: 250, timeout },
+  );
+
 type FrameWindow = Window & { __benchFrames?: number[]; __benchStop?: boolean };
 const startFrames = (page: Page): Promise<void> =>
   page.evaluate(() => {
@@ -179,6 +199,8 @@ type Row = { items: number; variant: Variant } & Record<string, number | string>
 const rows: Row[] = [];
 /** Renderer main-thread self time by trace event, in ms, per run. */
 const traces: Record<string, Record<string, number>> = {};
+/** Renderer JavaScript self time by function, in ms, per run. */
+const profiles: Record<string, Record<string, number>> = {};
 
 test.describe.configure({ mode: 'serial' });
 
@@ -196,27 +218,34 @@ for (const size of SIZES) {
         // Resume runs before the variant's CSS applies, so it measures the app as shipped.
         const launched = Date.now();
         const [resumeBefore, resumeCpuBefore] = [await readMetrics(cdp), await mainCpuMs(app)];
-        await expect(column.getByText('History end.')).toBeAttached({
-          timeout: RESUME_TIMEOUT_MS,
-        });
+        await waitForLastEntry(page, 'History end.', RESUME_TIMEOUT_MS);
         const resumeMs = Date.now() - launched;
         const resumeMainCpuMs = Math.round((await mainCpuMs(app)) - resumeCpuBefore);
         const resume = rendererDelta(resumeBefore, await readMetrics(cdp));
         if (VARIANTS[variant]) await page.addStyleTag({ content: VARIANTS[variant] });
         const items = await column.locator('.chat-transcript > *').count();
+        // Resolved before measuring: finding them by role walks the whole transcript.
+        await expect(column.getByRole('option', { name: 'Sonnet 5' })).toBeAttached();
+        const composer = column.getByRole('textbox', { name: 'Message Claude' });
+        await composer.fill('Go');
+        const input = await composer.elementHandle();
+        if (!input) throw new Error('The composer is gone');
 
         const before = await readMetrics(cdp);
         const cpuBefore = await mainCpuMs(app);
         const stopTrace = TRACE ? await startTrace(cdp) : undefined;
+        const stopProfile = PROFILE ? await startProfile(cdp) : undefined;
         await startFrames(page);
         const started = Date.now();
-        await sendChatMessage(page, 'bench', 'Go');
-        await expect(column.locator('.chat-answer', { hasText: 'Stream end.' })).toBeAttached();
+        await input.press('Enter');
+        await waitForLastEntry(page, 'Stream end.', 120_000);
         const wallMs = Date.now() - started;
         const streamFrames = await stopFrames(page);
         const afterStream = await readMetrics(cdp);
         const cpuAfter = await mainCpuMs(app);
         if (stopTrace) traces[`${size} items, ${variant}`] = summarizeTrace(await stopTrace());
+        if (stopProfile)
+          profiles[`${size} items, ${variant}`] = summarizeProfile(await stopProfile());
 
         const scroll = await scrollToTop(page);
         const afterScroll = await readMetrics(cdp);
@@ -259,10 +288,14 @@ test.afterAll(() => {
     OUT_DIR,
     `chat-stream-${new Date().toISOString().replace(/:/g, '-')}.json`,
   );
-  fs.writeFileSync(file, JSON.stringify({ rows, traces }, null, 2));
+  fs.writeFileSync(file, JSON.stringify({ rows, traces, profiles }, null, 2));
   console.table(rows);
   for (const [run, top] of Object.entries(traces)) {
     console.log(`\n${run}: renderer main thread, top self time (ms)`);
+    console.table(top);
+  }
+  for (const [run, top] of Object.entries(profiles)) {
+    console.log(`\n${run}: renderer JavaScript, top self time (ms)`);
     console.table(top);
   }
   console.log(`Results: ${file}`);
