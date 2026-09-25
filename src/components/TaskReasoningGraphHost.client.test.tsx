@@ -952,6 +952,43 @@ it('queues a question to a busy agent and sends it once when the agent is ready'
   expect(container.textContent).not.toContain('1 request queued');
 });
 
+/** Queues a question behind a busy agent; the composer closes once the request waits. */
+async function queueQuestion(question: string) {
+  setIdle(false);
+  await mountLiveNote();
+  button('Ask agent').click();
+  editField('Question for agent', question);
+  submitQuestion();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(container.textContent).toContain('1 request queued');
+}
+const questionBox = () =>
+  container.querySelector<HTMLTextAreaElement>('[aria-label="Question for agent"]')?.value;
+
+it('reports a queued question that fails to send and gives it back for a retry', async () => {
+  await queueQuestion('Please check the evidence');
+  vi.mocked(sendPrompt).mockRejectedValue(new Error('Agent terminal unavailable'));
+  setIdle(true);
+  await vi.advanceTimersByTimeAsync(250);
+  expect(sendPrompt).toHaveBeenCalledOnce();
+  expect(showNotification).toHaveBeenCalledWith(
+    expect.stringContaining('Agent terminal unavailable'),
+  );
+  expect(container.textContent).toContain('Agent terminal unavailable');
+  button('Ask agent').click();
+  expect(questionBox()).toBe('Please check the evidence');
+});
+
+it('gives a queued question back when the agent exits before it is sent', async () => {
+  await queueQuestion('Please check the evidence');
+  setAgentStatus('exited');
+  expect(showNotification).toHaveBeenCalledWith(
+    'The agent stopped before your question could be sent.',
+  );
+  button('Ask agent').click();
+  expect(questionBox()).toBe('Please check the evidence');
+});
+
 it('blocks questions when the session has no canvas tools', async () => {
   setCanvasTools(false);
   await mountLiveNote();
@@ -1168,6 +1205,22 @@ it('reports idle time once a live map has been quiet for ten minutes', async () 
   expect(statusDetails()).toContain('Live · Test agent');
   await vi.advanceTimersByTimeAsync(2 * 60_000);
   expect(statusDetails()).toContain('Live · idle 11 m · Revision 2');
+});
+
+it('reports idle time as soon as a hidden live map is shown again', async () => {
+  vi.mocked(invoke).mockResolvedValue(feed(encode(2)));
+  const { setVisible } = mount();
+  await vi.advanceTimersByTimeAsync(0);
+  recordAgentPublication({
+    taskId: 'task',
+    agentId: 'agent',
+    generation: store.agents.agent.generation,
+  });
+  setVisible(false);
+  await vi.advanceTimersByTimeAsync(11 * 60_000);
+  setVisible(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(statusDetails()).toContain('Live · idle 11 m');
 });
 
 it('opens sources: URLs externally, markdown as a canvas document, other files in the editor', async () => {
