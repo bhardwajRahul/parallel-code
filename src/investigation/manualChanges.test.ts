@@ -36,3 +36,14 @@ it('reports edited relations and explanations, addresses the mind map, and keys 
   expect(manualChangesDigest(saved)).not.toBe(manualChangesDigest(graph));
   expect(manualChangesDigest(saved)).toBe(manualChangesDigest(structuredClone(saved)));
 });
+
+it('changes the digest for an edit past the detail the prompt quotes', () => {
+  const graph = makeFixture().snapshots[1];
+  const long = 'a'.repeat(1000);
+  const sent = applyMapOperations(graph, [{ type: 'update', id: 'G1', changes: { detail: long } }]);
+  const edited = applyMapOperations(sent, [
+    { type: 'update', id: 'G1', changes: { detail: `${long} and more` } },
+  ]);
+  expect(manualChangesDigest(edited)).not.toBe(manualChangesDigest(sent));
+  expect(manualChangesPrompt({ taskId: 'task', snapshot: edited })).not.toContain('and more');
+});

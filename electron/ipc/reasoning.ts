@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   reasoningFeedPath,
   REASONING_MAX_BYTES,
+  REASONING_MAX_UPDATES,
   type ReasoningFeedRead,
 } from '../shared/reasoning.js';
 import { validatePath } from './validate.js';
@@ -277,7 +278,7 @@ export function appendReasoningUpdate(
     const line = JSON.stringify(event) + '\n';
     if (
       Buffer.byteLength(line) + (fresh ? 0 : size) > REASONING_MAX_BYTES ||
-      next.updates.length > 1000
+      next.updates.length > REASONING_MAX_UPDATES
     )
       throw new Error('Graph history is full; read the current revision and start a new run.');
     const snapshot = next.snapshots[next.snapshots.length - 1];

@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { existsSync, createReadStream, readFileSync, rmSync } from 'fs';
 import { join, resolve, relative, extname, isAbsolute } from 'path';
 import { WebSocketServer, WebSocket } from 'ws';
-import { randomBytes, randomInt, timingSafeEqual, createHash } from 'crypto';
+import { randomBytes, randomInt, timingSafeEqual, createHash, createHmac } from 'crypto';
 import { networkInterfaces } from 'os';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { warn } from '../log.js';
@@ -266,6 +266,9 @@ interface RemoteServer {
   enableRememberedDevices: (filePath: string) => void;
   /** Revoke remembered phones while the server keeps running for canvas agents. */
   forgetRememberedDevices: () => void;
+  /** The token a coordinator's agent authenticates with; it is valid only with that task ID. */
+  coordinatorTokenFor: (coordinatorTaskId: string) => string;
+  /** App-wide coordinator credential; main process only, never written into an agent config. */
   token: string;
   subtaskToken: string;
   mobileToken: string;
@@ -1061,6 +1064,21 @@ export function startRemoteServer(opts: {
     return classifyCandidate(extractRawToken(req));
   }
 
+  /** Each coordinator agent gets a token derived from the app secret and its own task ID. The
+   *  secret stays in the main process, so an agent cannot claim another coordinator's ID. */
+  function coordinatorTokenFor(coordinatorTaskId: string): string {
+    return createHmac('sha256', tokenBuf).update(coordinatorTaskId).digest('base64url');
+  }
+
+  /** Whether the bearer is the agent token issued to the coordinator its X-Coordinator-Id names. */
+  function isCoordinatorAgent(req: IncomingMessage, candidate: string | null): boolean {
+    const coordinatorId = req.headers['x-coordinator-id'];
+    if (typeof coordinatorId !== 'string' || !coordinatorId || !candidate) return false;
+    const expected = Buffer.from(coordinatorTokenFor(coordinatorId));
+    const buf = Buffer.from(candidate);
+    return buf.length === expected.length && timingSafeEqual(buf, expected);
+  }
+
   function generatePairingPin(): { pin: string; expiresAt: number } {
     if (stopping) throw new Error('Remote server is stopping');
     // 6-digit zero-padded PIN; single active PIN, short TTL, capped attempts.
@@ -1120,7 +1138,13 @@ export function startRemoteServer(opts: {
         res.end(JSON.stringify({ error: 'forbidden origin' }));
         return;
       }
-      const tokenClass = classifyToken(req);
+      const rawToken = extractRawToken(req);
+      // An agent's coordinator token proves its X-Coordinator-Id, so every coordinator check
+      // below may trust that header; the app-wide token never leaves the main process.
+      const coordinatorAgent = isCoordinatorAgent(req, rawToken);
+      const tokenClass: TokenClass | null = coordinatorAgent
+        ? 'coordinator'
+        : classifyCandidate(rawToken);
       if (tokenClass === null) {
         res.writeHead(401, { ...SECURITY_HEADERS, 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'unauthorized' }));
@@ -1350,6 +1374,15 @@ export function startRemoteServer(opts: {
 
         return jsonEnd(405, { error: 'method not allowed' });
       }
+
+      // Coordinator agents reach their own tasks and canvases, never other agents' terminals.
+      if (
+        coordinatorAgent &&
+        url.pathname !== '/api/tasks' &&
+        url.pathname !== '/api/wait-signal' &&
+        !url.pathname.startsWith('/api/tasks/')
+      )
+        return jsonEnd(403, { error: 'forbidden' });
 
       if (tokenClass === 'subtask') {
         const allowed =
@@ -1913,6 +1946,7 @@ export function startRemoteServer(opts: {
           : [],
       ),
     hasCanvasAgents: () => [...canvasAgents].some(canvasActive),
+    coordinatorTokenFor,
     token,
     subtaskToken,
     mobileToken,

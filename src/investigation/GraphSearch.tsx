@@ -22,6 +22,8 @@ export function GraphSearch<N extends MapNode>(props: {
     props.onPick(id);
   }
   function keydown(event: KeyboardEvent) {
+    // Enter and arrows pick and move among IME candidates until the composition ends.
+    if (event.isComposing) return;
     const count = results().length;
     if (event.key === 'ArrowDown' && count) {
       event.preventDefault();

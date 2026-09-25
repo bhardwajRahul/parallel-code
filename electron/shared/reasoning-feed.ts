@@ -1,4 +1,4 @@
-import { REASONING_MAX_BYTES } from './reasoning.js';
+import { REASONING_MAX_BYTES, REASONING_MAX_UPDATES } from './reasoning.js';
 import { graphObject, validGraphId, parseGraphOperations } from './graph.js';
 import { GRAPH_LIMITS } from './graph-limits.js';
 import {
@@ -82,7 +82,8 @@ export function parseReasoningFeed(
       throw new Error('Feed exceeds 1 MB');
     const lines = raw.split('\n');
     lines.pop();
-    if (lines.length > 1000) throw new Error('Feed exceeds 1000 updates; start a new run');
+    if (lines.length > REASONING_MAX_UPDATES)
+      throw new Error(`Feed exceeds ${REASONING_MAX_UPDATES} updates; start a new run`);
     for (const rawLine of lines) {
       line++;
       if (!rawLine.trim()) continue;

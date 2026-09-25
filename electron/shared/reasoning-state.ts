@@ -86,7 +86,9 @@ export function acceptUpdate(
         typeof link.rationale !== 'string',
     )
   )
-    throw new Error('Reasoning relations need a kind and rationale.');
+    throw new Error(
+      'Reasoning relations need a kind of supports, challenges or fits, and a rationale.',
+    );
   const ids = new Set(graph.records.map((node) => node.id));
   const activeId =
     update.activeId === undefined ? previous?.activeId : (update.activeId ?? undefined);

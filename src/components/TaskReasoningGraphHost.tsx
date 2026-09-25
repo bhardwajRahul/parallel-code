@@ -6,7 +6,7 @@ import { reasoningPrompt } from '../investigation/feed';
 import { recordTrail } from '../investigation/presentation';
 import type { InvestigationRecord, Snapshot } from '../investigation/state';
 import { normalizeReasoningProfile } from '../investigation/profiles';
-import { emptyWorkspace } from '../investigation/editing';
+import { emptyWorkspace, getDraft, updateDraft } from '../investigation/editing';
 import {
   store,
   sendPrompt,
@@ -53,6 +53,9 @@ interface Props {
 interface QueuedRequest {
   kind: 'activation' | 'ask' | 'changes';
   run: () => Promise<void>;
+  /** Puts back what queueing cleared, so a request that never went out can be retried.
+   *  Returns a sentence saying where it went, or nothing when it could not be put back. */
+  restore?: () => string | undefined;
 }
 
 const REQUEST_LABELS: Record<QueuedRequest['kind'], string> = {
@@ -100,12 +103,29 @@ export function TaskReasoningGraphHost(props: Props) {
   // Restarts keep the agent ID, so track the session generation and status explicitly.
   const agentSession = () => `${agent()?.status ?? ''}:${agent()?.generation ?? ''}`;
   const queued = () => request()?.kind === 'activation';
+  /** Gives back what an unsent request's queueing cleared, and tells the user where it went. */
+  function unsentMessage(unsent: QueuedRequest, message: string): string {
+    const note = unsent.restore?.();
+    if (!note) return message;
+    return `${/[.!?]$/.test(message) ? message : `${message}.`} ${note}`;
+  }
   function dropRequest(message: string) {
     const dropped = untrack(request);
     if (!dropped) return;
     setRequest(undefined);
+    const text = unsentMessage(dropped, message);
+    setConnectionError(text);
+    if (dropped.kind !== 'activation') showNotification(text);
+  }
+  /** Activation and manual changes report their own failures; this catches what they leave. */
+  function requestFailed(failed: QueuedRequest, error: unknown) {
+    if (disposed) return;
+    const message = unsentMessage(
+      failed,
+      `Could not send ${REQUEST_LABELS[failed.kind]}: ${errMessage(error)}`,
+    );
     setConnectionError(message);
-    if (dropped.kind !== 'activation') showNotification(message);
+    showNotification(message);
   }
   const stoppedMessage = (kind: QueuedRequest['kind']) =>
     kind === 'activation'
@@ -121,8 +141,9 @@ export function TaskReasoningGraphHost(props: Props) {
       setConnectionError('');
       setRequest(undefined);
       if (!previous || !dropped || previous[0] !== current) return;
-      setConnectionError(stoppedMessage(dropped.kind));
-      if (dropped.kind !== 'activation') showNotification(stoppedMessage(dropped.kind));
+      const message = unsentMessage(dropped, stoppedMessage(dropped.kind));
+      setConnectionError(message);
+      if (dropped.kind !== 'activation') showNotification(message);
     }),
   );
   // The workflow only shapes the activation prompt; a live connection survives the change.
@@ -192,7 +213,7 @@ export function TaskReasoningGraphHost(props: Props) {
       if (!keep) dropRequest(stoppedMessage(current.kind));
       else if (ready && !busy) {
         setRequest(undefined);
-        void current.run();
+        current.run().catch((error: unknown) => requestFailed(current, error));
       }
     }),
   );
@@ -247,12 +268,12 @@ export function TaskReasoningGraphHost(props: Props) {
     return current;
   }
   /** Sends now, or queues until the agent takes input. Resolves `queued` in the latter case. */
-  async function sendOrQueue(kind: QueuedRequest['kind'], run: () => Promise<void>) {
+  async function sendOrQueue(request: QueuedRequest) {
     if (!connectionBlocker()) {
-      await run();
+      await request.run();
       return undefined;
     }
-    setRequest({ kind, run });
+    setRequest(request);
     return 'queued' as const;
   }
   async function deliver(current: { taskId: string; agentId: string }, prompt: string) {
@@ -268,29 +289,32 @@ export function TaskReasoningGraphHost(props: Props) {
   function sendManualChanges() {
     const current = liveSource();
     const key = graphKey();
-    // eslint-disable-next-line solid/reactivity -- runs once from the queue; reads the graph at send time so edits made while queued belong in the request
-    return sendOrQueue('changes', async () => {
-      const snapshot = live.snapshot();
-      const prompt = manualChangesPrompt({
-        taskId: current.taskId,
-        canvas: 'reasoning',
-        runId: live.runId(),
-        revision: snapshot?.revision,
-        snapshot,
-      });
-      if (!prompt) return;
-      try {
-        await deliver(current, prompt);
-      } catch (error) {
-        if (!disposed && source() === current) setConnectionError(errMessage(error));
-        return;
-      }
-      // A new run while queued has its own workspace; do not replace it with the old key.
-      if (disposed || source() !== current || graphKey() !== key) return;
-      setTaskReasoningWorkspace(props.taskId, key, {
-        ...(workspace() ?? emptyWorkspace()),
-        sentChanges: manualChangesDigest(snapshot),
-      });
+    return sendOrQueue({
+      kind: 'changes',
+      // Reads the graph at send time so edits made while queued belong in the request.
+      run: async () => {
+        const snapshot = live.snapshot();
+        const prompt = manualChangesPrompt({
+          taskId: current.taskId,
+          canvas: 'reasoning',
+          runId: live.runId(),
+          revision: snapshot?.revision,
+          snapshot,
+        });
+        if (!prompt) return;
+        try {
+          await deliver(current, prompt);
+        } catch (error) {
+          if (!disposed && source() === current) setConnectionError(errMessage(error));
+          return;
+        }
+        // A new run while queued has its own workspace; do not replace it with the old key.
+        if (disposed || source() !== current || graphKey() !== key) return;
+        setTaskReasoningWorkspace(props.taskId, key, {
+          ...(workspace() ?? emptyWorkspace()),
+          sentChanges: manualChangesDigest(snapshot),
+        });
+      },
     });
   }
   const changesToSend = () => {
@@ -306,8 +330,30 @@ export function TaskReasoningGraphHost(props: Props) {
     const snapshot = live.snapshot();
     if (!snapshot) throw new Error('No live agent report available.');
     const prompt = questionPrompt(snapshot, live.runId(), { note, question, viewedRevision });
-    // eslint-disable-next-line solid/reactivity -- runs once from the queue with the prompt built above
-    return sendOrQueue('ask', () => deliver(current, prompt));
+    const key = graphKey();
+    return sendOrQueue({
+      kind: 'ask',
+      run: () => deliver(current, prompt),
+      restore: () => restoreQuestion(key, note.id, question),
+    });
+  }
+  /** The composer clears a question once it is queued; give it back if it never went out. */
+  function restoreQuestion(key: string, id: string, question: string): string | undefined {
+    // A new run has its own drafts, and a question typed since is the newer intent.
+    if (disposed || graphKey() !== key) return;
+    const current = workspace() ?? emptyWorkspace();
+    const draft = getDraft(current, id);
+    if (draft?.question) return;
+    // Saving or discarding the node's text drops a draft with no question; rebuild it from the node.
+    const record = live.snapshot()?.records.find((node) => node.id === id);
+    const text = draft ?? (record && { title: record.title, detail: record.detail });
+    if (!text) return;
+    setTaskReasoningWorkspace(
+      props.taskId,
+      key,
+      updateDraft(current, id, { ...text, base: draft?.base ?? text, question }),
+    );
+    return 'It’s back in the node’s question box.';
   }
   /** The inspector opens URLs itself and shows any error inline; file paths need the task. */
   async function openSource(target: GraphSource) {
@@ -398,6 +444,8 @@ export function TaskReasoningGraphHost(props: Props) {
   const [now, setNow] = createSignal(Date.now());
   createEffect(() => {
     if (!connected() || !props.visible) return;
+    // The clock stops while hidden; catch up on showing so idle time is not a stale reading.
+    setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 60_000);
     onCleanup(() => clearInterval(timer));
   });

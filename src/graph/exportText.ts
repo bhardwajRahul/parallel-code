@@ -39,9 +39,10 @@ export function graphToMarkdown(document: GraphDocument, heading?: string): stri
   return lines.join('\n') + '\n';
 }
 
-/** Mermaid entity codes; a bare `<` would otherwise be read as HTML inside the label. */
+/** Mermaid entity codes; a bare `<` would otherwise be read as HTML inside the label, and a
+ *  bare `|` would end an edge label early and let the rest parse as diagram syntax. */
 const mermaidText = (text: string) =>
-  oneLine(text.replace(/[#"<>]/g, (char) => `#${char.charCodeAt(0)};`));
+  oneLine(text.replace(/[#"<>|]/g, (char) => `#${char.charCodeAt(0)};`));
 
 /**
  * Flowchart with the tree as plain arrows and links as labelled arrows; challenges are dashed.

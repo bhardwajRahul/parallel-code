@@ -1,9 +1,12 @@
 import type { GraphDocument } from '../../electron/shared/graph';
 
 type ManualChangesCanvas = 'mindmap' | 'reasoning';
+/** The prompt quotes this much of each edited detail; `reasoning_read` has the rest. */
+const PROMPT_DETAIL_CHARS = 800;
 
-/** What the user changed by hand, as the agent should hear about it; empty when nothing was. */
-function manualChangesSummary(snapshot: GraphDocument | undefined) {
+/** What the user changed by hand, as the agent should hear about it; empty when nothing was.
+ *  Details are cut to `detailChars` when given. */
+function manualChangesSummary(snapshot: GraphDocument | undefined, detailChars?: number) {
   if (!snapshot) return;
   const edited = {
     records: snapshot.records
@@ -12,7 +15,7 @@ function manualChangesSummary(snapshot: GraphDocument | undefined) {
         id: node.id,
         fields: node.userEdited,
         title: node.title,
-        detail: node.detail.slice(0, 800),
+        detail: node.detail.slice(0, detailChars),
       })),
     relations: snapshot.relations
       .filter((link) => link.userEdited?.length)
@@ -41,9 +44,28 @@ export function hasManualChanges(snapshot: GraphDocument | undefined): boolean {
   return manualChangesSummary(snapshot) !== undefined;
 }
 
-/** Stable key for the current set of changes; callers store it to hide "send" until something new. */
+/**
+ * Stable key for the current set of changes; callers store it to hide "send" until something new.
+ * It covers each detail in full, so an edit past what the prompt quotes still counts as new, and
+ * is hashed so the key stays small in persisted workspaces however long the details are.
+ */
 export function manualChangesDigest(snapshot: GraphDocument | undefined): string {
-  return JSON.stringify(manualChangesSummary(snapshot) ?? null);
+  const summary = manualChangesSummary(snapshot);
+  return summary ? hash53(JSON.stringify(summary)) : 'null';
+}
+
+/** cyrb53: a fast 53-bit string hash. Only hides a button, so a collision costs one missed offer. */
+function hash53(text: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const char = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ char, 2654435761);
+    h2 = Math.imul(h2 ^ char, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
 export function manualChangesPrompt(context: {
@@ -53,7 +75,7 @@ export function manualChangesPrompt(context: {
   revision?: number;
   snapshot: GraphDocument | undefined;
 }): string | undefined {
-  const summary = manualChangesSummary(context.snapshot);
+  const summary = manualChangesSummary(context.snapshot, PROMPT_DETAIL_CHARS);
   if (!summary) return;
   const canvas = context.canvas ?? 'reasoning';
   const noun = canvas === 'mindmap' ? 'mind map' : 'reasoning graph';

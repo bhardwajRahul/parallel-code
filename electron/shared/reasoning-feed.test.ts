@@ -94,6 +94,17 @@ it('replays a feed whose relations predate the duplicate check and still accepts
       operations: [relation('three')],
     }),
   ).toThrow('duplicates link');
+  const unknownKind = relation('four');
+  if (unknownKind.type === 'insert_relation') unknownKind.relation.kind = 'causes';
+  // The agent must learn from the rejection which kinds exist.
+  expect(() =>
+    acceptUpdate(replayed.history, {
+      ...first,
+      sequence: 3,
+      expectedRevision: 3,
+      operations: [unknownKind],
+    }),
+  ).toThrow('supports, challenges or fits');
   expect(
     acceptUpdate(replayed.history, {
       ...first,
