@@ -122,6 +122,8 @@ describe('remembered phones', () => {
       hostname: '127.0.0.1',
       port,
       path: '/api/pair/verify',
+      // A kept-alive socket would hold stop() open until it idles out (~4 s).
+      agent: false,
       method: 'POST',
       headers: {
         Authorization: `Bearer ${mobileToken}`,

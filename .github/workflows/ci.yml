@@ -40,8 +40,15 @@ jobs:
       - name: Test security rules
         run: npm run test:security-rules
 
+      # Tests build throwaway Git repositories and fsync their writes under the
+      # temp dir. A runner with a slow disk stalled them past the 5 s test
+      # timeout while in-memory tests ran at normal speed, so keep the temp dir
+      # in RAM.
       - name: Test (unit with coverage floor, client)
-        run: npm run test:ci
+        run: |
+          mkdir -p "$RUNNER_TEMP/ram"
+          sudo mount -t tmpfs tmpfs "$RUNNER_TEMP/ram"
+          TMPDIR="$RUNNER_TEMP/ram" npm run test:ci
 
       # The coordinator's prompt-delivery path against a real pty. Gated by
       # env locally because it takes ~20s and needs a working shell.

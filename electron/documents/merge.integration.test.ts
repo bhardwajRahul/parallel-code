@@ -64,7 +64,8 @@ describe('merging proposals with an agent', () => {
       candidates: [spec('c1', 'A', propose), spec('c2', 'B', propose)],
     };
     const first = await dispatchDocumentRun(win, args);
-    await expect.poll(() => statusOf(root, first.id)).toBe('finished');
+    // Each wait covers real agent processes and Git; the default 1 s poll is too tight on a busy runner.
+    await expect.poll(() => statusOf(root, first.id), { timeout: 2_500 }).toBe('finished');
 
     const lineage = { runId: first.id, candidateIds: ['c1', 'c2'] };
     const merged = await dispatchDocumentRun(win, {
@@ -73,7 +74,7 @@ describe('merging proposals with an agent', () => {
       candidates: [{ ...spec('c1', 'A', merge), isMain: true, sessionId: 'warm' }],
       merge: lineage,
     });
-    await expect.poll(() => statusOf(root, merged.id)).toBe('finished');
+    await expect.poll(() => statusOf(root, merged.id), { timeout: 2_500 }).toBe('finished');
     const record = (await listDocumentRuns(root)).find((r) => r.id === merged.id);
     if (!record) throw new Error('Merge run not found');
     expect(record.merge).toEqual(lineage);
