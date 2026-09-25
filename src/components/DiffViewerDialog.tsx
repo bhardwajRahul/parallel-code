@@ -577,38 +577,25 @@ function DiffViewerContent(props: DiffViewerDialogProps & { tour: ChangeTourCont
           </div>
           <Show when={task()}>
             {(currentTask) => (
-              <label
-                class="diff-task-notes focusable-panel"
+              <textarea
+                class="diff-task-notes"
+                aria-label="Task notes"
+                placeholder="Add a note…"
+                value={currentTask().notes}
+                onInput={(e) => updateTaskNotes(currentTask().id, e.currentTarget.value)}
                 style={{
-                  display: 'flex',
-                  'flex-direction': 'column',
-                  gap: '6px',
+                  width: 'calc(100% - 16px)',
+                  height: '140px',
+                  'max-height': '25vh',
+                  background: currentTask().notes?.trim() ? theme.taskPanelBg : theme.bgInput,
                   padding: '8px 10px',
                   'flex-shrink': '0',
-                  color: theme.fgMuted,
-                  'font-size': sf(11),
+                  color: theme.fg,
+                  'font-size': sf(12),
+                  'font-family': "'JetBrains Mono', monospace",
+                  resize: 'none',
                 }}
-              >
-                Task notes
-                <textarea
-                  aria-label="Task notes"
-                  placeholder="Add a note…"
-                  value={currentTask().notes}
-                  onInput={(e) => updateTaskNotes(currentTask().id, e.currentTarget.value)}
-                  style={{
-                    width: '100%',
-                    height: '140px',
-                    'max-height': '25vh',
-                    background: 'transparent',
-                    border: 'none',
-                    padding: '6px 8px',
-                    color: theme.fg,
-                    'font-size': sf(12),
-                    'font-family': "'JetBrains Mono', monospace",
-                    resize: 'none',
-                  }}
-                />
-              </label>
+              />
             )}
           </Show>
         </aside>

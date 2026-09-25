@@ -1792,8 +1792,7 @@ button {
 
 .diff-task-notes {
   margin: 8px;
-  background: var(--task-panel-bg);
-  border: 1px solid var(--island-border);
+  border: none;
   border-radius: var(--radius-md);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
 }
@@ -2236,7 +2235,8 @@ textarea::placeholder {
   visibility: hidden;
 }
 
-.task-notes-body textarea::placeholder {
+.task-notes-body textarea::placeholder,
+.diff-task-notes::placeholder {
   color: var(--fg-muted);
 }
 
@@ -2631,11 +2631,16 @@ html:is(
 
 /* Match terminal dimming: actual keyboard/mouse focus brightens the panel,
    independently of the setting that dims entire inactive task columns. */
-:is(.task-canvas-panel, .task-notes-body, .task-changed-files-section) {
+:is(.task-canvas-panel, .task-notes-body, .task-changed-files-section, .diff-task-notes) {
   opacity: 0.8;
 }
 
-:is(.task-canvas-panel, .task-notes-body, .task-changed-files-section):focus-within,
+:is(
+  .task-canvas-panel,
+  .task-notes-body,
+  .task-changed-files-section,
+  .diff-task-notes
+):focus-within,
 .task-canvas-panel[data-panel-focused='true'] {
   opacity: 1;
 }
